@@ -1,0 +1,35 @@
+# ── Unreal Engine ────────────────────────────────────────────────
+# 생성물/캐시. 소스(Source/, Config/, *.uproject)와 Content/는 커밋 대상.
+
+# Compiled build products
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Visual Studio / Rider / VS Code IDE files
+.vs/
+.vsconfig
+.idea/
+*.sln
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+
+# Compiled binaries
+*.exe
+*.dll
+*.lib
+*.pdb
+*.obj
+
+# ── OS ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── 로컬 비밀값 (AI API 키 등) ────────────────────────────────────
+Config/Secrets.ini
+*.env

@@ -1,0 +1,188 @@
+#include "Actors/PitchingZone.h"
+#include "MotionBase.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/SceneComponent.h"
+#include "Engine/StaticMesh.h"
+#include "UObject/ConstructorHelpers.h"
+
+APitchingZone::APitchingZone()
+{
+	PrimaryActorTick.bCanEverTick = true;
+
+	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
+	SetRootComponent(SceneRoot);
+
+	Ball = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Ball"));
+	Ball->SetupAttachment(SceneRoot);
+	Ball->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Ball->SetVisibility(false);
+	// 엔진 기본 구체(지름 100cm)를 야구공(~7.3cm)으로 축소.
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	if (SphereMesh.Succeeded())
+	{
+		Ball->SetStaticMesh(SphereMesh.Object);
+		Ball->SetWorldScale3D(FVector(0.073f));
+	}
+}
+
+void APitchingZone::BeginPlay()
+{
+	Super::BeginPlay();
+	EnterIdle();
+}
+
+FVector APitchingZone::ComputeReleaseLocation() const
+{
+	return GetActorLocation() + FVector(0.0f, 0.0f, ReleaseHeightCm);
+}
+
+void APitchingZone::EnterIdle()
+{
+	State = EPitchState::Idle;
+	IdleTimer = 0.0f;
+	if (Ball)
+	{
+		Ball->SetVisibility(false);
+	}
+}
+
+void APitchingZone::ThrowRandomPitch()
+{
+	const bool bBreaking = FMath::FRand() < BreakingBallRatio;
+	const float Speed = FMath::FRandRange(SpeedMinKmh, SpeedMaxKmh);
+	ThrowPitch(bBreaking ? EPitchType::Breaking : EPitchType::Fastball, Speed);
+}
+
+void APitchingZone::ThrowPitch(EPitchType PitchType, float SpeedKmh)
+{
+	// 구속(km/h) → cm/s
+	const float SpeedCmps = (SpeedKmh * 100000.0f) / 3600.0f;
+	if (SpeedCmps <= KINDA_SMALL_NUMBER)
+	{
+		UE_LOG(LogMotionBase, Warning, TEXT("PitchingZone: 구속이 0 — 투구 취소"));
+		return;
+	}
+
+	ReleaseLocation = ComputeReleaseLocation();
+
+	// 코스: 스트라이크존 중심 기준으로 좌우/상하 분산
+	const FVector Forward = GetActorForwardVector();
+	const FVector Right = GetActorRightVector();
+	const float CourseLateral = FMath::FRandRange(-CourseSpreadLateralCm, CourseSpreadLateralCm);
+	const float CourseVertical = FMath::FRandRange(-CourseSpreadVerticalCm, CourseSpreadVerticalCm);
+
+	PlateLocation = GetActorLocation()
+		+ Forward * ReleaseToPlateCm
+		+ Right * CourseLateral
+		+ FVector(0.0f, 0.0f, PlateHeightCm + CourseVertical);
+
+	TravelDurationSec = ReleaseToPlateCm / SpeedCmps;
+	FlightTime = 0.0f;
+
+	// 변화구는 중간에서 최대로 휘고 도달점은 그대로 (도달 계약 유지).
+	if (PitchType == EPitchType::Breaking)
+	{
+		const float LateralBreak = FMath::FRandRange(-BreakAmountCm, BreakAmountCm);
+		const float VerticalBreak = FMath::FRandRange(-BreakAmountCm * 0.5f, 0.0f); // 주로 떨어짐
+		BreakVector = Right * LateralBreak + FVector(0.0f, 0.0f, VerticalBreak);
+	}
+	else
+	{
+		BreakVector = FVector::ZeroVector;
+	}
+
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	ArrivalWorldTime = Now + TravelDurationSec;
+
+	State = EPitchState::Incoming;
+	if (Ball)
+	{
+		Ball->SetWorldLocation(ReleaseLocation);
+		Ball->SetVisibility(true);
+	}
+
+	UE_LOG(LogMotionBase, Log, TEXT("Pitch: type=%s speed=%.0fkm/h travel=%.3fs"),
+		PitchType == EPitchType::Breaking ? TEXT("변화구") : TEXT("직구"), SpeedKmh, TravelDurationSec);
+
+	OnPitchThrown.Broadcast(PitchType, PlateLocation, ArrivalWorldTime);
+}
+
+void APitchingZone::LaunchHitBall(const FVector& Direction, float SpeedMps)
+{
+	if (!Ball)
+	{
+		return;
+	}
+
+	State = EPitchState::HitFlight;
+	FlightTime = 0.0f;
+	HitStart = Ball->GetComponentLocation();
+	HitVelocity = Direction.GetSafeNormal() * SpeedMps * 100.0f; // m/s → cm/s
+	Ball->SetVisibility(true);
+}
+
+void APitchingZone::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	switch (State)
+	{
+	case EPitchState::Idle:
+	{
+		if (!bAutoPitch)
+		{
+			break;
+		}
+		IdleTimer += DeltaSeconds;
+		if (IdleTimer >= AutoPitchIntervalSec)
+		{
+			ThrowRandomPitch();
+		}
+		break;
+	}
+
+	case EPitchState::Incoming:
+	{
+		FlightTime += DeltaSeconds;
+		const float Alpha = (TravelDurationSec > KINDA_SMALL_NUMBER)
+			? FMath::Clamp(FlightTime / TravelDurationSec, 0.0f, 1.0f)
+			: 1.0f;
+
+		// 직선 보간 + 중간에서 최대인 휨 → 도달점은 정확히 PlateLocation
+		const FVector Base = FMath::Lerp(ReleaseLocation, PlateLocation, Alpha);
+		const FVector Curve = BreakVector * FMath::Sin(Alpha * PI);
+		if (Ball)
+		{
+			Ball->SetWorldLocation(Base + Curve);
+		}
+
+		if (Alpha >= 1.0f)
+		{
+			OnPitchArrived.Broadcast(PlateLocation);
+			EnterIdle();
+		}
+		break;
+	}
+
+	case EPitchState::HitFlight:
+	{
+		FlightTime += DeltaSeconds;
+		constexpr float Gravity = -980.0f; // cm/s^2
+		const FVector Pos = HitStart
+			+ HitVelocity * FlightTime
+			+ FVector(0.0f, 0.0f, 0.5f * Gravity * FlightTime * FlightTime);
+
+		if (Ball)
+		{
+			Ball->SetWorldLocation(Pos);
+		}
+
+		// 착지하거나 너무 오래되면 다음 투구 대기로
+		if (Pos.Z <= GetActorLocation().Z || FlightTime > 3.0f)
+		{
+			EnterIdle();
+		}
+		break;
+	}
+	}
+}
