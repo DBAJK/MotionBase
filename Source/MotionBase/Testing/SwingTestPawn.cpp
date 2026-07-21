@@ -2,6 +2,7 @@
 #include "MotionBase.h"
 #include "Analysis/SwingAnalyzer.h"
 #include "Actors/PitchingZone.h"
+#include "Core/MotionBaseGameMode.h"
 #include "Camera/CameraComponent.h"
 #include "Components/InputComponent.h"
 #include "Engine/Engine.h"
@@ -10,7 +11,8 @@
 ASwingTestPawn::ASwingTestPawn()
 {
 	PrimaryActorTick.bCanEverTick = true;
-	AutoPossessPlayer = EAutoReceiveInput::Player0; // 자동 빙의 → 입력 수신
+	// 빙의는 AMotionBaseGameMode 가 모드 선택 결과에 따라 직접 넘긴다.
+	// (AutoPossessPlayer 를 켜두면 시작 화면 폰과 Player0 을 두고 다툰다.)
 
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
@@ -54,6 +56,19 @@ void ASwingTestPawn::BeginPlay()
 	PitchingZone->OnPitchArrived.AddDynamic(this, &ASwingTestPawn::HandlePitchArrived);
 }
 
+void ASwingTestPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// 이 폰이 만든 투수는 이 폰이 치운다. 모드 선택으로 돌아갈 때 폰만 파괴되면
+	// APitchingZone 이 남아 빈 화면에 계속 공을 던진다.
+	if (PitchingZone)
+	{
+		PitchingZone->Destroy();
+		PitchingZone = nullptr;
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
 void ASwingTestPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
@@ -61,6 +76,16 @@ void ASwingTestPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 	// Enhanced Input 에셋 없이 키 직접 바인딩 (레거시 BindKey — 테스트용).
 	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ASwingTestPawn::SimulateSwing);
 	PlayerInputComponent->BindKey(EKeys::R, IE_Pressed, this, &ASwingTestPawn::ResetSession);
+	// Esc 는 PIE 종료라 쓸 수 없다 → M(메뉴).
+	PlayerInputComponent->BindKey(EKeys::M, IE_Pressed, this, &ASwingTestPawn::ReturnToModeSelect);
+}
+
+void ASwingTestPawn::ReturnToModeSelect()
+{
+	if (AMotionBaseGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMotionBaseGameMode>() : nullptr)
+	{
+		GM->ReturnToModeSelect();
+	}
 }
 
 void ASwingTestPawn::HandlePitchThrown(EPitchType PitchType, FVector InPlateLocation, float InArrivalWorldTime)
@@ -170,7 +195,7 @@ void ASwingTestPawn::Tick(float DeltaSeconds)
 	}
 
 	GEngine->AddOnScreenDebugMessage(1, 2.0f, FColor::White,
-		TEXT("=== MotionBase 타격 테스트 ===   [Space] 스윙   [R] 리셋"));
+		TEXT("=== MotionBase 타격 훈련 ===   [Space] 스윙   [R] 리셋   [M] 모드 선택"));
 
 	// 투구 상태
 	if (PitchingZone && PitchingZone->IsPitchInFlight())

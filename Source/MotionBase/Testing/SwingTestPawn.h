@@ -34,6 +34,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
 	UPROPERTY(VisibleAnywhere, Category = "SwingTest")
@@ -51,6 +52,9 @@ protected:
 
 	void SimulateSwing();
 	void ResetSession();
+
+	/** 시작 화면(모드 선택)으로 복귀. */
+	void ReturnToModeSelect();
 
 	UFUNCTION()
 	void HandlePitchThrown(EPitchType PitchType, FVector InPlateLocation, float InArrivalWorldTime);
