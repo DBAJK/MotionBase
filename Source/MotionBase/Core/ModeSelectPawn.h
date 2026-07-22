@@ -77,6 +77,9 @@ protected:
 	void SelectNext();
 	void Confirm();
 
+	/** Vive 브링업 진단 하네스 열기 (개발 도구 — 모드 목록에 없다). */
+	void OpenViveBringup();
+
 private:
 	void MoveSelection(int32 Delta);
 

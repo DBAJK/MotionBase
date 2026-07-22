@@ -3,6 +3,7 @@
 #include "Core/ModeManager.h"
 #include "Core/ModeSelectPawn.h"
 #include "Testing/SwingTestPawn.h"
+#include "Testing/ViveBringupPawn.h"
 #include "UI/ModeSelectHUD.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -71,6 +72,12 @@ void AMotionBaseGameMode::ReturnToModeSelect()
 {
 	UE_LOG(LogMotionBase, Log, TEXT("GameMode: 시작 화면으로 복귀"));
 	RequestPawnSwap(AModeSelectPawn::StaticClass());
+}
+
+void AMotionBaseGameMode::StartViveBringup()
+{
+	UE_LOG(LogMotionBase, Log, TEXT("GameMode: Vive 브링업 진단 진입"));
+	RequestPawnSwap(AViveBringupPawn::StaticClass());
 }
 
 void AMotionBaseGameMode::RequestPawnSwap(TSubclassOf<APawn> NewPawnClass)

@@ -61,6 +61,16 @@ void AModeSelectPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 
 	PlayerInputComponent->BindKey(EKeys::Enter, IE_Pressed, this, &AModeSelectPawn::Confirm);
 	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Pressed, this, &AModeSelectPawn::Confirm);
+
+	PlayerInputComponent->BindKey(EKeys::V, IE_Pressed, this, &AModeSelectPawn::OpenViveBringup);
+}
+
+void AModeSelectPawn::OpenViveBringup()
+{
+	if (AMotionBaseGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMotionBaseGameMode>() : nullptr)
+	{
+		GM->StartViveBringup();
+	}
 }
 
 void AModeSelectPawn::MoveSelection(int32 Delta)

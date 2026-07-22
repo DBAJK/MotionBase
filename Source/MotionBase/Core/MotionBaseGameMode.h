@@ -31,6 +31,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")
 	void ReturnToModeSelect();
 
+	/**
+	 * Vive 브링업 진단 하네스로 진입 (Phase 2 작업용).
+	 * 게임 모드가 아니라 개발 도구이므로 모드 목록에 넣지 않고 별도 키로 연다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")
+	void StartViveBringup();
+
 protected:
 	/** 모드별 플레이 폰. 미구현 모드는 null 을 돌려준다. */
 	TSubclassOf<APawn> GetPawnClassForMode(EGameModeId Mode) const;

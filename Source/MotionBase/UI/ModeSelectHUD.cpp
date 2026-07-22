@@ -331,6 +331,7 @@ void AModeSelectHUD::DrawHUD()
 	float HintX = ContentX;
 	HintX += DrawKeyHint(TEXT("방향키"), TEXT("이동"), HintX, FooterY, S, FontBody);
 	HintX += DrawKeyHint(TEXT("Enter"), TEXT("시작"), HintX, FooterY, S, FontBody);
+	HintX += DrawKeyHint(TEXT("V"), TEXT("Vive 진단"), HintX, FooterY, S, FontBody);
 
 	int32 ReadyCount = 0;
 	for (const EGameModeId Mode : Modes)

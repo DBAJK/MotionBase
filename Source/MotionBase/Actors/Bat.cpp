@@ -63,6 +63,25 @@ bool ABat::IsTracking() const
 	return InputProvider && InputProvider->IsTracking();
 }
 
+void ABat::SetHandMotionSource(FName NewSource)
+{
+	if (MotionController)
+	{
+		MotionController->MotionSource = NewSource;
+		UE_LOG(LogMotionBase, Log, TEXT("ABat: MotionSource → %s"), *NewSource.ToString());
+	}
+}
+
+FName ABat::GetHandMotionSource() const
+{
+	return MotionController ? MotionController->MotionSource : NAME_None;
+}
+
+FVector ABat::GetBatTipWorldLocation() const
+{
+	return BatTip ? BatTip->GetComponentLocation() : FVector::ZeroVector;
+}
+
 void ABat::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);

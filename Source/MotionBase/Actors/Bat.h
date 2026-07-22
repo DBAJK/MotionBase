@@ -55,6 +55,31 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "MotionBase|Bat")
 	FOnSwingCompleted OnSwingCompleted;
 
+	// ── 브링업/진단용 접근자 ──
+	// AViveBringupPawn 이 실제 provider 경로의 상태를 밖에서 관찰하기 위한 것.
+	// 진단 전용 우회로를 따로 만들면 "우회로는 되는데 본 경로는 안 되는" 상황을
+	// 못 잡으므로, 본 경로를 그대로 들여다본다.
+
+	/**
+	 * 입력 소스 지정. ⚠️ BeginPlay 전에만 유효하다 — provider 는 BeginPlay 에서 생성된다.
+	 * 스폰 시 SpawnActorDeferred → SetInputSource → FinishSpawning 순서로 쓸 것.
+	 */
+	void SetInputSource(EInputSource InSource) { InputSource = InSource; }
+
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Bat")
+	EInputSource GetInputSource() const { return InputSource; }
+
+	/** 실제 생성된 provider (없을 수 있음). */
+	UMotionInputProvider* GetInputProvider() const { return InputProvider; }
+
+	/** 추적할 손 교체. 브링업 중 좌/우 컨트롤러 확인용. */
+	void SetHandMotionSource(FName NewSource);
+
+	FName GetHandMotionSource() const;
+
+	/** BatTip 현재 월드 위치 (cm). 트래킹이 죽어 있으면 값이 고정된다. */
+	FVector GetBatTipWorldLocation() const;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
