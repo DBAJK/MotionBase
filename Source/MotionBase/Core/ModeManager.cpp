@@ -1,16 +1,53 @@
 #include "Core/ModeManager.h"
 #include "MotionBase.h"
+#include "Save/MotionBaseSaveGame.h"
+#include "Kismet/GameplayStatics.h"
 
-void UModeManager::SetActiveMode(EGameModeId NewMode)
+void UModeManager::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Super::Initialize(Collection);
+
+	// 슬롯이 있으면 로드, 없으면 새 저장 오브젝트를 만든다.
+	const FString Slot = UMotionBaseSaveGame::DefaultSlotName;
+	const uint32 User = UMotionBaseSaveGame::DefaultUserIndex;
+
+	if (UGameplayStatics::DoesSaveGameExist(Slot, User))
+	{
+		SaveData = Cast<UMotionBaseSaveGame>(UGameplayStatics::LoadGameFromSlot(Slot, User));
+	}
+
+	if (!SaveData)
+	{
+		SaveData = Cast<UMotionBaseSaveGame>(
+			UGameplayStatics::CreateSaveGameObject(UMotionBaseSaveGame::StaticClass()));
+	}
+
+	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 저장 로드 — 누적 세션 %d건"),
+		SaveData ? SaveData->History.Num() : 0);
+}
+
+void UModeManager::Deinitialize()
+{
+	// 앱 종료·레벨 정리 시점에 폰이 flush 하지 못한 세션이 남아 있을 수 있다.
+	// FinalizeSession 이 빈 세션은 스스로 걸러내므로 무조건 한 번 호출해도 안전하다.
+	// (여기선 집계 평균을 다시 구하지 않고, 시도들만 확정 저장한다.)
+	FinalizeSession(FScoreResult());
+
+	Super::Deinitialize();
+}
+
+void UModeManager::SetActiveMode(EGameModeId NewMode, EDifficultyLevel NewDifficulty)
 {
 	const bool bChanged = (NewMode != ActiveMode);
 	ActiveMode = NewMode;
+	ActiveDifficulty = NewDifficulty;
 
 	// 모드 진입 = 새 세션. 같은 모드를 다시 고른 경우에도 반드시 비운다.
 	SessionResults.Reset();
+	SessionStartedAt = FDateTime::Now();
 
-	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 모드 진입 → %s (세션 초기화)"),
-		*GetModeDisplayName(NewMode).ToString());
+	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 모드 진입 → %s / 난이도 %s (세션 초기화)"),
+		*GetModeDisplayName(NewMode).ToString(), *GetDifficultyDisplayName(NewDifficulty).ToString());
 
 	if (bChanged)
 	{
@@ -108,4 +145,46 @@ bool UModeManager::IsModeImplemented(EGameModeId Mode)
 	// ROADMAP Phase 1 기준: 타격만 플레이 가능. 나머지는 Phase 3~4 에서 열린다.
 	// 모드를 구현하면 여기에 추가하고 AMotionBaseGameMode::GetPawnClassForMode 에도 폰을 등록할 것.
 	return Mode == EGameModeId::Batting;
+}
+
+TArray<EDifficultyLevel> UModeManager::GetMenuDifficulties()
+{
+	return { EDifficultyLevel::Beginner, EDifficultyLevel::Amateur, EDifficultyLevel::Pro };
+}
+
+FText UModeManager::GetDifficultyDisplayName(EDifficultyLevel Level)
+{
+	switch (Level)
+	{
+	case EDifficultyLevel::Beginner: return FText::FromString(TEXT("초보"));
+	case EDifficultyLevel::Amateur:  return FText::FromString(TEXT("아마추어"));
+	case EDifficultyLevel::Pro:      return FText::FromString(TEXT("프로"));
+	default:                         return FText::FromString(TEXT("알 수 없음"));
+	}
+}
+
+FText UModeManager::GetDifficultyDescription(EDifficultyLevel Level)
+{
+	switch (Level)
+	{
+	case EDifficultyLevel::Beginner:
+		return FText::FromString(TEXT("느린 직구 위주, 변화구 없음, 여유로운 간격. 타이밍 감을 익히는 단계."));
+	case EDifficultyLevel::Amateur:
+		return FText::FromString(TEXT("보통 구속에 변화구가 섞입니다. 코스도 넓어집니다."));
+	case EDifficultyLevel::Pro:
+		return FText::FromString(TEXT("빠른 구속과 잦은 변화구, 짧은 간격. 실전에 가까운 난이도."));
+	default:
+		return FText::GetEmpty();
+	}
+}
+
+FName UModeManager::GetDifficultyIdName(EDifficultyLevel Level)
+{
+	switch (Level)
+	{
+	case EDifficultyLevel::Beginner: return TEXT("Beginner");
+	case EDifficultyLevel::Amateur:  return TEXT("Amateur");
+	case EDifficultyLevel::Pro:      return TEXT("Pro");
+	default:                         return NAME_None;
+	}
 }

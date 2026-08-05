@@ -1,0 +1,5 @@
+# MotionBase 자세 인식 PoC
+# 설치:  python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+# ⚠️ mediapipe 는 Python 3.8~3.12 에서 안정적 (3.13+ 휠 미제공일 수 있음).
+opencv-python>=4.8
+mediapipe>=0.10

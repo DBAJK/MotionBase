@@ -43,6 +43,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Pitch")
 	void ThrowRandomPitch();
 
+	/**
+	 * 난이도 프리셋을 투구 파라미터에 적용한다 (구속·변화구 비율·간격·코스 분산).
+	 * 모드 폰이 BeginPlay 에서 호출한다. 실측 캘리브레이션 대상(하드코딩 확정 금지).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Pitch")
+	void ApplyDifficulty(EDifficultyLevel Level);
+
 	/** 타격 성공 시 공을 날려보내는 연출. */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Pitch")
 	void LaunchHitBall(const FVector& Direction, float SpeedMps);
@@ -61,6 +68,19 @@ public:
 	/** 마운드→플레이트 거리 (cm). 배치 계산용. */
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Pitch")
 	float GetReleaseToPlateCm() const { return ReleaseToPlateCm; }
+
+	/**
+	 * 직전 투구가 스트라이크 존을 통과했는지 (코스 오프셋 기준).
+	 * 타자(ASwingTestPawn)가 루킹 스트라이크/볼 판정에 쓴다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Pitch")
+	bool IsLastPitchStrike() const;
+
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Pitch")
+	float GetStrikeZoneHalfWidthCm() const { return StrikeZoneHalfWidthCm; }
+
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Pitch")
+	float GetStrikeZoneHalfHeightCm() const { return StrikeZoneHalfHeightCm; }
 
 	UPROPERTY(BlueprintAssignable, Category = "MotionBase|Pitch")
 	FOnPitchThrown OnPitchThrown;
@@ -98,6 +118,21 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "MotionBase|Pitch|Field")
 	float CourseSpreadVerticalCm = 20.0f;
+
+	// ── 스트라이크 존 ──
+	// TODO(캘리브레이션): 실제 존 규격/체감으로 조정. 코스 분산이 이 값을 넘으면 볼이 된다.
+
+	/** 스트라이크 존 좌우 반폭 (cm). 홈플레이트 폭 ≈ 43cm → 반폭 ≈ 21.6. */
+	UPROPERTY(EditAnywhere, Category = "MotionBase|Pitch|Field")
+	float StrikeZoneHalfWidthCm = 22.0f;
+
+	/** 스트라이크 존 상하 반높이 (cm). */
+	UPROPERTY(EditAnywhere, Category = "MotionBase|Pitch|Field")
+	float StrikeZoneHalfHeightCm = 28.0f;
+
+	/** 존을 디버그 박스로 표시할지. */
+	UPROPERTY(EditAnywhere, Category = "MotionBase|Pitch|Field")
+	bool bDrawStrikeZone = true;
 
 	// ── 난이도 ──
 
@@ -144,6 +179,13 @@ private:
 	float TravelDurationSec = 0.0f;
 	float FlightTime = 0.0f;
 	float ArrivalWorldTime = 0.0f;
+
+	// 직전 투구의 코스 오프셋 (스트라이크/볼 판정용). 스트라이크 존 중심 기준.
+	float LastCourseLateralCm = 0.0f;
+	float LastCourseVerticalCm = 0.0f;
+
+	/** 스트라이크 존을 디버그 박스로 그린다. */
+	void DrawStrikeZone() const;
 
 	// 타구 연출
 	FVector HitVelocity = FVector::ZeroVector;

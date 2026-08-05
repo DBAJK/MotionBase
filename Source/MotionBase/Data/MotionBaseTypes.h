@@ -21,7 +21,8 @@ enum class EInputSource : uint8
 {
 	Mock           UMETA(DisplayName = "Mock (PC 개발/테스트)"),
 	ViveController UMETA(DisplayName = "Vive 컨트롤러"),
-	Lidar          UMETA(DisplayName = "LiDAR")
+	Lidar          UMETA(DisplayName = "LiDAR"),
+	Camera         UMETA(DisplayName = "카메라 (MediaPipe 자세)")
 };
 
 /** 투구 구종. 타격 모드 난이도 구성. */
@@ -30,4 +31,16 @@ enum class EPitchType : uint8
 {
 	Fastball  UMETA(DisplayName = "직구"),
 	Breaking  UMETA(DisplayName = "변화구")
+};
+
+/**
+ * 난이도 단계. 타격 모드에서 투구 파라미터(구속·변화구 비율·간격 등) 프리셋으로 매핑된다.
+ * (APitchingZone::ApplyDifficulty). 다른 모드도 나중에 같은 축을 재사용할 수 있다.
+ */
+UENUM(BlueprintType)
+enum class EDifficultyLevel : uint8
+{
+	Beginner  UMETA(DisplayName = "초보"),
+	Amateur   UMETA(DisplayName = "아마추어"),
+	Pro       UMETA(DisplayName = "프로")
 };

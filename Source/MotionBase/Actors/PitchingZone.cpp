@@ -4,6 +4,7 @@
 #include "Components/SceneComponent.h"
 #include "Engine/StaticMesh.h"
 #include "UObject/ConstructorHelpers.h"
+#include "DrawDebugHelpers.h"
 
 APitchingZone::APitchingZone()
 {
@@ -53,6 +54,64 @@ void APitchingZone::ThrowRandomPitch()
 	ThrowPitch(bBreaking ? EPitchType::Breaking : EPitchType::Fastball, Speed);
 }
 
+void APitchingZone::ApplyDifficulty(EDifficultyLevel Level)
+{
+	// TODO(캘리브레이션): 아래 프리셋 수치는 실측·플레이테스트로 조정 (하드코딩 확정 금지).
+	switch (Level)
+	{
+	case EDifficultyLevel::Beginner:
+		SpeedMinKmh = 70.0f;  SpeedMaxKmh = 95.0f;
+		BreakingBallRatio = 0.0f;   BreakAmountCm = 40.0f;
+		AutoPitchIntervalSec = 3.5f;
+		CourseSpreadLateralCm = 15.0f; CourseSpreadVerticalCm = 12.0f;
+		break;
+
+	case EDifficultyLevel::Amateur:
+		SpeedMinKmh = 95.0f;  SpeedMaxKmh = 130.0f;
+		BreakingBallRatio = 0.30f;  BreakAmountCm = 60.0f;
+		AutoPitchIntervalSec = 2.5f;
+		CourseSpreadLateralCm = 25.0f; CourseSpreadVerticalCm = 20.0f;
+		break;
+
+	case EDifficultyLevel::Pro:
+		SpeedMinKmh = 120.0f; SpeedMaxKmh = 155.0f;
+		BreakingBallRatio = 0.55f;  BreakAmountCm = 80.0f;
+		AutoPitchIntervalSec = 1.8f;
+		CourseSpreadLateralCm = 35.0f; CourseSpreadVerticalCm = 28.0f;
+		break;
+
+	default:
+		break;
+	}
+
+	UE_LOG(LogMotionBase, Log, TEXT("PitchingZone: 난이도 적용 (구속 %.0f~%.0f, 변화구 %.0f%%, 간격 %.1fs)"),
+		SpeedMinKmh, SpeedMaxKmh, BreakingBallRatio * 100.0f, AutoPitchIntervalSec);
+}
+
+bool APitchingZone::IsLastPitchStrike() const
+{
+	return FMath::Abs(LastCourseLateralCm) <= StrikeZoneHalfWidthCm
+		&& FMath::Abs(LastCourseVerticalCm) <= StrikeZoneHalfHeightCm;
+}
+
+void APitchingZone::DrawStrikeZone() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 존 중심 = 플레이트 중심(코스 오프셋 없음).
+	const FVector Center = GetActorLocation()
+		+ GetActorForwardVector() * ReleaseToPlateCm
+		+ FVector(0.0f, 0.0f, PlateHeightCm);
+
+	// 얇은 깊이 + 좌우 반폭(Y) + 상하 반높이(Z). 투수 회전으로 정렬.
+	const FVector Extent(2.0f, StrikeZoneHalfWidthCm, StrikeZoneHalfHeightCm);
+	DrawDebugBox(World, Center, Extent, GetActorQuat(), FColor(80, 200, 120), false, -1.0f, 0, 2.0f);
+}
+
 void APitchingZone::ThrowPitch(EPitchType PitchType, float SpeedKmh)
 {
 	// 구속(km/h) → cm/s
@@ -70,6 +129,10 @@ void APitchingZone::ThrowPitch(EPitchType PitchType, float SpeedKmh)
 	const FVector Right = GetActorRightVector();
 	const float CourseLateral = FMath::FRandRange(-CourseSpreadLateralCm, CourseSpreadLateralCm);
 	const float CourseVertical = FMath::FRandRange(-CourseSpreadVerticalCm, CourseSpreadVerticalCm);
+
+	// 스트라이크/볼 판정용으로 코스 오프셋을 보관.
+	LastCourseLateralCm = CourseLateral;
+	LastCourseVerticalCm = CourseVertical;
 
 	PlateLocation = GetActorLocation()
 		+ Forward * ReleaseToPlateCm
@@ -124,6 +187,11 @@ void APitchingZone::LaunchHitBall(const FVector& Direction, float SpeedMps)
 void APitchingZone::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	if (bDrawStrikeZone)
+	{
+		DrawStrikeZone();
+	}
 
 	switch (State)
 	{

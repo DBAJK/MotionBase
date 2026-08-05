@@ -211,7 +211,8 @@ void AModeSelectHUD::DrawHUD()
 	DrawRect(Accent, ContentX, TitleY + TitleH * 0.08f, 6.0f * S, TitleH * 0.84f);
 	DrawText(Title, TextTitle, ContentX + 24.0f * S, TitleY, FontLarge, TitleScale);
 
-	const FString Subtitle = TEXT("SporTrack : Baseball    비착용형 XR 야구 훈련");
+	// 부제는 단계(모드/난이도)에 따라 폰이 정한다.
+	const FString Subtitle = SelectPawn->GetHeaderSubtitle().ToString();
 	const float SubScale = FitScale(Subtitle, FontBody, 0.95f * S, ContentW);
 	GetTextSize(Subtitle, TW, TH, FontBody, SubScale);
 	const float SubY = TitleY + TitleH + 10.0f * S;
@@ -221,13 +222,21 @@ void AModeSelectHUD::DrawHUD()
 	const float DividerY = SubY + TH + 26.0f * S;
 	DrawRect(Divider, ContentX, DividerY, ContentW, FMath::Max(1.5f * S, 1.0f));
 
-	// ── 모드 목록 ──
-	const TArray<EGameModeId>& Modes = SelectPawn->GetMenuModes();
+	// ── 선택 목록 (모드 단계 또는 난이도 단계 — 폰이 행 데이터를 준다) ──
+	const int32 RowCount = SelectPawn->GetRowCount();
 	const int32 Selected = SelectPawn->GetSelectedIndex();
 
 	const float RowH = 58.0f * S;
 	const float RowGap = 9.0f * S;
 	const float ListY = DividerY + 34.0f * S;
+
+	// 단계가 바뀌어 행 개수가 달라지면 커서를 미끄러뜨리지 않고 즉시 붙인다
+	// (모드 6행 → 난이도 3행으로 줄 때 강조 막대가 빈 공간을 지나는 것을 막는다).
+	if (RowCount != LastRowCount)
+	{
+		bCursorInitialized = false;
+		LastRowCount = RowCount;
+	}
 
 	// 선택 강조 위치를 목표 행으로 부드럽게 보간 — 스냅보다 눈이 따라가기 쉽다.
 	const float TargetY = ListY + Selected * (RowH + RowGap);
@@ -254,11 +263,10 @@ void AModeSelectHUD::DrawHUD()
 	const float BadgeX = ContentX + 22.0f * S;
 	const float NameX = BadgeX + BadgeSize + 20.0f * S;
 
-	for (int32 i = 0; i < Modes.Num(); ++i)
+	for (int32 i = 0; i < RowCount; ++i)
 	{
-		const EGameModeId Mode = Modes[i];
 		const bool bSelected = (i == Selected);
-		const bool bAvailable = UModeManager::IsModeImplemented(Mode);
+		const bool bAvailable = SelectPawn->IsRowAvailable(i);
 
 		const float RowY = ListY + i * (RowH + RowGap);
 
@@ -278,23 +286,29 @@ void AModeSelectHUD::DrawHUD()
 		DrawText(Index, bSelected ? TextOnAccent : (bAvailable ? TextSecondary : TextLocked),
 			BadgeX + (BadgeSize - TW) * 0.5f, BadgeY + (BadgeSize - TH) * 0.5f, FontBody, IndexScale);
 
-		// 상태 태그 (오른쪽 정렬) — 먼저 폭을 잡아 이름이 침범하지 않게 한다.
-		const FString PillText = bAvailable ? TEXT("플레이 가능") : TEXT("준비 중");
+		// 상태 태그 (오른쪽 정렬) — 비어 있으면 그리지 않는다 (난이도 행).
+		// 먼저 폭을 잡아 이름이 침범하지 않게 한다.
+		const FString PillText = SelectPawn->GetRowTag(i).ToString();
+		const bool bHasPill = !PillText.IsEmpty();
 		const float PillScale = 0.78f * S;
-		GetTextSize(PillText, TW, TH, FontBody, PillScale);
+		float PillX = ContentX + ContentW - 18.0f * S; // 태그 없으면 이름은 여기까지 쓸 수 있다
 
-		const float PillPadX = 12.0f * S;
-		const float PillW = TW + PillPadX * 2.0f;
-		const float PillH = TH + 9.0f * S;
-		const float PillX = ContentX + ContentW - PillW - 18.0f * S;
-		const float PillY = RowY + (RowH - PillH) * 0.5f;
+		if (bHasPill)
+		{
+			GetTextSize(PillText, TW, TH, FontBody, PillScale);
+			const float PillPadX = 12.0f * S;
+			const float PillW = TW + PillPadX * 2.0f;
+			const float PillH = TH + 9.0f * S;
+			PillX = ContentX + ContentW - PillW - 18.0f * S;
+			const float PillY = RowY + (RowH - PillH) * 0.5f;
 
-		DrawRect(bAvailable ? PillReady : PillLocked, PillX, PillY, PillW, PillH);
-		DrawText(PillText, bAvailable ? PillReadyText : TextLocked,
-			PillX + PillPadX, PillY + (PillH - TH) * 0.5f, FontBody, PillScale);
+			DrawRect(bAvailable ? PillReady : PillLocked, PillX, PillY, PillW, PillH);
+			DrawText(PillText, bAvailable ? PillReadyText : TextLocked,
+				PillX + PillPadX, PillY + (PillH - TH) * 0.5f, FontBody, PillScale);
+		}
 
-		// 모드 이름
-		const FString Name = UModeManager::GetModeDisplayName(Mode).ToString();
+		// 행 이름 (모드 이름 또는 난이도 이름)
+		const FString Name = SelectPawn->GetRowLabel(i).ToString();
 		const float NameAvail = (PillX - 16.0f * S) - NameX;
 		const float NameScale = FitScale(Name, FontBody, 1.25f * S, NameAvail);
 		GetTextSize(Name, TW, TH, FontBody, NameScale);
@@ -302,13 +316,13 @@ void AModeSelectHUD::DrawHUD()
 			NameX, RowY + (RowH - TH) * 0.5f, FontBody, NameScale);
 	}
 
-	// ── 선택 모드 설명 ──
-	const float DescY = ListY + Modes.Num() * (RowH + RowGap) + 26.0f * S;
+	// ── 선택 항목 설명 ──
+	const float DescY = ListY + RowCount * (RowH + RowGap) + 26.0f * S;
 
 	// 설명 앞 짧은 앰버 표식
 	DrawRect(Accent, ContentX, DescY + 4.0f * S, 3.0f * S, 18.0f * S);
 
-	const FString Desc = UModeManager::GetModeDescription(SelectPawn->GetSelectedMode()).ToString();
+	const FString Desc = SelectPawn->GetSelectedDescription().ToString();
 	const float DescScale = FitScale(Desc, FontBody, 0.95f * S, ContentW - 16.0f * S);
 	GetTextSize(Desc, TW, TH, FontBody, DescScale);
 	DrawText(Desc, TextSecondary, ContentX + 16.0f * S, DescY, FontBody, DescScale);
@@ -330,19 +344,11 @@ void AModeSelectHUD::DrawHUD()
 	// 없을 수 있어 한글과 별개의 깨짐 원인이 된다.
 	float HintX = ContentX;
 	HintX += DrawKeyHint(TEXT("방향키"), TEXT("이동"), HintX, FooterY, S, FontBody);
-	HintX += DrawKeyHint(TEXT("Enter"), TEXT("시작"), HintX, FooterY, S, FontBody);
+	HintX += DrawKeyHint(TEXT("Enter"), TEXT("선택"), HintX, FooterY, S, FontBody);
+	HintX += DrawKeyHint(TEXT("Bksp"), TEXT("뒤로"), HintX, FooterY, S, FontBody);
 	HintX += DrawKeyHint(TEXT("V"), TEXT("Vive 진단"), HintX, FooterY, S, FontBody);
 
-	int32 ReadyCount = 0;
-	for (const EGameModeId Mode : Modes)
-	{
-		if (UModeManager::IsModeImplemented(Mode))
-		{
-			++ReadyCount;
-		}
-	}
-
-	const FString Status = FString::Printf(TEXT("구현 %d / %d 모드"), ReadyCount, Modes.Num());
+	const FString Status = SelectPawn->GetFooterStatus().ToString();
 	const float StatusScale = 0.85f * S;
 	GetTextSize(Status, TW, TH, FontBody, StatusScale);
 	DrawText(Status, TextLocked, ContentX + ContentW - TW, FooterY + 8.0f * S, FontBody, StatusScale);

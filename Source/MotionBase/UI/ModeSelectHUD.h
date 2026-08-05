@@ -71,4 +71,7 @@ private:
 
 	/** 첫 프레임에는 보간 없이 목표 위치로 붙인다. */
 	bool bCursorInitialized = false;
+
+	/** 단계 전환(모드↔난이도)으로 행 개수가 바뀌면 커서를 미끄러뜨리지 않고 즉시 붙인다. */
+	int32 LastRowCount = -1;
 };

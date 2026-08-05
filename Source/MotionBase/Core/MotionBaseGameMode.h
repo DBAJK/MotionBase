@@ -21,11 +21,11 @@ public:
 	AMotionBaseGameMode();
 
 	/**
-	 * 선택된 모드로 진입한다. 실제 폰 교체는 다음 틱에 일어난다.
+	 * 선택된 모드+난이도로 진입한다. 실제 폰 교체는 다음 틱에 일어난다.
 	 * @return 미구현 모드이거나 폰이 등록돼 있지 않으면 false (시작 화면 유지).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")
-	bool StartMode(EGameModeId Mode);
+	bool StartMode(EGameModeId Mode, EDifficultyLevel Difficulty = EDifficultyLevel::Amateur);
 
 	/** 시작 화면(모드 선택)으로 복귀. */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")

@@ -33,7 +33,7 @@ TSubclassOf<APawn> AMotionBaseGameMode::GetPawnClassForMode(EGameModeId Mode) co
 	}
 }
 
-bool AMotionBaseGameMode::StartMode(EGameModeId Mode)
+bool AMotionBaseGameMode::StartMode(EGameModeId Mode, EDifficultyLevel Difficulty)
 {
 	if (!UModeManager::IsModeImplemented(Mode))
 	{
@@ -52,19 +52,21 @@ bool AMotionBaseGameMode::StartMode(EGameModeId Mode)
 		return false;
 	}
 
-	// 모드 진입 = 새 세션. 이전 모드의 누적 결과를 비운다.
+	// 모드 진입 = 새 세션. 모드+난이도를 저장하고 이전 누적 결과를 비운다.
+	// (모드 폰이 BeginPlay 에서 난이도를 읽어 파라미터에 반영한다.)
 	if (UGameInstance* GI = GetGameInstance())
 	{
 		if (UModeManager* ModeManager = GI->GetSubsystem<UModeManager>())
 		{
-			ModeManager->SetActiveMode(Mode);
+			ModeManager->SetActiveMode(Mode, Difficulty);
 		}
 	}
 
 	RequestPawnSwap(PawnClass);
 
-	UE_LOG(LogMotionBase, Log, TEXT("GameMode: 모드 시작 → %s"),
-		*UModeManager::GetModeDisplayName(Mode).ToString());
+	UE_LOG(LogMotionBase, Log, TEXT("GameMode: 모드 시작 → %s / %s"),
+		*UModeManager::GetModeDisplayName(Mode).ToString(),
+		*UModeManager::GetDifficultyDisplayName(Difficulty).ToString());
 	return true;
 }
 
