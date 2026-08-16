@@ -211,7 +211,7 @@ void AModeSelectHUD::DrawHUD()
 	DrawRect(Accent, ContentX, TitleY + TitleH * 0.08f, 6.0f * S, TitleH * 0.84f);
 	DrawText(Title, TextTitle, ContentX + 24.0f * S, TitleY, FontLarge, TitleScale);
 
-	const FString Subtitle = TEXT("SporTrack : Baseball    비착용형 XR 야구 훈련");
+	const FString Subtitle = SelectPawn->GetScreenSubtitle().ToString();
 	const float SubScale = FitScale(Subtitle, FontBody, 0.95f * S, ContentW);
 	GetTextSize(Subtitle, TW, TH, FontBody, SubScale);
 	const float SubY = TitleY + TitleH + 10.0f * S;
@@ -222,8 +222,8 @@ void AModeSelectHUD::DrawHUD()
 	DrawRect(Divider, ContentX, DividerY, ContentW, FMath::Max(1.5f * S, 1.0f));
 
 	// ── 모드 목록 ──
-	const TArray<EGameModeId>& Modes = SelectPawn->GetMenuModes();
-	const int32 Selected = SelectPawn->GetSelectedIndex();
+	const int32 EntryCount = SelectPawn->GetEntryCount();
+	const int32 Selected   = SelectPawn->GetSelectedIndex();
 
 	const float RowH = 58.0f * S;
 	const float RowGap = 9.0f * S;
@@ -254,11 +254,10 @@ void AModeSelectHUD::DrawHUD()
 	const float BadgeX = ContentX + 22.0f * S;
 	const float NameX = BadgeX + BadgeSize + 20.0f * S;
 
-	for (int32 i = 0; i < Modes.Num(); ++i)
+	for (int32 i = 0; i < EntryCount; ++i)
 	{
-		const EGameModeId Mode = Modes[i];
 		const bool bSelected = (i == Selected);
-		const bool bAvailable = UModeManager::IsModeImplemented(Mode);
+		const bool bAvailable = SelectPawn->IsEntryAvailable(i);
 
 		const float RowY = ListY + i * (RowH + RowGap);
 
@@ -294,7 +293,7 @@ void AModeSelectHUD::DrawHUD()
 			PillX + PillPadX, PillY + (PillH - TH) * 0.5f, FontBody, PillScale);
 
 		// 모드 이름
-		const FString Name = UModeManager::GetModeDisplayName(Mode).ToString();
+		const FString Name = SelectPawn->GetEntryName(i).ToString();
 		const float NameAvail = (PillX - 16.0f * S) - NameX;
 		const float NameScale = FitScale(Name, FontBody, 1.25f * S, NameAvail);
 		GetTextSize(Name, TW, TH, FontBody, NameScale);
@@ -303,12 +302,12 @@ void AModeSelectHUD::DrawHUD()
 	}
 
 	// ── 선택 모드 설명 ──
-	const float DescY = ListY + Modes.Num() * (RowH + RowGap) + 26.0f * S;
+	const float DescY = ListY + EntryCount * (RowH + RowGap) + 26.0f * S;
 
 	// 설명 앞 짧은 앰버 표식
 	DrawRect(Accent, ContentX, DescY + 4.0f * S, 3.0f * S, 18.0f * S);
 
-	const FString Desc = UModeManager::GetModeDescription(SelectPawn->GetSelectedMode()).ToString();
+	const FString Desc = SelectPawn->GetEntryDescription(Selected).ToString();
 	const float DescScale = FitScale(Desc, FontBody, 0.95f * S, ContentW - 16.0f * S);
 	GetTextSize(Desc, TW, TH, FontBody, DescScale);
 	DrawText(Desc, TextSecondary, ContentX + 16.0f * S, DescY, FontBody, DescScale);
@@ -330,18 +329,22 @@ void AModeSelectHUD::DrawHUD()
 	// 없을 수 있어 한글과 별개의 깨짐 원인이 된다.
 	float HintX = ContentX;
 	HintX += DrawKeyHint(TEXT("방향키"), TEXT("이동"), HintX, FooterY, S, FontBody);
-	HintX += DrawKeyHint(TEXT("Enter"), TEXT("시작"), HintX, FooterY, S, FontBody);
+	HintX += DrawKeyHint(TEXT("Enter"), TEXT("선택"), HintX, FooterY, S, FontBody);
+	if (SelectPawn->IsSubPage())
+	{
+		HintX += DrawKeyHint(TEXT("Backspace"), TEXT("뒤로"), HintX, FooterY, S, FontBody);
+	}
 
 	int32 ReadyCount = 0;
-	for (const EGameModeId Mode : Modes)
+	for (int32 i = 0; i < EntryCount; ++i)
 	{
-		if (UModeManager::IsModeImplemented(Mode))
+		if (SelectPawn->IsEntryAvailable(i))
 		{
 			++ReadyCount;
 		}
 	}
 
-	const FString Status = FString::Printf(TEXT("구현 %d / %d 모드"), ReadyCount, Modes.Num());
+	const FString Status = FString::Printf(TEXT("구현 %d / %d"), ReadyCount, EntryCount);
 	const float StatusScale = 0.85f * S;
 	GetTextSize(Status, TW, TH, FontBody, StatusScale);
 	DrawText(Status, TextLocked, ContentX + ContentW - TW, FooterY + 8.0f * S, FontBody, StatusScale);

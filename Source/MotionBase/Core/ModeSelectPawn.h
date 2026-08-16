@@ -8,6 +8,14 @@
 class UCameraComponent;
 class USceneComponent;
 
+/** 메뉴 페이지 — 최상위 모드 목록 / 수비 세부 종목. */
+UENUM()
+enum class EMenuPage : uint8
+{
+	TopModes,
+	DefenseDrills
+};
+
 /**
  * 시작 화면(모드 선택) 폰.
  *
@@ -44,16 +52,21 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
-	/** 메뉴에 표시할 모드 목록 (HUD 가 읽는다). */
-	const TArray<EGameModeId>& GetMenuModes() const { return MenuModes; }
-
 	/** 현재 커서 위치. */
 	int32 GetSelectedIndex() const { return SelectedIndex; }
 
-	EGameModeId GetSelectedMode() const;
+	// ── HUD 가 읽는 페이지 무관 접근자 (최상위 모드 / 수비 세부 종목 공용) ──
+	int32 GetEntryCount() const;
+	FText GetEntryName(int32 Index) const;
+	bool  IsEntryAvailable(int32 Index) const;
+	FText GetEntryDescription(int32 Index) const;
+	FText GetScreenSubtitle() const;
+
+	/** 수비 세부 종목 페이지인지 (푸터 힌트용). */
+	bool IsSubPage() const { return CurrentPage == EMenuPage::DefenseDrills; }
 
 	/**
-	 * 미구현 모드를 고르려 했을 때 남는 안내 문구.
+	 * 미구현 항목을 고르려 했을 때 남는 안내 문구.
 	 * 비어 있으면 표시하지 않는다.
 	 */
 	const FString& GetNoticeText() const { return NoticeText; }
@@ -76,6 +89,7 @@ protected:
 	void SelectPrev();
 	void SelectNext();
 	void Confirm();
+	void GoBack();   // 수비 세부 종목 → 상위 목록 복귀
 
 private:
 	void MoveSelection(int32 Delta);
@@ -83,9 +97,15 @@ private:
 	/** 커서를 잡아둘 기본 위치 — 첫 번째 "플레이 가능한" 모드. */
 	int32 FindFirstImplementedIndex() const;
 
-	TArray<EGameModeId> MenuModes;
-	int32 SelectedIndex = 0;
+	/** 페이지 전환 (커서/안내 초기화). */
+	void SetPage(EMenuPage NewPage);
+
+	TArray<EGameModeId> MenuModes;      // 최상위 모드
+	TArray<FText>       DefenseDrills;  // 수비 세부 종목 이름
+
+	EMenuPage CurrentPage = EMenuPage::TopModes;
+	int32     SelectedIndex = 0;
 
 	FString NoticeText;
-	float NoticeTimer = 0.0f;
+	float   NoticeTimer = 0.0f;
 };

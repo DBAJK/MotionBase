@@ -3,11 +3,15 @@
 #include "Core/ModeManager.h"
 #include "Core/ModeSelectPawn.h"
 #include "Testing/SwingTestPawn.h"
+#include "Core/Defense/DefensePawn.h"
 #include "UI/ModeSelectHUD.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "Core/Defense/CatchBall/CatchBallPawn.h"
+#include "Core/Defense/Throw/ThrowPawn.h"
+#include "Core/Defense/Cover/CoverPawn.h"
 
 AMotionBaseGameMode::AMotionBaseGameMode()
 {
@@ -26,6 +30,9 @@ TSubclassOf<APawn> AMotionBaseGameMode::GetPawnClassForMode(EGameModeId Mode) co
 		// Stage 1 화면 테스트 폰. Vive 배선 후 ABat 기반 VR 폰으로 교체 예정.
 		return ASwingTestPawn::StaticClass();
 
+	case EGameModeId::Defense:
+		return ADefensePawn::StaticClass();
+		
 	default:
 		// 나머지 모드는 미구현 (ROADMAP Phase 3~4).
 		return nullptr;
@@ -128,4 +135,38 @@ void AMotionBaseGameMode::ApplyPendingPawnSwap()
 	{
 		OldPawn->Destroy();
 	}
+}
+
+bool AMotionBaseGameMode::StartDefenseDrill(int32 DrillIndex)
+{
+	// 종목별 폰 결정. 지금은 0=포구만 실제 구현, 나머지는 자리표시자(DefensePawn).
+	TSubclassOf<APawn> PawnClass = nullptr;
+	switch (DrillIndex)
+	{
+	case 0: // 포구
+		PawnClass = ACatchBallPawn::StaticClass();
+		break;
+	case 1: // 송구
+		PawnClass = AThrowPawn::StaticClass();
+		break;
+	case 3: // 백업(커버)
+		PawnClass = ACoverPawn::StaticClass();
+		break;
+	default: // 송구/풋워크/백업 — 아직 미구현
+		UE_LOG(LogMotionBase, Log, TEXT("GameMode: 수비 세부 종목 %d 은(는) 아직 준비 중입니다."), DrillIndex);
+		return false;
+	}
+
+	// 세션 진입 처리 (모드는 Defense 로 기록).
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UModeManager* MM = GI->GetSubsystem<UModeManager>())
+		{
+			MM->SetActiveMode(EGameModeId::Defense);
+		}
+	}
+
+	RequestPawnSwap(PawnClass);
+	UE_LOG(LogMotionBase, Log, TEXT("GameMode: 수비 종목 시작 → %d"), DrillIndex);
+	return true;
 }

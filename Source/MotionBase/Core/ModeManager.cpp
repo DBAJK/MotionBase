@@ -107,5 +107,6 @@ bool UModeManager::IsModeImplemented(EGameModeId Mode)
 {
 	// ROADMAP Phase 1 기준: 타격만 플레이 가능. 나머지는 Phase 3~4 에서 열린다.
 	// 모드를 구현하면 여기에 추가하고 AMotionBaseGameMode::GetPawnClassForMode 에도 폰을 등록할 것.
-	return Mode == EGameModeId::Batting;
+	return Mode == EGameModeId::Batting
+		|| Mode == EGameModeId::Defense;
 }
