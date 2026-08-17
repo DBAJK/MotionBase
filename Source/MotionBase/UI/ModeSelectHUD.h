@@ -5,6 +5,7 @@
 #include "ModeSelectHUD.generated.h"
 
 class UFont;
+struct FSessionSummary;
 
 /**
  * 시작 화면(모드 선택) 렌더러.
@@ -63,6 +64,19 @@ private:
 
 	/** MaxWidth 를 넘으면 넘치지 않게 줄인 배율을 돌려준다. */
 	float FitScale(const FString& Text, UFont* Font, float DesiredScale, float MaxWidth);
+
+	// ── 세션 결과 화면 (모드 선택이 아닌, ISessionResultView 폰이 빙의됐을 때) ──
+
+	/** 세션 요약을 중앙 패널로 그린다 (점수 3축·집계·약점·드릴·AI 코칭·신기록). */
+	void DrawSessionResult(const FSessionSummary& Sum);
+
+	/** 가로 막대 미터 하나 (라벨 + 0~1 게이지 + 퍼센트). */
+	void DrawMeter(const FString& Label, float Value01, float X, float Y, float W, float S,
+		UFont* Font, const FLinearColor& Fill);
+
+	/** MaxW 를 넘지 않게 문자 단위로 줄바꿈해 그린다 (한글은 공백이 없어 문자 단위). 소비한 높이를 돌려준다. */
+	float DrawWrapped(const FString& Text, const FLinearColor& Color, float X, float Y,
+		float MaxW, float Scale, UFont* Font, float LineH);
 
 	// ── 애니메이션 상태 ──
 

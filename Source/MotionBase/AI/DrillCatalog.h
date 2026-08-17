@@ -31,4 +31,15 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Feedback")
 	static TArray<FTrainingDrill> Recommend(const FWeaknessReport& Report, int32 MaxDrills = 3);
+
+	/**
+	 * 이번 세션 리포트 + 과거 만성 추세를 함께 반영한 추천 (결정론적).
+	 * Recommend 와 달리:
+	 *   - 만성 축(여러 세션 반복)·악화 축을 우선순위 위로 끌어올린다.
+	 *   - 같은 축이 반복 처방될 때 드릴을 로테이션해 매번 같은 운동만 나오지 않게 한다.
+	 * Chronic.bValid=false(이력 부족)면 Recommend 와 동일하게 동작한다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Feedback")
+	static TArray<FTrainingDrill> RecommendWithHistory(
+		const FWeaknessReport& Report, const FChronicWeaknessReport& Chronic, int32 MaxDrills = 3);
 };

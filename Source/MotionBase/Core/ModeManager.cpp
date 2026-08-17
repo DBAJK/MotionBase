@@ -30,8 +30,8 @@ void UModeManager::Deinitialize()
 {
 	// 앱 종료·레벨 정리 시점에 폰이 flush 하지 못한 세션이 남아 있을 수 있다.
 	// FinalizeSession 이 빈 세션은 스스로 걸러내므로 무조건 한 번 호출해도 안전하다.
-	// (여기선 집계 평균을 다시 구하지 않고, 시도들만 확정 저장한다.)
-	FinalizeSession(FScoreResult());
+	// (여기선 집계 평균·리포트를 다시 구하지 않고, 시도들만 확정 저장한다.)
+	FinalizeSession(FScoreResult(), FWeaknessReport());
 
 	Super::Deinitialize();
 }
@@ -60,6 +60,122 @@ void UModeManager::ClearSessionResults()
 	SessionResults.Reset();
 }
 
+bool UModeManager::FinalizeSession(const FScoreResult& SessionAverage, const FWeaknessReport& Report)
+{
+	// 빈 세션(시도 0)은 저장하지 않는다 — 모드에 들어갔다 바로 나온 경우까지
+	// 기록으로 남으면 통계·최고점이 오염된다.
+	if (SessionResults.Num() == 0)
+	{
+		return false;
+	}
+
+	if (!SaveData)
+	{
+		UE_LOG(LogMotionBase, Warning, TEXT("ModeManager: SaveData 없음 — 세션을 저장하지 못했습니다."));
+		SessionResults.Reset();
+		return false;
+	}
+
+	FSessionResult Session;
+	Session.Mode = ActiveMode;
+	Session.StartedAt = SessionStartedAt;
+	Session.AttemptCount = SessionResults.Num();
+	Session.Attempts = SessionResults;
+	Session.Average = SessionAverage;
+	Session.DifficultyLevel = static_cast<int32>(ActiveDifficulty);
+	Session.Report = Report; // 만성 약점·추세 계산의 원천 — 세션마다 함께 저장.
+
+	SaveData->History.Add(MoveTemp(Session));
+	PersistSaveData();
+
+	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 세션 저장 (mode=%s 시도 %d 평균 %.1f) — 누적 %d건"),
+		*GetModeIdName(ActiveMode).ToString(), SaveData->History.Last().AttemptCount,
+		SessionAverage.TotalScore, SaveData->History.Num());
+
+	// 저장했으면 반드시 비운다 — 다음 flush 에서 같은 세션이 두 번 기록되지 않게.
+	SessionResults.Reset();
+	return true;
+}
+
+const TArray<FSessionResult>& UModeManager::GetHistory() const
+{
+	static const TArray<FSessionResult> Empty;
+	return SaveData ? SaveData->History : Empty;
+}
+
+float UModeManager::GetBestTotalScore(EGameModeId Mode) const
+{
+	if (!SaveData)
+	{
+		return -1.0f;
+	}
+
+	float Best = -1.0f;
+	for (const FSessionResult& S : SaveData->History)
+	{
+		if (S.Mode == Mode)
+		{
+			Best = FMath::Max(Best, S.Average.TotalScore);
+		}
+	}
+	return Best;
+}
+
+FModeStats UModeManager::GetModeStats(EGameModeId Mode, int32 RecentCount) const
+{
+	FModeStats Stats;
+	if (!SaveData)
+	{
+		return Stats;
+	}
+
+	double Sum = 0.0;
+	for (const FSessionResult& S : SaveData->History)
+	{
+		if (S.Mode != Mode)
+		{
+			continue;
+		}
+		const float T = S.Average.TotalScore;
+		Stats.BestTotal = FMath::Max(Stats.BestTotal, T);
+		Stats.LastTotal = T; // append 순서 = 시간순 → 마지막 매치가 가장 최근
+		Sum += T;
+		++Stats.SessionCount;
+	}
+
+	if (Stats.SessionCount > 0)
+	{
+		Stats.AverageTotal = static_cast<float>(Sum / Stats.SessionCount);
+	}
+
+	// 최근 RecentCount 개를 뒤에서부터 모아 오래된→최신 순으로 담는다.
+	RecentCount = FMath::Max(RecentCount, 0);
+	for (int32 i = SaveData->History.Num() - 1; i >= 0 && Stats.RecentTotals.Num() < RecentCount; --i)
+	{
+		if (SaveData->History[i].Mode == Mode)
+		{
+			Stats.RecentTotals.Insert(SaveData->History[i].Average.TotalScore, 0);
+		}
+	}
+
+	return Stats;
+}
+
+void UModeManager::PersistSaveData() const
+{
+	if (!SaveData)
+	{
+		return;
+	}
+
+	const bool bOk = UGameplayStatics::SaveGameToSlot(
+		SaveData, UMotionBaseSaveGame::DefaultSlotName, UMotionBaseSaveGame::DefaultUserIndex);
+	if (!bOk)
+	{
+		UE_LOG(LogMotionBase, Warning, TEXT("ModeManager: 저장 슬롯 기록 실패."));
+	}
+}
+
 void UModeManager::RecordResult(const FScoreResult& Result)
 {
 	FScoreResult Stored = Result;
@@ -71,12 +187,20 @@ void UModeManager::RecordResult(const FScoreResult& Result)
 		Stored.ModeId = GetModeIdName(ActiveMode);
 	}
 
+	// 배치의 첫 시도에서 세션 시작 시각을 찍는다. 리셋([R])으로 시작된 새 세션은
+	// SetActiveMode 를 다시 거치지 않으므로, 여기서 갱신해야 저장 시각이 정확하다.
+	if (SessionResults.Num() == 0)
+	{
+		SessionStartedAt = FDateTime::Now();
+	}
+
 	SessionResults.Add(Stored);
 
 	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 결과 기록 (mode=%s total=%.1f) 누적 %d건"),
 		*Stored.ModeId.ToString(), Stored.TotalScore, SessionResults.Num());
 
-	// TODO: PlayResultLogger / SaveGame 로 영속화, 일정 누적 시 AI 피드백 트리거.
+	// 여기서는 세션 내 메모리 누적만 한다. 슬롯 영속화는 세션 종료 시
+	// FinalizeSession 에서 한 번에 일어난다 (스윙마다 디스크에 쓰지 않는다).
 }
 
 TArray<EGameModeId> UModeManager::GetMenuModes()

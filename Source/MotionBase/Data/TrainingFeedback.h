@@ -19,11 +19,18 @@
 UENUM(BlueprintType)
 enum class EWeaknessAxis : uint8
 {
+	// ── 스윙 지표(Vive) 기반 ──
 	ContactRate     UMETA(DisplayName = "컨택률"),        // 헛스윙이 잦음
 	Timing          UMETA(DisplayName = "타이밍"),        // 컨택 순간이 도달 시각과 어긋남
 	ContactAccuracy UMETA(DisplayName = "컨택 정확도"),   // 스위트스팟에서 벗어남
 	BatSpeed        UMETA(DisplayName = "배트 스피드"),   // 임팩트 속도 부족
-	Consistency     UMETA(DisplayName = "일관성")         // 시도별 편차가 큼
+	Consistency     UMETA(DisplayName = "일관성"),        // 시도별 편차가 큼
+
+	// ── 신체역학(카메라/MediaPipe) 기반 ──
+	HipShoulderSeparation UMETA(DisplayName = "상하체 분리(X-factor)"), // 비틀림=파워 저장 부족
+	HeadStability         UMETA(DisplayName = "머리 안정"),             // 스윙 중 머리 흔들림
+	KineticChain          UMETA(DisplayName = "운동 사슬"),             // 힙→어깨→손 순서 흐트러짐
+	WeightShift           UMETA(DisplayName = "체중 이동")              // 뒷발→앞발 이동 부족
 };
 
 /** 한 축의 약점. */
@@ -97,4 +104,77 @@ struct FTrainingDrill
 	/** 핵심 포커스 큐 (짧게). */
 	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
 	FString FocusCue;
+};
+
+/**
+ * 한 약점 축의 세션 간 변화 방향. 단일 세션 리포트로는 알 수 없고,
+ * 저장 이력 여러 건을 UWeaknessDetector::AnalyzeTrend 로 훑어야 나온다.
+ */
+UENUM(BlueprintType)
+enum class EWeaknessTrend : uint8
+{
+	Insufficient UMETA(DisplayName = "표본 부족"), // 창 안 유효 세션 < 2
+	New          UMETA(DisplayName = "신규"),      // 최근에 처음 잡힌 약점
+	Improving    UMETA(DisplayName = "개선 중"),   // 수행도가 오르는 추세
+	Stable       UMETA(DisplayName = "정체"),      // 변화 미미
+	Worsening    UMETA(DisplayName = "악화")        // 수행도가 내려가는 추세
+};
+
+/**
+ * 한 축의 세션 간 추세 (저장 이력 기반). "이 약점이 만성인가, 나아지는가"에 답한다.
+ * 추천 우선순위(만성일수록 위로)와 결과 화면 추세 표시의 입력.
+ */
+USTRUCT(BlueprintType)
+struct FAxisTrend
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	EWeaknessAxis Axis = EWeaknessAxis::Timing;
+
+	/** 분석 창 안에서 이 축이 약점으로 잡힌 세션 수. */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	int32 AppearanceCount = 0;
+
+	/** 실제 분석에 쓴 세션 수 (요청 창 크기 이하, 리포트 있는 세션만). */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	int32 WindowSize = 0;
+
+	/** 창 안 평균 수행도 0~1 (약점 미등장 세션은 낙관 대체값으로 채움). */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	float AverageScore = 0.0f;
+
+	/** 수행도 기울기(세션당). 양수 = 개선, 음수 = 악화. */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	float ScoreSlope = 0.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	EWeaknessTrend Trend = EWeaknessTrend::Insufficient;
+
+	/** 창의 절반 이상에서 반복 등장한 만성 약점인지. */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	bool bChronic = false;
+};
+
+/**
+ * 저장 이력 전체를 훑은 만성 약점/추세 리포트 (계산 계층).
+ * ⚠️ "아직 저장되지 않은 이번 세션"은 포함하지 않는다 — FModeStats 와 같은 규칙.
+ *    그래서 이번 세션 리포트(단발)와 과거 추세(이력)를 분리해 비교할 수 있다.
+ */
+USTRUCT(BlueprintType)
+struct FChronicWeaknessReport
+{
+	GENERATED_BODY()
+
+	/** 만성도·심각도 순 정렬 (앞쪽이 가장 시급). */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	TArray<FAxisTrend> Trends;
+
+	/** 실제 분석에 쓴 세션 수. */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	int32 SessionsAnalyzed = 0;
+
+	/** 분석할 이력이 충분했는지. */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	bool bValid = false;
 };

@@ -1,6 +1,9 @@
 #include "UI/ModeSelectHUD.h"
+#include "UI/SessionResultView.h"
 #include "Core/ModeSelectPawn.h"
 #include "Core/ModeManager.h"
+#include "Analysis/WeaknessDetector.h"
+#include "Data/SessionSummary.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -160,11 +163,22 @@ void AModeSelectHUD::DrawHUD()
 		return;
 	}
 
-	// 모드 플레이 중이면 그리지 않는다 (빙의된 폰으로 판단).
+	// 모드 플레이 중이면 메뉴를 그리지 않는다 (빙의된 폰으로 판단).
 	AModeSelectPawn* SelectPawn = Cast<AModeSelectPawn>(GetOwningPawn());
 	if (!SelectPawn)
 	{
 		bCursorInitialized = false; // 다음 복귀 때 커서가 미끄러져 들어오지 않도록 초기화.
+
+		// 결과 화면을 제공하는 폰(ISessionResultView)이 결과 상태면 결과 패널을 그린다.
+		// 모드 폰마다 HUD 를 갈아끼우지 않고, 이 단일 HUD 가 인터페이스로만 읽어 그린다.
+		if (ISessionResultView* ResultView = Cast<ISessionResultView>(GetOwningPawn()))
+		{
+			FSessionSummary Summary;
+			if (ResultView->GetSessionSummary(Summary))
+			{
+				DrawSessionResult(Summary);
+			}
+		}
 		return;
 	}
 
@@ -352,4 +366,344 @@ void AModeSelectHUD::DrawHUD()
 	const float StatusScale = 0.85f * S;
 	GetTextSize(Status, TW, TH, FontBody, StatusScale);
 	DrawText(Status, TextLocked, ContentX + ContentW - TW, FooterY + 8.0f * S, FontBody, StatusScale);
+}
+
+void AModeSelectHUD::DrawMeter(const FString& Label, float Value01, float X, float Y, float W, float S,
+	UFont* Font, const FLinearColor& Fill)
+{
+	const float LabelScale = 0.85f * S;
+	DrawText(Label, TextSecondary, X, Y, Font, LabelScale);
+
+	const float BarX = X + 92.0f * S;
+	const float PctW = 54.0f * S;
+	const float BarW = FMath::Max(W - 92.0f * S - PctW, 10.0f * S);
+	const float BarH = 14.0f * S;
+	const float BarY = Y + 2.0f * S;
+	const float V = FMath::Clamp(Value01, 0.0f, 1.0f);
+
+	DrawRect(FLinearColor(1.0f, 1.0f, 1.0f, 0.06f), BarX, BarY, BarW, BarH);
+	DrawRect(Fill, BarX, BarY, BarW * V, BarH);
+	DrawText(FString::Printf(TEXT("%.0f%%"), V * 100.0f), TextPrimary, BarX + BarW + 10.0f * S, Y, Font, LabelScale);
+}
+
+float AModeSelectHUD::DrawWrapped(const FString& Text, const FLinearColor& Color, float X, float Y,
+	float MaxW, float Scale, UFont* Font, float LineH)
+{
+	if (Text.IsEmpty() || MaxW <= 0.0f)
+	{
+		return 0.0f;
+	}
+
+	FString Line;
+	float CurY = Y;
+	float TW = 0.0f, TH = 0.0f;
+
+	// 한글은 단어 공백이 드물어 공백 단위 줄바꿈이 통하지 않는다 → 문자 단위로 폭을 재며 접는다.
+	for (int32 i = 0; i < Text.Len(); ++i)
+	{
+		const TCHAR Ch = Text[i];
+		Line.AppendChar(Ch);
+		GetTextSize(Line, TW, TH, Font, Scale);
+		if (TW > MaxW && Line.Len() > 1)
+		{
+			Line.LeftChopInline(1); // 방금 넘친 글자를 빼고 현재 줄을 확정
+			DrawText(Line, Color, X, CurY, Font, Scale);
+			CurY += LineH;
+			Line.Reset();
+			Line.AppendChar(Ch); // 넘친 글자는 다음 줄 첫 글자로
+		}
+	}
+
+	if (!Line.IsEmpty())
+	{
+		DrawText(Line, Color, X, CurY, Font, Scale);
+		CurY += LineH;
+	}
+
+	return CurY - Y;
+}
+
+void AModeSelectHUD::DrawSessionResult(const FSessionSummary& Sum)
+{
+	const float W = Canvas->SizeX;
+	const float H = Canvas->SizeY;
+	if (W <= 0.0f || H <= 0.0f)
+	{
+		return;
+	}
+
+	const float S = FMath::Clamp(H / 1080.0f, 0.7f, 2.5f);
+	UFont* const FontLarge = ResolveFont(true);
+	UFont* const FontBody = ResolveFont(false);
+	float TW = 0.0f, TH = 0.0f;
+
+	// ── 배경 + 중앙 패널 ──
+	DrawVerticalGradient(0.0f, 0.0f, W, H, BackdropTop, BackdropBottom, 64);
+
+	const float PanelW = FMath::Min(W * 0.74f, 1180.0f * S);
+	const float PanelH = FMath::Min(H * 0.86f, 940.0f * S);
+	const float PX = (W - PanelW) * 0.5f;
+	const float PY = (H - PanelH) * 0.5f;
+	DrawRect(FLinearColor(1.0f, 1.0f, 1.0f, 0.028f), PX, PY, PanelW, PanelH);
+	DrawOutlineRect(PX, PY, PanelW, PanelH, CardBorderSel, FMath::Max(1.0f * S, 1.0f));
+
+	const float x = PX + 44.0f * S;
+	const float InnerW = PanelW - 88.0f * S;
+	float y = PY + 34.0f * S;
+
+	// ── 헤더 (제목 + 모드·난이도) ──
+	DrawRect(Accent, x, y + 2.0f * S, 6.0f * S, 42.0f * S);
+	DrawText(TEXT("세션 결과"), TextTitle, x + 20.0f * S, y, FontLarge, 1.7f * S);
+
+	const FString ModeTxt = FString::Printf(TEXT("%s · %s"),
+		*UModeManager::GetModeDisplayName(Sum.Mode).ToString(),
+		*UModeManager::GetDifficultyDisplayName(Sum.Difficulty).ToString());
+	GetTextSize(ModeTxt, TW, TH, FontBody, 0.95f * S);
+	DrawText(ModeTxt, TextSecondary, x + InnerW - TW, y + 16.0f * S, FontBody, 0.95f * S);
+
+	y += 62.0f * S;
+	DrawRect(Divider, x, y, InnerW, FMath::Max(1.5f * S, 1.0f));
+	y += 24.0f * S;
+
+	// ── 총점 (왼쪽) + 3축 미터 (오른쪽) ──
+	DrawText(TEXT("총점"), TextSecondary, x, y, FontBody, 0.9f * S);
+	const FString TotalStr = FString::Printf(TEXT("%.0f"), Sum.Score.TotalScore);
+	DrawText(TotalStr, Sum.bNewRecord ? Accent : TextTitle, x, y + 20.0f * S, FontLarge, 2.5f * S);
+	GetTextSize(TotalStr, TW, TH, FontLarge, 2.5f * S);
+
+	const float SideX = x + TW + 26.0f * S;
+	const float SideY = y + 26.0f * S;
+	if (Sum.bNewRecord)
+	{
+		const FString Badge = TEXT("신기록!");
+		float BW = 0.0f, BH = 0.0f;
+		GetTextSize(Badge, BW, BH, FontBody, 1.0f * S);
+		const float PadX = 14.0f * S;
+		const float PillW = BW + PadX * 2.0f;
+		const float PillH = BH + 10.0f * S;
+		DrawRect(PillReady, SideX, SideY, PillW, PillH);
+		DrawText(Badge, PillReadyText, SideX + PadX, SideY + (PillH - BH) * 0.5f, FontBody, 1.0f * S);
+		if (Sum.BestTotalScore >= 0.0f)
+		{
+			DrawText(FString::Printf(TEXT("이전 최고 %.0f"), Sum.BestTotalScore),
+				TextSecondary, SideX, SideY + PillH + 6.0f * S, FontBody, 0.8f * S);
+		}
+	}
+	else if (Sum.BestTotalScore >= 0.0f)
+	{
+		DrawText(FString::Printf(TEXT("최고 %.0f"), Sum.BestTotalScore),
+			TextSecondary, SideX, SideY + 4.0f * S, FontBody, 0.95f * S);
+	}
+	if (Sum.Score.bUncalibrated)
+	{
+		DrawText(TEXT("※ 미보정 기준값"), Notice, SideX, SideY + 42.0f * S, FontBody, 0.8f * S);
+	}
+
+	// 3축 미터 (오른쪽 컬럼)
+	const float MeterX = x + InnerW * 0.46f;
+	const float MeterW = InnerW * 0.54f;
+	float MY = y + 6.0f * S;
+	DrawMeter(TEXT("정확도"), Sum.Score.Accuracy, MeterX, MY, MeterW, S, FontBody, FLinearColor(0.36f, 0.62f, 1.0f, 0.9f));
+	MY += 34.0f * S;
+	DrawMeter(TEXT("효율"), Sum.Score.Efficiency, MeterX, MY, MeterW, S, FontBody, Accent);
+	MY += 34.0f * S;
+	DrawMeter(TEXT("일관성"), Sum.Score.Consistency, MeterX, MY, MeterW, S, FontBody, FLinearColor(0.42f, 0.85f, 0.55f, 0.9f));
+
+	y += 128.0f * S;
+	DrawRect(Divider, x, y, InnerW, FMath::Max(1.0f * S, 1.0f));
+	y += 20.0f * S;
+
+	// ── 집계 카운트 ──
+	const FString Counts = FString::Printf(TEXT("스윙 %d    컨택 %d    홈런 %d    안타 %d    삼진 %d    볼넷 %d"),
+		Sum.SwingCount, Sum.ContactCount, Sum.HomeRunCount, Sum.HitCount, Sum.StrikeoutCount, Sum.WalkCount);
+	const float CountScale = FitScale(Counts, FontBody, 0.95f * S, InnerW);
+	DrawText(Counts, TextPrimary, x, y, FontBody, CountScale);
+	y += 34.0f * S;
+
+	// 비거리 — 야구 콘텐츠의 대표 지표라 눈에 띄게.
+	if (Sum.ContactCount > 0)
+	{
+		const FString CarryLabel = TEXT("최고 비거리 ");
+		DrawText(CarryLabel, TextSecondary, x, y + 8.0f * S, FontBody, 0.9f * S);
+		float LW = 0.0f, LH = 0.0f;
+		GetTextSize(CarryLabel, LW, LH, FontBody, 0.9f * S);
+
+		const FString CarryBig = FString::Printf(TEXT("%.0f m"), Sum.MaxCarryDistanceM);
+		DrawText(CarryBig, Accent, x + LW, y, FontLarge, 1.15f * S);
+		float BW = 0.0f, BH = 0.0f;
+		GetTextSize(CarryBig, BW, BH, FontLarge, 1.15f * S);
+
+		DrawText(FString::Printf(TEXT("평균 %.0f m"), Sum.AvgCarryDistanceM),
+			TextSecondary, x + LW + BW + 22.0f * S, y + 8.0f * S, FontBody, 0.9f * S);
+		y += 44.0f * S;
+	}
+	else
+	{
+		y += 6.0f * S;
+	}
+
+	// ── 신체역학 (최근 스윙) ──
+	{
+		const FString BodyHeader = Sum.bMockBodyMechanics ? TEXT("신체역학  [MOCK]") : TEXT("신체역학");
+		DrawText(BodyHeader, Accent, x, y, FontBody, 0.95f * S);
+		y += 26.0f * S;
+
+		if (Sum.BodyMechanics.bValid)
+		{
+			const FBodyMechanicsMetrics& BM = Sum.BodyMechanics;
+			const FString BodyLine = FString::Printf(
+				TEXT("X-factor %.0f°    체중이동 %.0fcm    머리흔들림 %.1fcm    척추 %.0f°    체인 %s    신뢰도 %.2f"),
+				BM.HipShoulderSeparationDeg, BM.WeightShiftCm, BM.HeadTravelCm, BM.SpineTiltDeg,
+				BM.bKineticChainOrdered ? TEXT("정상") : TEXT("흐트러짐"), BM.Confidence);
+			const float BodyScale = FitScale(BodyLine, FontBody, 0.88f * S, InnerW - 12.0f * S);
+			DrawText(BodyLine, TextPrimary, x + 12.0f * S, y, FontBody, BodyScale);
+		}
+		else
+		{
+			DrawText(TEXT("데이터 없음 (포즈 추적 실패/프레임 부족)"), TextSecondary, x + 12.0f * S, y, FontBody, 0.88f * S);
+		}
+		y += 34.0f * S;
+	}
+
+	// ── 기록 / 추세 (이번 판 vs 과거 저장 기록) ──
+	{
+		const FModeStats& St = Sum.PriorStats;
+		DrawText(TEXT("기록"), Accent, x, y, FontBody, 0.95f * S);
+		y += 26.0f * S;
+
+		if (St.SessionCount <= 0)
+		{
+			DrawText(TEXT("이번이 첫 기록입니다."), TextSecondary, x + 12.0f * S, y, FontBody, 0.9f * S);
+			y += 30.0f * S;
+		}
+		else
+		{
+			// 왼쪽: 요약 + 평균 대비 증감
+			const FString Line1 = FString::Printf(TEXT("이번 %d번째 세션    평균 %.0f    직전 %.0f    최고 %.0f"),
+				St.SessionCount + 1, St.AverageTotal, St.LastTotal, St.BestTotal);
+			DrawText(Line1, TextPrimary, x + 12.0f * S, y, FontBody, 0.88f * S);
+
+			const float DAvg = Sum.Score.TotalScore - St.AverageTotal;
+			const float DLast = Sum.Score.TotalScore - St.LastTotal;
+			const FString DStr = FString::Printf(TEXT("평균 대비 %+.0f   ·   직전 대비 %+.0f"), DAvg, DLast);
+			DrawText(DStr, DAvg >= 0.0f ? PillReadyText : Notice, x + 12.0f * S, y + 24.0f * S, FontBody, 0.9f * S);
+
+			// 오른쪽: 최근 추세 미니 바 (마지막 = 이번 세션, 강조)
+			TArray<float> Series = St.RecentTotals;
+			Series.Add(Sum.Score.TotalScore);
+			float MaxV = 1.0f;
+			for (float V : Series)
+			{
+				MaxV = FMath::Max(MaxV, V);
+			}
+			const int32 NB = Series.Num();
+			const float AreaX = x + InnerW * 0.52f;
+			const float AreaW = InnerW * 0.48f;
+			const float Slot = AreaW / FMath::Max(NB, 1);
+			const float BarW = Slot * 0.6f;
+			const float BarMaxH = 48.0f * S;
+			const float BaseY = y + BarMaxH;
+			for (int32 i = 0; i < NB; ++i)
+			{
+				const float Hh = BarMaxH * FMath::Clamp(Series[i] / MaxV, 0.0f, 1.0f);
+				const bool bCurrent = (i == NB - 1);
+				const float Bx = AreaX + i * Slot + (Slot - BarW) * 0.5f;
+				DrawRect(bCurrent ? Accent : FLinearColor(1.0f, 1.0f, 1.0f, 0.16f), Bx, BaseY - Hh, BarW, Hh);
+			}
+			DrawText(TEXT("최근 추세"), TextLocked, AreaX, BaseY + 4.0f * S, FontBody, 0.72f * S);
+
+			y += 62.0f * S;
+		}
+	}
+
+	// ── 약점 (시급한 순 상위 3) ──
+	DrawText(TEXT("약점"), Accent, x, y, FontBody, 0.95f * S);
+	y += 26.0f * S;
+	const int32 ShowN = FMath::Min(Sum.Report.Weaknesses.Num(), 3);
+	if (ShowN == 0)
+	{
+		DrawText(Sum.Report.bValid ? TEXT("두드러진 약점 없음 — 안정적입니다.") : TEXT("표본이 부족합니다. 더 스윙해 보세요."),
+			TextSecondary, x + 12.0f * S, y, FontBody, 0.9f * S);
+		y += 28.0f * S;
+	}
+	for (int32 i = 0; i < ShowN; ++i)
+	{
+		const FWeakness& Wk = Sum.Report.Weaknesses[i];
+		const FString Head = FString::Printf(TEXT("%d) %s"),
+			i + 1, *UWeaknessDetector::GetAxisDisplayName(Wk.Axis).ToString());
+		DrawText(Head, TextPrimary, x + 12.0f * S, y, FontBody, 0.92f * S);
+		float HW = 0.0f, HH = 0.0f;
+		GetTextSize(Head, HW, HH, FontBody, 0.92f * S);
+		const float EvX = x + 12.0f * S + HW + 14.0f * S;
+		const float EvH = DrawWrapped(Wk.Evidence, TextSecondary, EvX, y, InnerW - (EvX - x), 0.85f * S, FontBody, 22.0f * S);
+		y += FMath::Max(EvH, 24.0f * S) + 4.0f * S;
+	}
+	y += 8.0f * S;
+
+	// ── 훈련 추세 (과거 세션 기반 만성 약점) ──
+	if (Sum.Chronic.bValid && Sum.Chronic.Trends.Num() > 0)
+	{
+		DrawText(FString::Printf(TEXT("훈련 추세 (최근 %d세션)"), Sum.Chronic.SessionsAnalyzed),
+			Accent, x, y, FontBody, 0.95f * S);
+		y += 26.0f * S;
+
+		const int32 TrendN = FMath::Min(Sum.Chronic.Trends.Num(), 3);
+		for (int32 i = 0; i < TrendN; ++i)
+		{
+			const FAxisTrend& Tr = Sum.Chronic.Trends[i];
+
+			// 추세에 따라 색을 달리한다 — 개선은 긍정색(초록), 악화는 주의색(주황).
+			FLinearColor TrendColor = TextSecondary;
+			switch (Tr.Trend)
+			{
+			case EWeaknessTrend::Improving: TrendColor = PillReadyText; break;
+			case EWeaknessTrend::Worsening: TrendColor = Notice; break;
+			default: break;
+			}
+
+			const FString ChronicTag = Tr.bChronic ? TEXT(" · 만성") : TEXT("");
+			const FString Line = FString::Printf(TEXT("· %s: %d/%d세션 · %s%s"),
+				*UWeaknessDetector::GetAxisDisplayName(Tr.Axis).ToString(),
+				Tr.AppearanceCount, Tr.WindowSize,
+				*UWeaknessDetector::GetTrendDisplayName(Tr.Trend).ToString(),
+				*ChronicTag);
+			DrawText(Line, TrendColor, x + 12.0f * S, y, FontBody, 0.88f * S);
+			y += 24.0f * S;
+		}
+		y += 8.0f * S;
+	}
+
+	// ── 추천 드릴 ──
+	DrawText(TEXT("추천 드릴"), Accent, x, y, FontBody, 0.95f * S);
+	y += 26.0f * S;
+	for (int32 i = 0; i < Sum.Drills.Num(); ++i)
+	{
+		const FTrainingDrill& D = Sum.Drills[i];
+		const FString Head = FString::Printf(TEXT("· %s"), *D.Name);
+		DrawText(Head, TextPrimary, x + 12.0f * S, y, FontBody, 0.92f * S);
+		float HW = 0.0f, HH = 0.0f;
+		GetTextSize(Head, HW, HH, FontBody, 0.92f * S);
+		const float DX = x + 12.0f * S + HW + 14.0f * S;
+		const float DH = DrawWrapped(D.Description, TextSecondary, DX, y, InnerW - (DX - x), 0.85f * S, FontBody, 22.0f * S);
+		y += FMath::Max(DH, 24.0f * S) + 4.0f * S;
+	}
+	y += 8.0f * S;
+
+	// ── AI 코치 ──
+	const FString Coach = Sum.bAwaitingCoaching ? TEXT("AI 코칭 생성 중...") : Sum.CoachingText;
+	if (!Coach.IsEmpty())
+	{
+		DrawText(TEXT("AI 코치"), Notice, x, y, FontBody, 0.95f * S);
+		y += 26.0f * S;
+		DrawWrapped(Coach, TextPrimary, x + 12.0f * S, y, InnerW - 12.0f * S, 0.9f * S, FontBody, 26.0f * S);
+	}
+
+	// ── 푸터 조작 안내 ──
+	const float FooterY = PY + PanelH - 52.0f * S;
+	DrawRect(Divider, x, FooterY - 14.0f * S, InnerW, FMath::Max(1.0f * S, 1.0f));
+	float HintX = x;
+	HintX += DrawKeyHint(TEXT("Space"), TEXT("계속"), HintX, FooterY, S, FontBody);
+	HintX += DrawKeyHint(TEXT("R"), TEXT("다시"), HintX, FooterY, S, FontBody);
+	HintX += DrawKeyHint(TEXT("M"), TEXT("모드 선택"), HintX, FooterY, S, FontBody);
+	HintX += DrawKeyHint(TEXT("F"), TEXT("분석 갱신"), HintX, FooterY, S, FontBody);
 }

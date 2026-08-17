@@ -64,10 +64,11 @@ public:
 	 * 시도가 하나도 없으면(빈 세션) 저장하지 않고 조용히 무시한다.
 	 * 저장 후 SessionResults 를 비운다 → 같은 세션이 두 번 기록되지 않는다.
 	 * @param SessionAverage 세션 집계 점수 (호출자가 ScoreSession 으로 구한 값).
+	 * @param Report         이 세션의 약점 리포트 (없으면 기본값 — 만성 약점 계산에서 무시됨).
 	 * @return 실제로 저장했으면 true.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Mode")
-	bool FinalizeSession(const FScoreResult& SessionAverage);
+	bool FinalizeSession(const FScoreResult& SessionAverage, const FWeaknessReport& Report);
 
 	/** 저장된 전체 세션 기록 (오래된→최신 순, append 순서). */
 	const TArray<FSessionResult>& GetHistory() const;
@@ -78,6 +79,14 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
 	float GetBestTotalScore(EGameModeId Mode) const;
+
+	/**
+	 * 특정 모드의 누적 기록 집계 (세션 수·최고·평균·직전·최근 추세).
+	 * 결과 화면이 이번 판을 과거와 비교하는 데 쓴다. 저장된 세션만 반영한다.
+	 * @param RecentCount 추세 그래프에 담을 최근 세션 개수.
+	 */
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
+	FModeStats GetModeStats(EGameModeId Mode, int32 RecentCount = 6) const;
 
 	// ── 시작 화면(모드 선택)용 메타데이터 ──
 

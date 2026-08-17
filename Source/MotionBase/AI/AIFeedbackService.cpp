@@ -30,20 +30,39 @@ bool UAIFeedbackService::IsConfigured() const
 FString UAIFeedbackService::BuildSystemPrompt() const
 {
 	return TEXT(
-		"당신은 야구 타격 코치입니다. 주어진 '약점 분석'과 '추천 드릴'만 근거로 "
+		"당신은 야구 타격 코치입니다. 주어진 '약점 분석'·'훈련 추세'·'추천 드릴'만 근거로 "
 		"한국어로 2~3문장의 짧고 구체적인 코칭을 작성하세요.\n"
 		"규칙:\n"
 		"- 제공된 숫자만 인용하고, 새로운 수치나 지표를 지어내지 마세요.\n"
+		"- '훈련 추세'가 있으면 반영하세요: '개선 중'이면 격려하고, '악화'·'만성'이면 "
+		"반복되는 약점임을 짚어 그 드릴에 집중하라고 권하세요. 추세가 없으면 언급하지 마세요.\n"
 		"- 추천 드릴을 이름으로 자연스럽게 언급하세요.\n"
 		"- 격려하는 톤이되 과장하지 마세요.\n"
 		"- '미보정' 표시가 있으면 단정하지 말고 '대략' 같은 표현을 쓰세요.\n"
 		"- 코칭 문장만 출력하고 머리말·목록·마크다운은 쓰지 마세요.");
 }
 
-FString UAIFeedbackService::BuildUserPrompt(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills) const
+FString UAIFeedbackService::BuildUserPrompt(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
+	const FChronicWeaknessReport& Chronic) const
 {
 	FString P = TEXT("[약점 분석]\n");
 	P += UWeaknessDetector::SummarizeReport(Report);
+
+	// 이력이 쌓였을 때만 추세 블록을 넣는다 — 없으면 LLM 이 지어내지 않도록 아예 생략.
+	if (Chronic.bValid && Chronic.Trends.Num() > 0)
+	{
+		P += FString::Printf(TEXT("\n\n[훈련 추세] (최근 %d세션 기준)\n"), Chronic.SessionsAnalyzed);
+		const int32 ShowN = FMath::Min(Chronic.Trends.Num(), 3);
+		for (int32 i = 0; i < ShowN; ++i)
+		{
+			const FAxisTrend& T = Chronic.Trends[i];
+			P += FString::Printf(TEXT("- %s: %d/%d세션 등장, %s%s\n"),
+				*UWeaknessDetector::GetAxisDisplayName(T.Axis).ToString(),
+				T.AppearanceCount, T.WindowSize,
+				*UWeaknessDetector::GetTrendDisplayName(T.Trend).ToString(),
+				T.bChronic ? TEXT(", 만성") : TEXT(""));
+		}
+	}
 
 	P += TEXT("\n\n[추천 드릴]\n");
 	if (Drills.Num() == 0)
@@ -62,7 +81,8 @@ FString UAIFeedbackService::BuildUserPrompt(const FWeaknessReport& Report, const
 	return P;
 }
 
-FString UAIFeedbackService::BuildRequestBody(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills) const
+FString UAIFeedbackService::BuildRequestBody(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
+	const FChronicWeaknessReport& Chronic) const
 {
 	// FJsonObject 로 구성해 한글·따옴표 이스케이프를 안전하게 처리.
 	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
@@ -72,7 +92,7 @@ FString UAIFeedbackService::BuildRequestBody(const FWeaknessReport& Report, cons
 
 	const TSharedRef<FJsonObject> UserMsg = MakeShared<FJsonObject>();
 	UserMsg->SetStringField(TEXT("role"), TEXT("user"));
-	UserMsg->SetStringField(TEXT("content"), BuildUserPrompt(Report, Drills));
+	UserMsg->SetStringField(TEXT("content"), BuildUserPrompt(Report, Drills, Chronic));
 
 	TArray<TSharedPtr<FJsonValue>> Messages;
 	Messages.Add(MakeShared<FJsonValueObject>(UserMsg));
@@ -84,7 +104,8 @@ FString UAIFeedbackService::BuildRequestBody(const FWeaknessReport& Report, cons
 	return Body;
 }
 
-void UAIFeedbackService::RequestSwingCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills)
+void UAIFeedbackService::RequestSwingCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
+	const FChronicWeaknessReport& Chronic)
 {
 	const FString ApiKey = LoadApiKey();
 	if (ApiKey.IsEmpty())
@@ -96,7 +117,7 @@ void UAIFeedbackService::RequestSwingCoaching(const FWeaknessReport& Report, con
 		return;
 	}
 
-	const FString Body = BuildRequestBody(Report, Drills);
+	const FString Body = BuildRequestBody(Report, Drills, Chronic);
 
 	const TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(TEXT("https://api.anthropic.com/v1/messages"));

@@ -25,11 +25,14 @@ class MOTIONBASE_API UAIFeedbackService : public UObject
 
 public:
 	/**
-	 * 약점 리포트 + 추천 드릴 → AI 코칭 문장 async 요청.
+	 * 약점 리포트 + 추천 드릴 + (선택) 만성 추세 → AI 코칭 문장 async 요청.
 	 * 완료 시 OnFeedbackReady(bSuccess, Text). 키 미설정·네트워크 실패 시 (false, 사유).
+	 * @param Chronic 과거 이력 기반 만성 약점·추세. bValid=false 면 프롬프트에서 생략된다 —
+	 *               이력이 쌓이면 코칭이 "이 약점이 반복되고 있다/나아지고 있다"까지 짚는다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|AI")
-	void RequestSwingCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills);
+	void RequestSwingCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
+		const FChronicWeaknessReport& Chronic);
 
 	/** API 키가 설정돼 있는지 (호출 전 UI 에서 확인용). */
 	UFUNCTION(BlueprintPure, Category = "MotionBase|AI")
@@ -57,9 +60,11 @@ private:
 	/** 코치 역할·규칙을 정하는 시스템 프롬프트. */
 	FString BuildSystemPrompt() const;
 
-	/** 리포트+드릴을 근거로 한 사용자 프롬프트 (숫자 포함). */
-	FString BuildUserPrompt(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills) const;
+	/** 리포트+드릴+추세를 근거로 한 사용자 프롬프트 (숫자 포함). */
+	FString BuildUserPrompt(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
+		const FChronicWeaknessReport& Chronic) const;
 
 	/** 요청 JSON 본문 직렬화. */
-	FString BuildRequestBody(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills) const;
+	FString BuildRequestBody(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
+		const FChronicWeaknessReport& Chronic) const;
 };

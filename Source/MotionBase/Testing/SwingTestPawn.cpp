@@ -3,6 +3,8 @@
 #include "Analysis/SwingAnalyzer.h"
 #include "Analysis/WeaknessDetector.h"
 #include "Analysis/HitModel.h"
+#include "Analysis/BodyMechanicsAnalyzer.h"
+#include "Input/MockCameraPoseSource.h"
 #include "Actors/PitchingZone.h"
 #include "AI/AIFeedbackService.h"
 #include "AI/DrillCatalog.h"
@@ -77,6 +79,10 @@ void ASwingTestPawn::BeginPlay()
 
 void ASwingTestPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// 모드 복귀([M])·앱 종료로 폰이 사라지기 전에 진행 중이던 세션을 저장한다.
+	// (다음 모드 진입 시 SetActiveMode 가 누적을 비우므로 여기서 flush 해야 한다.)
+	FlushSessionToSave();
+
 	// 이 폰이 만든 투수는 이 폰이 치운다. 모드 선택으로 돌아갈 때 폰만 파괴되면
 	// APitchingZone 이 남아 빈 화면에 계속 공을 던진다.
 	if (PitchingZone)
@@ -101,6 +107,14 @@ void ASwingTestPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this, &ASwingTestPawn::RequestFeedback);
 }
 
+FWeaknessReport ASwingTestPawn::BuildSessionReport() const
+{
+	FWeaknessReport Report = UWeaknessDetector::DetectSwing(SessionHistory, ScoringConfig);
+	// 신체역학 약점축(X-factor·머리 안정·운동 사슬·체중 이동)을 같은 리포트에 합류.
+	UWeaknessDetector::AppendBodyMechanicsWeaknesses(Report, SessionBodyHistory, BodyMechanicsScoring);
+	return Report;
+}
+
 void ASwingTestPawn::RequestFeedback()
 {
 	if (SessionHistory.Num() == 0)
@@ -113,8 +127,16 @@ void ASwingTestPawn::RequestFeedback()
 	}
 
 	// 1) 결정론적 약점 판별 + 드릴 추천 (네트워크 불필요 — 항상 나온다).
-	LastReport = UWeaknessDetector::DetectSwing(SessionHistory, ScoringConfig);
-	LastDrills = UDrillCatalog::Recommend(LastReport, 3);
+	LastReport = BuildSessionReport();
+
+	// 과거 저장 이력에서 만성 약점·추세를 뽑아 추천에 반영한다.
+	// (GetHistory 는 아직 저장 안 된 이번 세션을 제외 → "지금 vs 그동안" 비교가 성립.)
+	LastChronic = FChronicWeaknessReport();
+	if (UModeManager* ModeManager = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
+	{
+		LastChronic = UWeaknessDetector::AnalyzeTrend(ModeManager->GetHistory(), EGameModeId::Batting, 5);
+	}
+	LastDrills = UDrillCatalog::RecommendWithHistory(LastReport, LastChronic, 3);
 	bShowFeedback = true;
 
 	// 2) AI 코칭 요청 (키가 있으면 표현 문장을 얹는다).
@@ -122,7 +144,7 @@ void ASwingTestPawn::RequestFeedback()
 	{
 		CoachingText.Reset();
 		bAwaitingCoaching = true;
-		FeedbackService->RequestSwingCoaching(LastReport, LastDrills);
+		FeedbackService->RequestSwingCoaching(LastReport, LastDrills, LastChronic);
 	}
 	else
 	{
@@ -139,45 +161,53 @@ void ASwingTestPawn::HandleCoachingReady(bool bSuccess, const FString& Text)
 	UE_LOG(LogMotionBase, Log, TEXT("[SwingTest] AI 코칭 %s"), bSuccess ? TEXT("수신") : TEXT("실패"));
 }
 
-void ASwingTestPawn::DrawFeedback() const
+bool ASwingTestPawn::GetSessionSummary(FSessionSummary& OutSummary) const
 {
-	if (!GEngine || !bShowFeedback)
+	// [F] 로 결과를 띄우지 않았으면 결과 화면을 그리지 않는다 (플레이 중).
+	if (!bShowFeedback)
 	{
-		return;
+		return false;
 	}
 
-	GEngine->AddOnScreenDebugMessage(30, 2.0f, FColor::White,
-		FString::Printf(TEXT("=== 세션 피드백 ===  시도 %d · 컨택 %d"),
-			LastReport.AttemptCount, LastReport.ContactCount));
+	OutSummary.Mode = EGameModeId::Batting;
+	OutSummary.Difficulty = SessionDifficulty;
+	OutSummary.Score = SessionScore;
 
-	// 약점 (시급한 순, 상위 3개)
-	const int32 ShowN = FMath::Min(LastReport.Weaknesses.Num(), 3);
-	if (ShowN == 0)
+	OutSummary.SwingCount = SwingCount;
+	OutSummary.ContactCount = ContactCount;
+	OutSummary.HomeRunCount = HomeRunCount;
+	OutSummary.HitCount = HitCount;
+	OutSummary.StrikeoutCount = StrikeoutCount;
+	OutSummary.WalkCount = WalkCount;
+
+	OutSummary.MaxCarryDistanceM = SessionMaxCarryM;
+	OutSummary.AvgCarryDistanceM = (ContactCount > 0) ? (SessionCarrySumM / ContactCount) : 0.0f;
+
+	OutSummary.Report = LastReport;
+	OutSummary.Chronic = LastChronic;
+	OutSummary.Drills = LastDrills;
+	OutSummary.CoachingText = CoachingText;
+	OutSummary.bAwaitingCoaching = bAwaitingCoaching;
+
+	OutSummary.BodyMechanics = LastBodyMechanics;
+	OutSummary.bMockBodyMechanics = true; // 실제 카메라가 아니라 Mock 포즈 소스 산출
+
+	// 최고 기록은 "아직 저장되지 않은 이번 세션"을 제외한 과거 기록에서 온다.
+	// → 이번 총점이 그 값을 넘으면 신기록. (첫 기록이면 Best < 0.)
+	OutSummary.BestTotalScore = -1.0f;
+	OutSummary.bNewRecord = false;
+	if (UGameInstance* GI = GetGameInstance())
 	{
-		GEngine->AddOnScreenDebugMessage(31, 2.0f, FColor::Green, TEXT("두드러진 약점 없음 — 안정적입니다."));
-	}
-	for (int32 i = 0; i < ShowN; ++i)
-	{
-		const FWeakness& W = LastReport.Weaknesses[i];
-		GEngine->AddOnScreenDebugMessage(31 + i, 2.0f, FColor::Yellow,
-			FString::Printf(TEXT("약점 %d) %s — %s"),
-				i + 1, *UWeaknessDetector::GetAxisDisplayName(W.Axis).ToString(), *W.Evidence));
+		if (UModeManager* ModeManager = GI->GetSubsystem<UModeManager>())
+		{
+			OutSummary.PriorStats = ModeManager->GetModeStats(EGameModeId::Batting);
+			OutSummary.BestTotalScore = ModeManager->GetBestTotalScore(EGameModeId::Batting);
+			OutSummary.bNewRecord = SessionScore.bValid && SwingCount > 0 &&
+				(OutSummary.BestTotalScore < 0.0f || SessionScore.TotalScore > OutSummary.BestTotalScore);
+		}
 	}
 
-	// 추천 드릴
-	for (int32 i = 0; i < LastDrills.Num(); ++i)
-	{
-		const FTrainingDrill& D = LastDrills[i];
-		GEngine->AddOnScreenDebugMessage(40 + i, 2.0f, FColor::Cyan,
-			FString::Printf(TEXT("추천 %d) %s — %s"), i + 1, *D.Name, *D.Description));
-	}
-
-	// AI 코칭
-	const FString Coach = bAwaitingCoaching ? TEXT("AI 코칭 생성 중...") : CoachingText;
-	if (!Coach.IsEmpty())
-	{
-		GEngine->AddOnScreenDebugMessage(45, 2.0f, FColor::Orange, FString::Printf(TEXT("코치: %s"), *Coach));
-	}
+	return true;
 }
 
 void ASwingTestPawn::ReturnToModeSelect()
@@ -283,6 +313,9 @@ void ASwingTestPawn::SimulateSwing()
 	}
 	bSwungThisPitch = true;
 
+	// 결과 화면이 떠 있었으면 스윙과 함께 닫고 라이브 플레이로 돌아간다.
+	bShowFeedback = false;
+
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	const FVector Plate = PitchingZone->GetPlateLocation();
 	const double Arrival = PitchingZone->GetArrivalWorldTime();
@@ -303,11 +336,33 @@ void ASwingTestPawn::SimulateSwing()
 	++SwingCount;
 	bHasSwung = true;
 
+	// 스윙 1회 = 시도 1건. ModeManager 에 누적해 두면 세션 종료 시
+	// FinalizeSession 이 이 시도들을 한 세션 기록으로 저장한다.
+	if (UModeManager* ModeManager = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
+	{
+		ModeManager->RecordResult(LastSwingScore);
+	}
+
+	// 신체역학 경로 — 카메라(MediaPipe)가 없어 Mock 포즈로 분석기를 실제로 돌린다.
+	// 컨택 클럭(Now)을 그대로 넣어 kinetic chain 리드가 스윙 타이밍과 정렬되게 한다.
+	// 스윙 세기/타이밍을 Mock 형태에 살짝 반영해 스윙마다 지표가 달라지도록 한다.
+	FMockSwingPoseParams PoseParams = MockPoseParams;
+	PoseParams.ShoulderRotationDeg += FMath::Clamp((LastMetrics.ContactSpeedMps - 28.0f) * 0.8f, -15.0f, 20.0f);
+	PoseParams.HeadTravelCm += FMath::Clamp(FMath::Abs(LastMetrics.TimingErrorSeconds) * 30.0f, 0.0f, 8.0f);
+
+	const TArray<FCameraPoseFrame> PoseFrames = UMockCameraPoseSource::BuildSwingSequence(Now, PoseParams);
+	LastBodyMechanics = UBodyMechanicsAnalyzer::Analyze(PoseFrames, Now, BodyMechanicsConfig);
+	SessionBodyHistory.Add(LastBodyMechanics);
+
 	if (LastMetrics.bContacted)
 	{
 		++ContactCount;
 		if (LastHit.Class == EHitClass::HomeRun) { ++HomeRunCount; }
 		else if (LastHit.Class == EHitClass::Hit) { ++HitCount; }
+
+		// 비거리 집계 (최고/평균은 컨택 타구 기준).
+		SessionMaxCarryM = FMath::Max(SessionMaxCarryM, LastHit.CarryDistanceM);
+		SessionCarrySumM += LastHit.CarryDistanceM;
 
 		// 타구 연출 — 무작위가 아니라 계산된 발사각·좌우각·타구 속도로 날린다.
 		// (파울도 파울 방향으로 날아간다. 헛스윙만 연출 없음.)
@@ -339,18 +394,37 @@ void ASwingTestPawn::SimulateSwing()
 		LastHit.ExitVelocityMps, LastHit.CarryDistanceM, LastSwingScore.TotalScore);
 }
 
+void ASwingTestPawn::FlushSessionToSave()
+{
+	if (UModeManager* ModeManager = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
+	{
+		// 세션 집계 점수 + 약점 리포트를 함께 확정 저장한다. 리포트는 저장 시점의
+		// SessionHistory 로 새로 계산한다 — [F] 를 안 눌렀어도 만성 약점 추적이 되도록.
+		// (시도가 없으면 ModeManager 가 빈 세션으로 스스로 무시한다.)
+		const FWeaknessReport Report = BuildSessionReport();
+		ModeManager->FinalizeSession(SessionScore, Report);
+	}
+}
+
 void ASwingTestPawn::ResetSession()
 {
+	// 리셋 = 지금 세션 종료 + 새 세션 시작. 버리기 전에 저장한다.
+	FlushSessionToSave();
+
 	SessionHistory.Reset();
+	SessionBodyHistory.Reset();
 	SessionScore = FScoreResult();
 	LastSwingScore = FScoreResult();
 	LastMetrics = FSwingMetrics();
 	LastHit = FBattedBallResult();
+	LastBodyMechanics = FBodyMechanicsMetrics();
 	SwingCount = 0;
 	ContactCount = 0;
 	MissedPitchCount = 0;
 	HomeRunCount = 0;
 	HitCount = 0;
+	SessionMaxCarryM = 0.0f;
+	SessionCarrySumM = 0.0f;
 	Balls = 0;
 	Strikes = 0;
 	StrikeoutCount = 0;
@@ -362,6 +436,7 @@ void ASwingTestPawn::ResetSession()
 	bShowFeedback = false;
 	bAwaitingCoaching = false;
 	LastReport = FWeaknessReport();
+	LastChronic = FChronicWeaknessReport();
 	LastDrills.Reset();
 	CoachingText.Reset();
 
@@ -373,6 +448,13 @@ void ASwingTestPawn::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 
 	if (!GEngine)
+	{
+		return;
+	}
+
+	// 결과 화면([F])이 떠 있는 동안에는 라이브 디버그 HUD 를 그리지 않는다 —
+	// HUD(AModeSelectHUD)가 결과 패널을 Canvas 로 그린다. 스윙([Space])하면 해제된다.
+	if (bShowFeedback)
 	{
 		return;
 	}
@@ -446,6 +528,14 @@ void ASwingTestPawn::Tick(float DeltaSeconds)
 		FString::Printf(TEXT("스윙 %d회 | 컨택 %d | 헛스윙 %d | 홈런 %d | 안타 %d | 그냥 보낸 공 %d"),
 			SwingCount, ContactCount, SwingCount - ContactCount, HomeRunCount, HitCount, MissedPitchCount));
 
-	// [F] 를 눌렀으면 세션 피드백(약점·드릴·AI 코칭)을 그린다.
-	DrawFeedback();
+	// 신체역학 (Mock 포즈 → 분석기). 실제 카메라가 붙으면 소스만 교체된다.
+	if (LastBodyMechanics.bValid)
+	{
+		GEngine->AddOnScreenDebugMessage(10, 2.0f, FColor(150, 200, 255),
+			FString::Printf(TEXT("신체역학[MOCK]: X-factor %.0f° | 체중이동 %.0fcm | 머리 %.1fcm | 척추 %.0f° | 체인 %s | 신뢰도 %.2f"),
+				LastBodyMechanics.HipShoulderSeparationDeg, LastBodyMechanics.WeightShiftCm,
+				LastBodyMechanics.HeadTravelCm, LastBodyMechanics.SpineTiltDeg,
+				LastBodyMechanics.bKineticChainOrdered ? TEXT("정상") : TEXT("흐트러짐"),
+				LastBodyMechanics.Confidence));
+	}
 }

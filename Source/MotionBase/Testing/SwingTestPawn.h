@@ -9,6 +9,10 @@
 #include "Data/TrainingFeedback.h"
 #include "Data/BattedBall.h"
 #include "Scoring/ScoringService.h"
+#include "Analysis/BodyMechanicsAnalyzer.h"
+#include "Analysis/WeaknessDetector.h"
+#include "Input/MockCameraPoseSource.h"
+#include "UI/SessionResultView.h"
 #include "SwingTestPawn.generated.h"
 
 class UCameraComponent;
@@ -26,7 +30,7 @@ class UAIFeedbackService;
  * ⚠️ 임시 테스트 코드. Vive 배선 후 ABat 기반으로 교체 예정.
  */
 UCLASS()
-class MOTIONBASE_API ASwingTestPawn : public APawn
+class MOTIONBASE_API ASwingTestPawn : public APawn, public ISessionResultView
 {
 	GENERATED_BODY()
 
@@ -34,6 +38,9 @@ public:
 	ASwingTestPawn();
 
 	virtual void Tick(float DeltaSeconds) override;
+
+	/** ISessionResultView — [F] 로 결과를 띄운 상태면 요약을 채워 HUD 가 그리게 한다. */
+	virtual bool GetSessionSummary(FSessionSummary& OutSummary) const override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -49,12 +56,34 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "SwingTest")
 	FScoringConfig ScoringConfig;
 
+	/** 신체역학 분석 유효성 게이트 (카메라 포즈 → 지표). */
+	UPROPERTY(EditAnywhere, Category = "SwingTest|BodyMechanics")
+	FBodyMechanicsConfig BodyMechanicsConfig;
+
+	/**
+	 * Mock 포즈 형태 파라미터. 카메라(MediaPipe)가 없어 스윙마다 이 값으로
+	 * 합성 포즈를 만들어 UBodyMechanicsAnalyzer 를 실제로 돌린다.
+	 * 실제 카메라 수신부가 붙으면 이 경로만 교체한다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "SwingTest|BodyMechanics")
+	FMockSwingPoseParams MockPoseParams;
+
+	/** 신체역학 약점 판별 임계값 (미보정 시 리포트에 전파). */
+	UPROPERTY(EditAnywhere, Category = "SwingTest|BodyMechanics")
+	FBodyMechanicsScoringConfig BodyMechanicsScoring;
+
 	/** BeginPlay 에서 앞쪽에 생성되는 투수. */
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "SwingTest")
 	TObjectPtr<APitchingZone> PitchingZone;
 
 	void SimulateSwing();
 	void ResetSession();
+
+	/**
+	 * 현재까지의 스윙들을 한 세션 기록으로 저장 슬롯에 flush 한다 (ModeManager 경유).
+	 * 시도가 없으면 아무 일도 하지 않는다. 세션 종료 지점(리셋·모드 복귀·폰 파괴)에서 호출.
+	 */
+	void FlushSessionToSave();
 
 	/** 시작 화면(모드 선택)으로 복귀. */
 	void ReturnToModeSelect();
@@ -72,9 +101,6 @@ protected:
 	UFUNCTION()
 	void HandleCoachingReady(bool bSuccess, const FString& Text);
 
-	/** 세션 종료 후 결과 화면(약점·드릴·코칭)을 그린다. */
-	void DrawFeedback() const;
-
 private:
 	/** 키 입력 시각을 컨택 시점으로 하는 합성 스윙 궤적. */
 	TArray<FSwingSample> BuildSyntheticSwing(double ContactWorldTime, const FVector& BallLocation,
@@ -86,11 +112,21 @@ private:
 	FScoreResult SessionScore;
 	TArray<FSwingMetrics> SessionHistory;
 
+	/** 최근 스윙의 신체역학 지표 (Mock 포즈 → UBodyMechanicsAnalyzer). */
+	FBodyMechanicsMetrics LastBodyMechanics;
+
+	/** 세션 내 스윙별 신체역학 지표 — 세션 피드백에서 약점 판별 입력. */
+	TArray<FBodyMechanicsMetrics> SessionBodyHistory;
+
 	// ── 피드백(약점 판별 + 운동 추천 + AI 코칭) ──
 	UPROPERTY(Transient)
 	TObjectPtr<UAIFeedbackService> FeedbackService;
 
+	/** 현재 세션 지표 → 약점 리포트 (스윙 + 신체역학 축). 피드백·저장 공용. */
+	FWeaknessReport BuildSessionReport() const;
+
 	FWeaknessReport LastReport;
+	FChronicWeaknessReport LastChronic; // 과거 이력 기반 만성 약점·추세
 	TArray<FTrainingDrill> LastDrills;
 	FString CoachingText;      // AI 코칭 결과 (없으면 상태 문구)
 	bool bShowFeedback = false;
@@ -124,4 +160,8 @@ private:
 	int32 HomeRunCount = 0;
 	int32 HitCount = 0;      // 안타(홈런 제외)
 	bool bHasSwung = false;
+
+	// 비거리 집계 (컨택한 타구 기준)
+	float SessionMaxCarryM = 0.0f;
+	float SessionCarrySumM = 0.0f;
 };
