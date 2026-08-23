@@ -205,66 +205,6 @@ void UModeManager::RecordResult(const FScoreResult& Result)
 	// FinalizeSession 에서 한 번에 일어난다 (스윙마다 디스크에 쓰지 않는다).
 }
 
-bool UModeManager::FinalizeSession(const FScoreResult& SessionAverage)
-{
-	// 빈 세션은 저장하지 않는다 — Deinitialize 가 무조건 호출해도 안전하도록.
-	if (SessionResults.Num() == 0 || !SaveData)
-	{
-		return false;
-	}
-
-	FSessionResult Session;
-	Session.Mode = ActiveMode;
-	Session.StartedAt = SessionStartedAt;
-	Session.AttemptCount = SessionResults.Num();
-	Session.Attempts = SessionResults;
-	Session.Average = SessionAverage;
-	Session.DifficultyLevel = static_cast<int32>(ActiveDifficulty);
-
-	SaveData->History.Add(Session);
-	PersistSaveData();
-
-	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 세션 확정 저장 (mode=%s, 시도 %d, 평균 %.1f) — 누적 %d세션"),
-		*GetModeIdName(ActiveMode).ToString(), Session.AttemptCount,
-		SessionAverage.TotalScore, SaveData->History.Num());
-
-	// 같은 세션이 두 번 저장되지 않도록 비운다.
-	SessionResults.Reset();
-	return true;
-}
-
-const TArray<FSessionResult>& UModeManager::GetHistory() const
-{
-	static const TArray<FSessionResult> Empty;
-	return SaveData ? SaveData->History : Empty;
-}
-
-float UModeManager::GetBestTotalScore(EGameModeId Mode) const
-{
-	// 기록 없음 = -1 (호출부가 '첫 기록'과 '0점'을 구분할 수 있게).
-	float Best = -1.0f;
-	if (!SaveData)
-	{
-		return Best;
-	}
-	for (const FSessionResult& S : SaveData->History)
-	{
-		if (S.Mode == Mode)
-		{
-			Best = FMath::Max(Best, S.Average.TotalScore);
-		}
-	}
-	return Best;
-}
-
-void UModeManager::PersistSaveData() const
-{
-	if (SaveData)
-	{
-		UGameplayStatics::SaveGameToSlot(SaveData,
-			UMotionBaseSaveGame::DefaultSlotName, UMotionBaseSaveGame::DefaultUserIndex);
-	}
-}
 
 TArray<EGameModeId> UModeManager::GetMenuModes()
 {

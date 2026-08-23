@@ -4,7 +4,7 @@
 #include "Data/MotionBaseTypes.h"
 #include "Data/ScoreResult.h"
 #include "Data/TrainingFeedback.h"
-#include "Data/CameraPose.h"
+#include "Data/CameraPoseFrame.h"
 #include "Data/SessionResult.h"
 #include "SessionSummary.generated.h"
 

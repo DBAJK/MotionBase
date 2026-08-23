@@ -5,6 +5,9 @@
 #include "Input/ViveMotionInputProvider.h"
 #include "MotionControllerComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "UObject/ConstructorHelpers.h"
 
 ABat::ABat()
 {
@@ -19,6 +22,20 @@ ABat::ABat()
 	BatTip->SetupAttachment(MotionController);
 	// 배트 길이 오프셋 (cm). 실제 배트/그립에 맞춰 조정.
 	BatTip->SetRelativeLocation(FVector(80.0f, 0.0f, 0.0f));
+
+	// 눈에 보이는 배트 (그립 → BatTip 방향의 가는 원기둥). VR 에서 손에 배트가 보인다.
+	BatMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BatMesh"));
+	BatMesh->SetupAttachment(MotionController);
+	BatMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cyl(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	if (Cyl.Succeeded())
+	{
+		BatMesh->SetStaticMesh(Cyl.Object);
+		// 실린더(로컬 Z축 100cm)를 +X 로 눕혀 길이 80cm·지름 ~6cm 배트로.
+		BatMesh->SetRelativeRotation(FRotator(90.0f, 0.0f, 0.0f));
+		BatMesh->SetRelativeLocation(FVector(40.0f, 0.0f, 0.0f));
+		BatMesh->SetRelativeScale3D(FVector(0.06f, 0.06f, 0.8f));
+	}
 }
 
 void ABat::BeginPlay()
@@ -46,6 +63,13 @@ void ABat::BeginPlay()
 		const bool bOk = InputProvider->Initialize();
 		UE_LOG(LogMotionBase, Log, TEXT("ABat: provider=%d 초기화 %s"),
 			static_cast<int32>(InputProvider->GetSourceType()), bOk ? TEXT("성공") : TEXT("실패"));
+	}
+
+	// 액터 틱이 MotionController 컴포넌트 틱 뒤에 오도록 강제한다.
+	// 안 그러면 provider 가 한 프레임 뒤처진 포즈를 읽어 속도(v_tip)가 부정확해진다.
+	if (MotionController)
+	{
+		AddTickPrerequisiteComponent(MotionController);
 	}
 }
 

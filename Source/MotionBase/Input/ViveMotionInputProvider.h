@@ -12,10 +12,13 @@ class UMotionControllerComponent;
  *
  * 측정 방식 (브리프 §5):
  *  - 컨트롤러 속도 ≠ 배트 속도. 배트 헤드는 회전 채찍 효과로 손보다 빠르다 (v_tip = v_hand + ω×r).
- *  - 따라서 손(MotionController)의 속도를 읽지 않고, **자식 BatTip 의 월드 좌표를
- *    매 프레임 미분**한다 → 회전 효과가 자동 반영된다.
- *  - ⚠️ UE 5.7+ 에서 폐기된 `Get Motion Controller Data` 계열 API를 쓰지 않으므로
- *    버전 변화에 안전하다.
+ *  - **v_hand** = 손(컨트롤러) 위치 미분. 손은 반경이 작아 느리게 움직이므로 프레임 차분으로도
+ *    정확하다. (배트 헤드를 직접 차분하면 빠른 스윙에서 코드(chord)로 뭉개지는 것과 대비.)
+ *  - **ω** = 컨트롤러 회전의 프레임 간 쿼터니언 델타에서 산출(rad/s). 90fps 에선 프레임당
+ *    회전이 작아(<180°) 축-각 분해가 모호하지 않다. (FRotator 각속도 API는 고속 스윙에서
+ *    180°/s 넘어가면 손실이 커 쓰지 않는다.)
+ *  - **r** = 손(컨트롤러) → 배트 헤드 벡터. → 프레임 차분보다 빠른 스윙에서 훨씬 정확.
+ *  - ⚠️ UE 5.7+ 폐기된 `Get Motion Controller Data` 계열 미사용 → 버전 변화에 안전.
  *
  * 컴포넌트는 액터(ABat)가 소유하고, 이 provider 는 그 트랜스폼을 샘플링만 한다.
  */
@@ -51,6 +54,8 @@ private:
 	bool bInitialized = false;
 	float ElapsedSec = 0.0f;
 
+	// 이전 프레임 상태 (v_hand·ω 산출용)
 	bool bHasPrevious = false;
-	FVector PreviousLocation = FVector::ZeroVector;
+	FVector PreviousHandLocation = FVector::ZeroVector;
+	FQuat PreviousHandQuat = FQuat::Identity;
 };

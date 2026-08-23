@@ -9,6 +9,7 @@
 
 class UMotionControllerComponent;
 class USceneComponent;
+class UStaticMeshComponent;
 class UMotionInputProvider;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSwingCompleted, const FSwingMetrics&, Metrics);
@@ -92,13 +93,17 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "MotionBase|Bat")
 	TObjectPtr<USceneComponent> BatTip;
 
+	/** 보이는 배트 메시 (그립→BatTip 원기둥). */
+	UPROPERTY(VisibleAnywhere, Category = "MotionBase|Bat")
+	TObjectPtr<UStaticMeshComponent> BatMesh;
+
 	/** 어떤 입력 소스를 쓸지. Vive 없이 테스트하려면 Mock 으로. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionBase|Bat")
 	EInputSource InputSource = EInputSource::ViveController;
 
-	/** 링버퍼 크기 (최근 N 샘플). 컨택 순간/피크/평면각 추출용. */
+	/** 링버퍼 크기 (최근 N 샘플). 컨택 순간/피크/평면각 추출용. 90fps 기준 45≈0.5초. */
 	UPROPERTY(EditAnywhere, Category = "MotionBase|Bat", meta = (ClampMin = "8"))
-	int32 RingBufferSize = 20;
+	int32 RingBufferSize = 45;
 
 	/** 실제 입력 소스. BeginPlay 에서 InputSource 에 따라 생성된다. */
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "MotionBase|Bat")

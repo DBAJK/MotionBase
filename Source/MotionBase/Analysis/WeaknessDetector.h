@@ -4,7 +4,7 @@
 #include "Data/SwingMetrics.h"
 #include "Data/TrainingFeedback.h"
 #include "Data/SessionResult.h"
-#include "Data/CameraPose.h"
+#include "Data/CameraPoseFrame.h"
 #include "Scoring/ScoringService.h"
 #include "WeaknessDetector.generated.h"
 

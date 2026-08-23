@@ -44,16 +44,13 @@ SporTrack : Baseball — 비착용형 XR 야구 콘텐츠. 정본 브리프: [hi
 > **검증 불가능한 채로 남는다.** 새 Vive 코드를 더 쓰기 전에 실기부터 붙일 것.
 
 - [ ] SteamVR 설치 + 룸 셋업 + **OpenXR 런타임 지정** ← 현재 유일한 블로커
-- [ ] VR 폰 (카메라 + 양손 MotionController)
-- [~] `UViveMotionInputProvider` — BatTip 월드좌표 미분 (폐기 API 미사용)
-      **작성만 됨 · 한 번도 실행된 적 없음**
-- [~] `ABat` provider 경유로 리팩터링 — `InputSource` 로 Mock/Vive 전환
-      **호출부 없음 — 스폰하는 곳도 `BeginSwingCapture` 를 부르는 곳도 없다**
-- [ ] 트리거 입력 배선 (Enhanced Input → `BeginSwingCapture`/`End` 호출) ← 아직 호출부 없음
-      ※ 프로젝트 전체에 **버튼 입력 경로가 0건**이다. EnhancedInput 은 의존성에만 있고 미사용.
-- [ ] 모드 선택 화면 하드웨어 입력 — 목표는 **드웰 선택**(겨누고 유지).
-      버튼 불필요 → Vive 포즈·LiDAR 위치가 같은 코드를 쓴다. 현재는 키보드(PC 개발용).
-- [ ] BatTip 실측 속도 검증 (실기 연결 후)
+- [x] `AVRBattingPawn` — HMD 카메라 + 컨트롤러 배트. HMD 연결 시 GameMode 가 자동 사용
+- [x] `UViveMotionInputProvider` — **v_tip = v_hand + ω×r** (손 위치미분 + 쿼터니언델타 각속도). 폐기 API 미사용
+- [x] `ABat` provider 경유 + 보이는 배트 메시. VR 폰이 스폰·`BeginSwingCapture` 호출 (호출부 생김)
+- [x] 스윙 입력 = **궤적 자동 감지**(투구 도달±딜레이에 분석). 야구 스윙에 버튼 안 씀 → 트리거 배선 불요
+- [x] `USwingAnalyzer` 가 provider 실측 속도 우선(있으면), 없으면 위치차분 폴백
+- [ ] 모드 선택 화면 하드웨어 입력 — 목표는 **드웰 선택**(겨누고 유지). 현재는 키보드(PC 개발용).
+- [ ] BatTip 실측 속도 검증 (베이스 스테이션 해결 후 실기)
 - [ ] 비착용형(null-driver) 구동 실험 (헤드셋 없이 base station만)
 - [ ] **실측 캘리브레이션** (σt, d_max, v_min, v_target — 하드코딩 금지)
 

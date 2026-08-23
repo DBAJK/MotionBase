@@ -46,6 +46,19 @@ FSwingMetrics USwingAnalyzer::AnalyzeSwing(
 	int32 PeakIdx = INDEX_NONE;
 	Out.PeakSpeedMps = FindPeakSpeed(Samples, PeakIdx);
 
+	// 트래커가 per-sample 속도를 제공하면(Vive provider: v_tip = v_hand + ω×r) 그 값을 우선.
+	// Mock/키보드 경로는 Velocity=0 이라 위치 차분(FindPeakSpeed) 결과를 그대로 쓴다.
+	float ReportedPeakCmps = 0.0f;
+	for (const FSwingSample& S : Samples)
+	{
+		ReportedPeakCmps = FMath::Max(ReportedPeakCmps, static_cast<float>(S.Velocity.Size()));
+	}
+	const bool bHasReportedVelocity = (ReportedPeakCmps > KINDA_SMALL_NUMBER);
+	if (bHasReportedVelocity)
+	{
+		Out.PeakSpeedMps = ReportedPeakCmps / 100.0f;
+	}
+
 	// TODO(캘리브레이션): 아래 세 상수는 실측 스위트스팟/스윙 특성으로 조정 (하드코딩 금지).
 	constexpr float ContactRadiusCm     = 15.0f;   // 유효 컨택 반경
 	constexpr float MinSwingSpeedMps     = 8.0f;   // 이 속도 미만은 '스윙 아님'(정지·미세이동)
@@ -97,7 +110,11 @@ FSwingMetrics USwingAnalyzer::AnalyzeSwing(
 		// 3) 컨택 순간 속도 (peak 아님)
 		const int32 Prev = FMath::Max(0, ContactIdx - 1);
 		const int32 Next = FMath::Min(Samples.Num() - 1, ContactIdx + 1);
-		Out.ContactSpeedMps = ComputeSpeedMps(Samples[Prev], Samples[Next]);
+		// 컨택 순간 속도: 트래커 제공값 우선(정확), 없으면 위치 중앙차분.
+		const float ReportedContactCmps = static_cast<float>(Samples[ContactIdx].Velocity.Size());
+		Out.ContactSpeedMps = (ReportedContactCmps > KINDA_SMALL_NUMBER)
+			? ReportedContactCmps / 100.0f
+			: ComputeSpeedMps(Samples[Prev], Samples[Next]);
 
 		// 4) 타이밍 오차: 컨택 시각 - 이상 시각
 		Out.TimingErrorSeconds = static_cast<float>(Samples[ContactIdx].TimeSeconds - IdealContactTime);

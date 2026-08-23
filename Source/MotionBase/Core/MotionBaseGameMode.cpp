@@ -3,7 +3,9 @@
 #include "Core/ModeManager.h"
 #include "Core/ModeSelectPawn.h"
 #include "Testing/SwingTestPawn.h"
+#include "Testing/VRBattingPawn.h"
 #include "Testing/ViveBringupPawn.h"
+#include "HeadMountedDisplayFunctionLibrary.h"
 #include "UI/ModeSelectHUD.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -24,7 +26,12 @@ TSubclassOf<APawn> AMotionBaseGameMode::GetPawnClassForMode(EGameModeId Mode) co
 	switch (Mode)
 	{
 	case EGameModeId::Batting:
-		// Stage 1 화면 테스트 폰. Vive 배선 후 ABat 기반 VR 폰으로 교체 예정.
+		// HMD 가 연결돼 있으면 VR 타격 폰(컨트롤러 스윙), 아니면 화면 테스트 폰(키보드).
+		// → 베이스 스테이션/헤드셋 없이도 PC 개발·시연이 안 막힌다.
+		if (UHeadMountedDisplayFunctionLibrary::IsHeadMountedDisplayEnabled())
+		{
+			return AVRBattingPawn::StaticClass();
+		}
 		return ASwingTestPawn::StaticClass();
 
 	default:
