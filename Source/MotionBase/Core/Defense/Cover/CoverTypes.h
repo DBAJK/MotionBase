@@ -41,6 +41,38 @@ struct FCoverTrial
 	float CoverRadius = 150.0f;
 };
 
+/**
+ * 백업 위치 판단 문제(선택형).
+ *
+ * 경기 상황(랜덤 타구/송구)에서 "당신의 수비 위치는 어디를 백업/커버해야 하는가"를
+ * 4지선다로 고른다. 이동이 아니라 판단 훈련. CoverPawn 이 미리 채운 목록에서 뽑는다.
+ */
+USTRUCT(BlueprintType)
+struct FBackupQuiz
+{
+	GENERATED_BODY()
+
+	/** 경기 상황 설명. */
+	UPROPERTY(BlueprintReadOnly)
+	FString Situation;
+
+	/** 당신이 맡은 수비 위치. */
+	UPROPERTY(BlueprintReadOnly)
+	FString Role;
+
+	/** 선택지 (보통 4개). */
+	UPROPERTY(BlueprintReadOnly)
+	TArray<FString> Options;
+
+	/** 정답 선택지 인덱스. */
+	UPROPERTY(BlueprintReadOnly)
+	int32 Correct = 0;
+
+	/** 정답 해설. */
+	UPROPERTY(BlueprintReadOnly)
+	FString Explain;
+};
+
 /** 커버 판정 결과. */
 UENUM(BlueprintType)
 enum class ECoverOutcome : uint8

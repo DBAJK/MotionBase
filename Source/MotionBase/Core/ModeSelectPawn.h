@@ -7,6 +7,8 @@
 
 class UCameraComponent;
 class USceneComponent;
+class UMotionControllerComponent;
+class UTextRenderComponent;
 
 /**
  * 시작 화면(모드 선택) 폰. **단계형 선택**:
@@ -82,6 +84,50 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "ModeSelect")
 	float NoticeDurationSec = 2.0f;
 
+	// ── VR 인메뉴 (헤드셋 안 3D 메뉴 + 컨트롤러 드웰 선택) ──
+	// HMD 가 켜져 있을 때만 활성화. 없을 땐 기존 키보드 + 평면 HUD 로 동작.
+
+	/** 겨눔 포인터로 쓰는 컨트롤러 (기본 오른손). */
+	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
+	TObjectPtr<UMotionControllerComponent> PointerController;
+
+	/** 3D 메뉴 카드들의 부모 (카메라 앞에 부착 — 항상 시야에 들어온다). */
+	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
+	TObjectPtr<USceneComponent> MenuRoot;
+
+	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
+	TObjectPtr<UTextRenderComponent> VrTitleText;
+
+	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
+	TObjectPtr<UTextRenderComponent> VrDescText;
+
+	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
+	TObjectPtr<UTextRenderComponent> VrHintText;
+
+	/** 뒤로 카드 (모드 단계 외에서만 표시). 호버 인덱스는 행 개수와 같은 값. */
+	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
+	TObjectPtr<UTextRenderComponent> VrBackText;
+
+	/** 행 텍스트 풀 (단계별 최대 행 수만큼). */
+	UPROPERTY()
+	TArray<TObjectPtr<UTextRenderComponent>> VrRowTexts;
+
+	/** 카드를 이 시간(초)만큼 계속 겨누고 있으면 선택 확정. */
+	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")
+	float DwellTimeSec = 1.5f;
+
+	/** 이 각도(도) 안쪽으로 겨누면 그 카드에 호버된 것으로 본다. */
+	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")
+	float DwellAngleDeg = 8.0f;
+
+	/** 메뉴를 플레이어 앞 몇 cm 에 띄울지. */
+	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")
+	float MenuDistanceCm = 250.0f;
+
+	/** 메뉴 중심 높이 (cm, 바닥 기준). 눈높이쯤에 두면 자연스럽다. */
+	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")
+	float MenuHeightCm = 150.0f;
+
 	// 입력 핸들러 (BindKey 는 인자 없는 멤버 함수만 받는다)
 	void SelectPrev();
 	void SelectNext();
@@ -113,6 +159,26 @@ private:
 
 	/** 난이도 확정 후: 타격이면 Stance 단계로, 아니면 바로 시작. */
 	void ConfirmDifficulty();
+
+	// ── VR 인메뉴 ──
+	static constexpr int32 VrMaxRows = 6;   // 단계별 최대 행 수 (수비 종목 4 < 6)
+
+	/** HMD 켜져 있으면 3D 카드/포인터를 켜고 텍스트 풀을 만든다. */
+	void InitVRMenu();
+
+	/** 매 틱: 겨눔 판정 + 드웰 타이머 + 하이라이트 갱신. */
+	void UpdateVRMenu(float DeltaSeconds);
+
+	/** 현재 단계의 3D 텍스트(제목/행/설명/뒤로)를 다시 채운다. */
+	void RefreshVRMenuTexts();
+
+	/** 컨트롤러가 겨누는 카드 인덱스 (0..RowCount-1, 뒤로=RowCount, 없음=INDEX_NONE). */
+	int32 PickHoveredCard() const;
+
+	bool  bVRMenu = false;
+	int32 VrHoverIndex = INDEX_NONE;
+	float VrDwellTimer = 0.0f;
+	float VrCooldown = 0.0f;   // 확정 직후 오선택 방지용 짧은 잠금
 
 	EStage Stage = EStage::Mode;
 

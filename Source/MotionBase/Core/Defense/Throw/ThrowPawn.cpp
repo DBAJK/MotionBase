@@ -6,6 +6,11 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "MotionControllerComponent.h"
+#include "HeadMountedDisplayFunctionLibrary.h"
+#include "Engine/StaticMesh.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
 #include "GameFramework/PlayerController.h"
@@ -24,6 +29,21 @@ AThrowPawn::AThrowPawn()
 	Camera->SetupAttachment(Capsule);
 	Camera->SetRelativeLocation(FVector(0.0f, 0.0f, 70.0f));
 	Camera->bUsePawnControlRotation = false;
+
+	// VR 송구 손 = 오른손 컨트롤러 + 손에 든 공.
+	ThrowController = CreateDefaultSubobject<UMotionControllerComponent>(TEXT("ThrowController"));
+	ThrowController->SetupAttachment(Capsule);
+	ThrowController->MotionSource = FName(TEXT("Right"));
+
+	BallInHandMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BallInHandMesh"));
+	BallInHandMesh->SetupAttachment(ThrowController);
+	BallInHandMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sph(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	if (Sph.Succeeded())
+	{
+		BallInHandMesh->SetStaticMesh(Sph.Object);
+		BallInHandMesh->SetRelativeScale3D(FVector(0.10f));
+	}
 }
 
 void AThrowPawn::BeginPlay()
@@ -32,6 +52,17 @@ void AThrowPawn::BeginPlay()
 
 	SetActorRotation(FRotator::ZeroRotator); // 정면(+X) 고정
 	HomeLocation = GetActorLocation();
+
+	// HMD 연결 시 컨트롤러 던지기 동작으로 송구. 아니면 스페이스바 충전.
+	bVR = UHeadMountedDisplayFunctionLibrary::IsHeadMountedDisplayEnabled();
+	if (bVR)
+	{
+		UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
+	}
+	if (BallInHandMesh)
+	{
+		BallInHandMesh->SetVisibility(bVR); // 손에 든 공은 VR 에서만.
+	}
 
 	StartSession();
 }
@@ -202,7 +233,13 @@ void AThrowPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	// 파워 충전.
+	// VR: 컨트롤러 던지기 동작 인식 (파워는 손 속도로).
+	if (bVR)
+	{
+		TickVRThrow(DeltaSeconds);
+	}
+
+	// 파워 충전 (키보드 모드).
 	if (bCharging)
 	{
 		CurrentPower = FMath::Clamp(CurrentPower + DeltaSeconds / ChargeTime, 0.0f, 1.0f);
@@ -242,6 +279,46 @@ void AThrowPawn::Tick(float DeltaSeconds)
 			FQuat::Identity, FColor::Red, false, -1.0f, 0, 3.0f);
 		DrawDebugCircle(GetWorld(), T + FVector(0, 0, 2.0f), CurrentTrial.HitRadius, 32,
 			FColor::Yellow, false, -1.0f, 0, 3.0f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+	}
+}
+
+void AThrowPawn::TickVRThrow(float DeltaSeconds)
+{
+	if (ThrowCooldown > 0.0f)
+	{
+		ThrowCooldown = FMath::Max(0.0f, ThrowCooldown - DeltaSeconds);
+	}
+	if (!ThrowController)
+	{
+		return;
+	}
+
+	// 컨트롤러 속도 (cm/s) = 위치 변화량 / dt.
+	const FVector Loc = ThrowController->GetComponentLocation();
+	float Speed = 0.0f;
+	if (bHasPrevControllerLoc && DeltaSeconds > KINDA_SMALL_NUMBER)
+	{
+		Speed = FVector::Dist(Loc, PrevControllerLoc) / DeltaSeconds;
+	}
+	PrevControllerLoc = Loc;
+	bHasPrevControllerLoc = true;
+
+	// 손 속도 → 파워(0~1). 게이지에 실시간으로 보여준다.
+	const float SpeedPower = FMath::Clamp(
+		(Speed - MinThrowSpeedCms) / FMath::Max(MaxThrowSpeedCms - MinThrowSpeedCms, 1.0f),
+		0.0f, 1.0f);
+
+	const bool bReady = !bBallInFlight && !bSessionOver && !bWaitingNext;
+	if (bReady)
+	{
+		CurrentPower = SpeedPower;
+	}
+
+	// 던지는 동작(속도 임계 초과) 인식 → 그 파워로 송구.
+	if (bReady && ThrowCooldown <= 0.0f && Speed >= ThrowTriggerSpeedCms)
+	{
+		ThrowBall(SpeedPower);
+		ThrowCooldown = 0.6f;
 	}
 }
 

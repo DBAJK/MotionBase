@@ -8,6 +8,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/InputComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/TextRenderComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
@@ -23,6 +24,16 @@ AVRBattingPawn::AVRBattingPawn()
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(VROrigin);
 	// bLockToHmd 는 기본 true — 카메라가 HMD 를 따라간다.
+
+	// 타격 결과 3D 텍스트 — 카메라 앞 위쪽에 잠깐 띄운다 (헤드셋 안에서 보이게).
+	ResultText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("ResultText"));
+	ResultText->SetupAttachment(Camera);
+	ResultText->SetRelativeLocation(FVector(300.0f, 0.0f, 70.0f)); // 앞 3m, 위로 약간
+	ResultText->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f)); // 카메라를 향하게
+	ResultText->SetHorizontalAlignment(EHTA_Center);
+	ResultText->SetVerticalAlignment(EVRTA_TextCenter);
+	ResultText->SetWorldSize(40.0f);
+	ResultText->SetVisibility(false);
 }
 
 void AVRBattingPawn::BeginPlay()
@@ -64,16 +75,41 @@ void AVRBattingPawn::BeginPlay()
 		// (OnSwingCompleted 델리게이트는 쓰지 않는다 — 분석 시점을 폰이 직접 제어한다.)
 	}
 
-	// 투수 생성 (SwingTestPawn 과 동일 배치).
+	// 투수 생성.
 	PitchingZone = World->SpawnActor<APitchingZone>(APitchingZone::StaticClass(),
 		GetActorLocation(), GetActorRotation(), Params);
 	if (PitchingZone)
 	{
 		const float Distance = PitchingZone->GetReleaseToPlateCm();
-		const FVector MoundLocation = GetActorLocation() + GetActorForwardVector() * Distance;
+		const FVector Origin = GetActorLocation();
+		const FVector Fwd    = GetActorForwardVector();
+		const FVector Right  = GetActorRightVector();
+
+		// 컨택 지점(공이 도착할 곳)의 좌우/앞 위치 — 높이는 지면 기준으로 두고,
+		// 실제 도착 높이는 PitchingZone 의 PlateHeight 로 준다(마운드는 지면에서 수평 조준).
+		const FVector ContactXY = Origin + Fwd * ContactForwardCm + Right * ContactSideCm; // Z = 지면
+		// 마운드는 컨택 지점에서 정면으로 Distance(18.44m) 뒤(투수 쪽), 지면 높이.
+		const FVector MoundLocation = ContactXY + Fwd * Distance;
 		PitchingZone->SetActorLocation(MoundLocation);
-		PitchingZone->SetActorRotation((GetActorLocation() - MoundLocation).Rotation());
+		// 마운드 Forward 가 컨택 지점을 수평으로 향하게 (양쪽 모두 지면 Z).
+		PitchingZone->SetActorRotation((ContactXY - MoundLocation).Rotation());
+		// 공이 몸이 아니라 가슴 높이로 도착하도록.
+		PitchingZone->SetPlateHeightCm(ContactHeightCm);
 		PitchingZone->ApplyDifficulty(SessionDifficulty);
+
+		// 동적 난이도: 과거 기록(이 모드 평균 총점)이 좋을수록 더 어렵게 시작한다.
+		if (UGameInstance* GI = GetGameInstance())
+		{
+			if (UModeManager* MM = GI->GetSubsystem<UModeManager>())
+			{
+				const FModeStats St = MM->GetModeStats(EGameModeId::Batting);
+				if (St.SessionCount > 0)
+				{
+					PitchingZone->SeedDynamicLevel(St.AverageTotal / 100.0f);
+				}
+			}
+		}
+
 		PitchingZone->OnPitchThrown.AddDynamic(this, &AVRBattingPawn::HandlePitchThrown);
 		PitchingZone->OnPitchArrived.AddDynamic(this, &AVRBattingPawn::HandlePitchArrived);
 	}
@@ -138,9 +174,10 @@ void AVRBattingPawn::AnalyzeSwingNow()
 
 	if (!LastMetrics.bContacted)
 	{
-		// 스윙 동작이 감지되지 않음 = 지켜본 공.
+		// 스윙 동작이 감지되지 않음/헛스윙.
 		++MissedPitchCount;
 		LastCall = TEXT("지켜봄 (스윙 없음)");
+		ShowResultText(TEXT("MISS"), FLinearColor(0.7f, 0.7f, 0.75f));
 		return;
 	}
 
@@ -156,6 +193,15 @@ void AVRBattingPawn::AnalyzeSwingNow()
 
 	LastCall = UHitModel::GetClassDisplayName(LastHit.Class).ToString();
 
+	// 헤드셋 안 3D 결과 표시 (영문/기호 — 폰트 의존 없음).
+	switch (LastHit.Class)
+	{
+	case EHitClass::HomeRun: ShowResultText(TEXT("HOME RUN!"), FLinearColor(1.0f, 0.85f, 0.15f)); break;
+	case EHitClass::Hit:     ShowResultText(TEXT("HIT!"),      FLinearColor(0.35f, 0.9f, 0.4f));  break;
+	case EHitClass::Foul:    ShowResultText(TEXT("FOUL"),      FLinearColor(0.75f, 0.75f, 0.8f)); break;
+	default:                 ShowResultText(TEXT("OUT"),       FLinearColor(1.0f, 0.55f, 0.2f));  break;
+	}
+
 	// 타구 연출 — 좌타는 당겨치는 좌우각을 반전.
 	if (PitchingZone)
 	{
@@ -163,6 +209,10 @@ void AVRBattingPawn::AnalyzeSwingNow()
 		const FVector LocalDir = FRotator(LastHit.LaunchAngleDeg, LastHit.SprayAngleDeg * SpraySign, 0.0f).Vector();
 		const FVector HitDir = GetActorTransform().TransformVectorNoScale(LocalDir).GetSafeNormal();
 		PitchingZone->LaunchHitBall(HitDir, LastHit.ExitVelocityMps);
+
+		// 동적 난이도 반영 — 이번 스윙 성적으로 다음 투구의 구속·변화구를 조정한다.
+		// (여기는 컨택한 스윙만 도달한다. 지켜본 공은 위에서 조기 반환.)
+		PitchingZone->RegisterSwingOutcome(true, LastSwingScore.TotalScore / 100.0f);
 	}
 
 	UE_LOG(LogMotionBase, Log, TEXT("[VRBatting] #%d %s EV=%.1f m/s peak=%.1f total=%.1f"),
@@ -175,6 +225,18 @@ void AVRBattingPawn::ReturnToModeSelect()
 	{
 		GM->ReturnToModeSelect();
 	}
+}
+
+void AVRBattingPawn::ShowResultText(const FString& Text, const FLinearColor& Color)
+{
+	if (!ResultText)
+	{
+		return;
+	}
+	ResultText->SetText(FText::FromString(Text));
+	ResultText->SetTextRenderColor(Color.ToFColor(true));
+	ResultText->SetVisibility(true);
+	ResultTimer = 1.8f; // 이 시간 동안 표시 후 Tick 에서 숨긴다.
 }
 
 void AVRBattingPawn::ResetSession()
@@ -203,6 +265,16 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 		}
 	}
 
+	// 결과 텍스트 표시 시간 카운트다운.
+	if (ResultTimer > 0.0f)
+	{
+		ResultTimer -= DeltaSeconds;
+		if (ResultTimer <= 0.0f && ResultText)
+		{
+			ResultText->SetVisibility(false);
+		}
+	}
+
 	if (!GEngine)
 	{
 		return;
@@ -221,6 +293,13 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 			*UModeManager::GetDifficultyDisplayName(SessionDifficulty).ToString(),
 			*UModeManager::GetStanceDisplayName(SessionStance).ToString(),
 			bTracking ? TEXT("정상") : TEXT("없음")));
+
+	if (PitchingZone)
+	{
+		GEngine->AddOnScreenDebugMessage(5, 2.0f, FColor(255, 180, 90),
+			FString::Printf(TEXT("동적 난이도: %.0f%%  (잘 치면 상승 · 놓치면 하강)"),
+				PitchingZone->GetDynamicLevel() * 100.0f));
+	}
 
 	if (PitchingZone && PitchingZone->IsPitchInFlight())
 	{

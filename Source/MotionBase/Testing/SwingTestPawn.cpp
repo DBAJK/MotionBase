@@ -54,10 +54,19 @@ void ASwingTestPawn::BeginPlay()
 	}
 
 	const float Distance = PitchingZone->GetReleaseToPlateCm();
-	const FVector MoundLocation = GetActorLocation() + GetActorForwardVector() * Distance;
+	const FVector Origin = GetActorLocation();
+	const FVector Fwd    = GetActorForwardVector();
+
+	// 컨택 지점 = 타자 앞 45cm·가슴 높이 110cm (VRBattingPawn 과 동일 규격).
+	// 공이 몸이 아니라 앞쪽 스윙 지점으로 도착하게 한다.
+	constexpr float ContactForwardCm = 45.0f;
+	constexpr float ContactHeightCm  = 110.0f;
+	const FVector ContactXY = Origin + Fwd * ContactForwardCm;          // Z = 지면
+	const FVector MoundLocation = ContactXY + Fwd * Distance;           // 지면 높이
 	PitchingZone->SetActorLocation(MoundLocation);
-	// 마운드 → 타자 방향을 바라보게 (Forward 가 플레이트를 향해야 함)
-	PitchingZone->SetActorRotation((GetActorLocation() - MoundLocation).Rotation());
+	// 마운드 Forward 가 컨택 지점을 수평으로 향하게.
+	PitchingZone->SetActorRotation((ContactXY - MoundLocation).Rotation());
+	PitchingZone->SetPlateHeightCm(ContactHeightCm);
 
 	PitchingZone->OnPitchThrown.AddDynamic(this, &ASwingTestPawn::HandlePitchThrown);
 	PitchingZone->OnPitchArrived.AddDynamic(this, &ASwingTestPawn::HandlePitchArrived);
@@ -72,6 +81,20 @@ void ASwingTestPawn::BeginPlay()
 		}
 	}
 	PitchingZone->ApplyDifficulty(SessionDifficulty);
+
+	// 동적 난이도: 과거 기록(이 모드 평균 총점)이 좋을수록 더 어렵게 시작한다.
+	// 기록이 없으면(첫 플레이) 프리셋 그대로 시작 → 이후 스윙 성적으로 조정된다.
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UModeManager* MM = GI->GetSubsystem<UModeManager>())
+		{
+			const FModeStats St = MM->GetModeStats(EGameModeId::Batting);
+			if (St.SessionCount > 0)
+			{
+				PitchingZone->SeedDynamicLevel(St.AverageTotal / 100.0f);
+			}
+		}
+	}
 
 	// 타석에 맞춰 시점을 홈플레이트 옆으로 옮긴다.
 	//   우타 = 3루 쪽(-Y), 좌타 = 1루 쪽(+Y). (배터가 서는 타석 위치)
@@ -355,6 +378,9 @@ void ASwingTestPawn::SimulateSwing()
 		ModeManager->RecordResult(LastSwingScore);
 	}
 
+	// 동적 난이도 반영 — 이번 스윙 성적으로 다음 투구의 구속·변화구를 조정한다.
+	PitchingZone->RegisterSwingOutcome(LastMetrics.bContacted, LastSwingScore.TotalScore / 100.0f);
+
 	// 신체역학 경로 — 카메라(MediaPipe)가 없어 Mock 포즈로 분석기를 실제로 돌린다.
 	// 컨택 클럭(Now)을 그대로 넣어 kinetic chain 리드가 스윙 타이밍과 정렬되게 한다.
 	// 스윙 세기/타이밍을 Mock 형태에 살짝 반영해 스윙마다 지표가 달라지도록 한다.
@@ -477,6 +503,14 @@ void ASwingTestPawn::Tick(float DeltaSeconds)
 		FString::Printf(TEXT("=== MotionBase 타격 훈련 [%s · %s] ===   [Space] 스윙   [F] 분석·추천   [R] 리셋   [M] 모드 선택"),
 			*UModeManager::GetDifficultyDisplayName(SessionDifficulty).ToString(),
 			*UModeManager::GetStanceDisplayName(SessionStance).ToString()));
+
+	// 동적 난이도 — 성적에 따라 구속·변화구가 오르내린다 (0%=프리셋, 100%=최대 상승).
+	if (PitchingZone)
+	{
+		GEngine->AddOnScreenDebugMessage(11, 2.0f, FColor(255, 180, 90),
+			FString::Printf(TEXT("동적 난이도: %.0f%%  (잘 치면 상승 · 놓치면 하강)"),
+				PitchingZone->GetDynamicLevel() * 100.0f));
+	}
 
 	// 투구 상태
 	if (PitchingZone && PitchingZone->IsPitchInFlight())

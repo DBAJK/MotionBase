@@ -156,7 +156,7 @@ void AMotionBaseGameMode::ApplyPendingPawnSwap()
 
 bool AMotionBaseGameMode::StartDefenseDrill(int32 DrillIndex)
 {
-	// 종목별 폰 결정. 지금은 0=포구만 실제 구현, 나머지는 자리표시자(DefensePawn).
+	// 종목별 폰 결정 (0=포구, 1=송구, 2=백업). 풋워크·반응속도는 메뉴에서 제외됨.
 	TSubclassOf<APawn> PawnClass = nullptr;
 	switch (DrillIndex)
 	{
@@ -166,10 +166,10 @@ bool AMotionBaseGameMode::StartDefenseDrill(int32 DrillIndex)
 	case 1: // 송구
 		PawnClass = AThrowPawn::StaticClass();
 		break;
-	case 3: // 백업(커버)
+	case 2: // 백업(커버) 위치 판단
 		PawnClass = ACoverPawn::StaticClass();
 		break;
-	default: // 송구/풋워크/백업 — 아직 미구현
+	default:
 		UE_LOG(LogMotionBase, Log, TEXT("GameMode: 수비 세부 종목 %d 은(는) 아직 준비 중입니다."), DrillIndex);
 		return false;
 	}

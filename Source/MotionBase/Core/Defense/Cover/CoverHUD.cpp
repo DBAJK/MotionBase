@@ -5,15 +5,11 @@
 
 namespace
 {
-	const FLinearColor PanelBg   (0.05f, 0.06f, 0.08f, 0.82f);
-	const FLinearColor PanelLine (1.00f, 0.62f, 0.20f, 0.90f);
-	const FLinearColor TextMain  (0.92f, 0.94f, 0.97f, 1.00f);
-	const FLinearColor TextDim   (0.55f, 0.60f, 0.66f, 1.00f);
-	const FLinearColor Good      (0.40f, 0.85f, 0.45f, 1.00f);
-
-	const FLinearColor BarBg     (0.12f, 0.13f, 0.16f, 0.92f);
-	const FLinearColor BarFill   (1.00f, 0.62f, 0.20f, 0.95f); // 남은 시간
-	const FLinearColor BarLow    (0.90f, 0.35f, 0.35f, 0.95f); // 시간 얼마 안 남음
+	const FLinearColor CvPanelBg   (0.05f, 0.06f, 0.08f, 0.82f);
+	const FLinearColor CvPanelLine (1.00f, 0.62f, 0.20f, 0.90f);
+	const FLinearColor CvTextMain  (0.92f, 0.94f, 0.97f, 1.00f);
+	const FLinearColor CvTextDim   (0.55f, 0.60f, 0.66f, 1.00f);
+	const FLinearColor CvGood      (0.40f, 0.85f, 0.45f, 1.00f);
 }
 
 void ACoverHUD::DrawPanel(float X, float Y, float W, float H, const FLinearColor& Fill, const FLinearColor& Border)
@@ -52,47 +48,62 @@ void ACoverHUD::DrawHUD()
 	const float H = Canvas->SizeY;
 	const float S = FMath::Clamp(W / 1920.0f, 0.7f, 1.4f);
 
-	// ── 상단 패널 (목표 베이스 + 진행/성공) ──
-	const float PanelW = 520.0f * S;
-	const float PanelH = 96.0f * S;
+	// ── 상단 패널 (진행/성공 + 상황 + 역할) ──
+	const float PanelW = 940.0f * S;
+	const float PanelH = 120.0f * S;
 	const float PanelX = (W - PanelW) * 0.5f;
 	const float PanelY = 28.0f * S;
-	DrawPanel(PanelX, PanelY, PanelW, PanelH, PanelBg, PanelLine);
+	DrawPanel(PanelX, PanelY, PanelW, PanelH, CvPanelBg, CvPanelLine);
 
-	// 목표 베이스 (크게)
-	const FString Target = FString::Printf(TEXT("%s 커버!"), *Pawn->GetTargetBaseName());
-	DrawCentered(Target, W * 0.5f, PanelY + 12.0f * S, TextMain, 1.5f * S);
+	const FString Progress = FString::Printf(TEXT("%d / %d 문제      성공 %d"),
+		Pawn->GetTrialNumber(), Pawn->GetTotalTrials(), Pawn->GetSuccessCount());
+	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 12.0f * S, CvTextDim, 0.85f * S);
 
-	// 진행 / 성공 (작게, 좌우)
-	const FString Progress = FString::Printf(TEXT("%d / %d"),
-		Pawn->GetTrialNumber(), Pawn->GetTotalTrials());
-	DrawLabel(Progress, PanelX + 18.0f * S, PanelY + 14.0f * S, TextDim, 0.85f * S);
+	DrawCentered(Pawn->GetSituationText(), W * 0.5f, PanelY + 42.0f * S, CvTextMain, 1.15f * S);
+	const FString RoleLine = FString::Printf(TEXT("당신은 [%s] — 어디를 백업?"), *Pawn->GetRoleText());
+	DrawCentered(RoleLine, W * 0.5f, PanelY + 78.0f * S, CvGood, 1.0f * S);
 
-	const FString SuccessStr = FString::Printf(TEXT("성공 %d"), Pawn->GetSuccessCount());
-	DrawLabel(SuccessStr, PanelX + PanelW - 110.0f * S, PanelY + 14.0f * S, Good, 0.85f * S);
+	// ── 보기 4개 ──
+	const int32 N = Pawn->GetOptionCount();
+	const int32 Sel = Pawn->GetSelectedIndex();
+	const int32 Correct = Pawn->GetRevealCorrectIndex();
+	const bool  bAnswered = Pawn->IsAnswered();
 
-	// ── 남은 시간 바 (패널 하단) ──
-	const float BarW = PanelW - 36.0f * S;
-	const float BarH = 18.0f * S;
-	const float BarX = PanelX + 18.0f * S;
-	const float BarY = PanelY + PanelH - BarH - 12.0f * S;
+	const float OptY0 = PanelY + PanelH + 44.0f * S;
+	const float OptStep = 58.0f * S;
+	for (int32 i = 0; i < N; ++i)
+	{
+		FLinearColor Col = CvTextMain;
+		if (bAnswered)
+		{
+			Col = (i == Correct) ? CvGood : CvTextDim;
+		}
+		else if (i == Sel)
+		{
+			Col = FLinearColor(1.0f, 0.75f, 0.35f, 1.0f); // 커서 = 앰버
+		}
 
-	const float TimeLeft  = FMath::Max(Pawn->GetTimeLeft(), 0.0f);
-	const float TimeLimit = 3.0f; // 표시용 기준 (Pawn 기본 TimeLimit 과 맞춤)
-	const float Ratio = FMath::Clamp(TimeLeft / TimeLimit, 0.0f, 1.0f);
+		FString Line = FString::Printf(TEXT("%s %d. %s"),
+			(!bAnswered && i == Sel) ? TEXT("▶") : TEXT("   "),
+			i + 1, *Pawn->GetOptionText(i));
+		if (bAnswered && i == Correct) { Line += TEXT("   (정답)"); }
+		DrawCentered(Line, W * 0.5f, OptY0 + i * OptStep, Col, 1.2f * S);
+	}
 
-	DrawRect(BarBg, BarX, BarY, BarW, BarH);
-	DrawRect(Ratio < 0.34f ? BarLow : BarFill, BarX, BarY, BarW * Ratio, BarH);
+	// ── 결과 + 해설 ──
+	FString Outcome;
+	FLinearColor OColor;
+	if (Pawn->GetLastOutcomeText(Outcome, OColor))
+	{
+		DrawCentered(Outcome, W * 0.5f, OptY0 + N * OptStep + 24.0f * S, OColor, 1.5f * S);
+		if (bAnswered)
+		{
+			DrawCentered(Pawn->GetExplainText(), W * 0.5f, OptY0 + N * OptStep + 64.0f * S,
+				CvTextDim, 0.85f * S);
+		}
+	}
 
 	// ── 조작 안내 ──
-	DrawCentered(TEXT("WASD 이동    정답 베이스로 제한 시간 안에!    M 나가기"),
-		W * 0.5f, PanelY + PanelH + 12.0f * S, TextDim, 0.78f * S);
-
-	// ── 판정 결과 (중앙) ──
-	FString ResultLine;
-	FLinearColor ResultColor;
-	if (Pawn->GetLastOutcomeText(ResultLine, ResultColor))
-	{
-		DrawCentered(ResultLine, W * 0.5f, H * 0.4f, ResultColor, 1.7f * S);
-	}
+	DrawCentered(TEXT("숫자키 1~4 선택 (VR: 컨트롤러로 겨누고 유지)    ·    M 나가기"),
+		W * 0.5f, H - 40.0f * S, CvTextDim, 0.78f * S);
 }

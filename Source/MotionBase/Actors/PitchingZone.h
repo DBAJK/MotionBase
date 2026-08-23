@@ -50,6 +50,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Pitch")
 	void ApplyDifficulty(EDifficultyLevel Level);
 
+	/**
+	 * 동적 난이도 초기 수준(0~1) 시드. 세션 시작 시 과거 기록(평균 점수)으로 잡는다.
+	 * 0 = 난이도 프리셋 그대로, 1 = 프리셋 위 headroom(구속·변화구·간격) 최대 적용.
+	 * ApplyDifficulty 뒤에 호출할 것 (프리셋을 base 로 잡은 다음이라야 의미가 있다).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Pitch")
+	void SeedDynamicLevel(float Level01);
+
+	/**
+	 * 스윙 결과를 반영해 동적 난이도를 조정한다 — 잘 치면(컨택+기준점수 이상) 올리고,
+	 * 헛스윙/약한 컨택이면 내린다. 모드 폰이 매 스윙 채점 직후 호출한다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Pitch")
+	void RegisterSwingOutcome(bool bContacted, float SwingScore01);
+
+	/** 현재 동적 난이도 수준 (0~1). HUD 표시용. */
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Pitch")
+	float GetDynamicLevel() const { return DynamicLevel; }
+
 	/** 타격 성공 시 공을 날려보내는 연출. */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Pitch")
 	void LaunchHitBall(const FVector& Direction, float SpeedMps);
@@ -68,6 +87,10 @@ public:
 	/** 마운드→플레이트 거리 (cm). 배치 계산용. */
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Pitch")
 	float GetReleaseToPlateCm() const { return ReleaseToPlateCm; }
+
+	/** 공 도착(플레이트) 높이 설정 (cm). 타자 폰이 컨택 높이에 맞춰 호출한다. */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Pitch")
+	void SetPlateHeightCm(float NewHeightCm) { PlateHeightCm = NewHeightCm; }
 
 	/**
 	 * 직전 투구가 스트라이크 존을 통과했는지 (코스 오프셋 기준).
@@ -158,6 +181,42 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|Pitch|Difficulty")
 	float BreakAmountCm = 60.0f;
 
+	// ── 동적 난이도 (기록·성적 기반 자동 상승) ──
+	// 난이도 프리셋을 기준선(base)으로 두고, 그 위에 DynamicLevel(0~1) 만큼 구속·변화구·간격을
+	// 끌어올린다. TODO(캘리브레이션): 아래 headroom/step 값은 플레이테스트로 조정 (하드코딩 확정 금지).
+
+	/** 기록·성적 기반으로 구속·변화구를 자동 상승시킬지. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|Pitch|Difficulty")
+	bool bDynamicDifficulty = true;
+
+	/** 동적 상승 최대 구속 가산 (km/h) — DynamicLevel=1 일 때 SpeedMin/Max 에 더해진다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|Pitch|Difficulty")
+	float DynamicSpeedHeadroomKmh = 20.0f;
+
+	/** 동적 상승 최대 변화구 비율 가산 (0~1). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|Pitch|Difficulty")
+	float DynamicBreakingHeadroom = 0.30f;
+
+	/** 동적 상승 시 투구 간격 최대 단축 (초). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|Pitch|Difficulty")
+	float DynamicIntervalReductionSec = 0.6f;
+
+	/** 자동 투구 최소 간격 (초) — 동적 단축의 하한. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|Pitch|Difficulty")
+	float MinAutoPitchIntervalSec = 1.2f;
+
+	/** 좋은 스윙 1회당 동적 수준 상승폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|Pitch|Difficulty")
+	float DynamicStepUp = 0.12f;
+
+	/** 아쉬운 스윙 1회당 동적 수준 하강폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|Pitch|Difficulty")
+	float DynamicStepDown = 0.08f;
+
+	/** '좋은 스윙' 기준 점수 (0~1). 이 이상이면 상승, 미만이면 하강. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|Pitch|Difficulty")
+	float DynamicGoodSwingScore01 = 0.6f;
+
 private:
 	enum class EPitchState : uint8
 	{
@@ -169,6 +228,16 @@ private:
 	FVector ComputeReleaseLocation() const;
 
 	void EnterIdle();
+
+	/** DynamicLevel 을 프리셋 기준선(base)에 얹어 구속·변화구·간격을 다시 계산한다. */
+	void RefreshDynamicPitchParams();
+
+	// 동적 난이도 상태 — 현재 상승 수준(0~1)과 ApplyDifficulty 에서 잡은 프리셋 기준선.
+	float DynamicLevel = 0.0f;
+	float BaseSpeedMinKmh = 95.0f;
+	float BaseSpeedMaxKmh = 135.0f;
+	float BaseBreakingBallRatio = 0.35f;
+	float BaseAutoPitchIntervalSec = 2.5f;
 
 	EPitchState State = EPitchState::Idle;
 

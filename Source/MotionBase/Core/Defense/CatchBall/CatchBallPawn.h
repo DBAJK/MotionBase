@@ -7,6 +7,8 @@
 
 class UCameraComponent;
 class UCapsuleComponent;
+class UMotionControllerComponent;
+class UStaticMeshComponent;
 class ACatchBall;
 
 /**
@@ -48,6 +50,14 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, Category = "CatchBall")
 	TObjectPtr<UCameraComponent> Camera;
+
+	/** VR 글러브 = 오른손 컨트롤러. 공에 가까이 가져가면 포구된다. */
+	UPROPERTY(VisibleAnywhere, Category = "CatchBall|VR")
+	TObjectPtr<UMotionControllerComponent> GloveController;
+
+	/** 글러브 시각 표시 (손 위치 구체). */
+	UPROPERTY(VisibleAnywhere, Category = "CatchBall|VR")
+	TObjectPtr<UStaticMeshComponent> GloveMesh;
 
 	// ── 설정값 ──
 
@@ -143,4 +153,10 @@ private:
 
 	FCatchResult LastResult;
 	FString StatusLine;   // 화면 하단 상태 문구
+
+	/** HMD 연결 시 true — 글러브(컨트롤러) 근접으로 포구, 이동은 실제 몸으로. */
+	bool bVR = false;
+
+	/** VR 포구 판정 — 글러브가 공에 닿았는지 매 틱 확인. */
+	void TickVRCatch();
 };

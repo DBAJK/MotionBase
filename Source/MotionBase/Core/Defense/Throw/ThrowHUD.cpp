@@ -5,11 +5,11 @@
 
 namespace
 {
-	const FLinearColor PanelBg   (0.05f, 0.06f, 0.08f, 0.82f);
-	const FLinearColor PanelLine (1.00f, 0.62f, 0.20f, 0.90f);
-	const FLinearColor TextMain  (0.92f, 0.94f, 0.97f, 1.00f);
-	const FLinearColor TextDim   (0.55f, 0.60f, 0.66f, 1.00f);
-	const FLinearColor Good      (0.40f, 0.85f, 0.45f, 1.00f);
+	const FLinearColor TwPanelBg   (0.05f, 0.06f, 0.08f, 0.82f);
+	const FLinearColor TwPanelLine (1.00f, 0.62f, 0.20f, 0.90f);
+	const FLinearColor TwTextMain  (0.92f, 0.94f, 0.97f, 1.00f);
+	const FLinearColor TwTextDim   (0.55f, 0.60f, 0.66f, 1.00f);
+	const FLinearColor TwGood      (0.40f, 0.85f, 0.45f, 1.00f);
 
 	const FLinearColor GaugeBg   (0.12f, 0.13f, 0.16f, 0.92f);
 	const FLinearColor GaugeFill (1.00f, 0.62f, 0.20f, 0.95f); // 현재 파워 (앰버)
@@ -57,14 +57,14 @@ void AThrowHUD::DrawHUD()
 	const float PanelH = 56.0f * S;
 	const float PanelX = (W - PanelW) * 0.5f;
 	const float PanelY = 28.0f * S;
-	DrawPanel(PanelX, PanelY, PanelW, PanelH, PanelBg, PanelLine);
+	DrawPanel(PanelX, PanelY, PanelW, PanelH, TwPanelBg, TwPanelLine);
 
 	const FString Progress = FString::Printf(TEXT("%d / %d 구"),
 		Pawn->GetThrowNumber(), Pawn->GetTotalThrows());
-	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 14.0f * S, TextMain, 1.1f * S);
+	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 14.0f * S, TwTextMain, 1.1f * S);
 
 	const FString SuccessStr = FString::Printf(TEXT("성공  %d"), Pawn->GetSuccessCount());
-	DrawLabel(SuccessStr, PanelX + PanelW - 140.0f * S, PanelY + 14.0f * S, Good, 1.1f * S);
+	DrawLabel(SuccessStr, PanelX + PanelW - 140.0f * S, PanelY + 14.0f * S, TwGood, 1.1f * S);
 
 	// ── 하단 파워 게이지 ──
 	const float GaugeW = 560.0f * S;
@@ -73,7 +73,7 @@ void AThrowHUD::DrawHUD()
 	const float GaugeY = H - 90.0f * S;
 
 	// 게이지 배경
-	DrawPanel(GaugeX, GaugeY, GaugeW, GaugeH, GaugeBg, PanelLine);
+	DrawPanel(GaugeX, GaugeY, GaugeW, GaugeH, GaugeBg, TwPanelLine);
 
 	// 현재 파워 채움
 	const float Power = FMath::Clamp(Pawn->GetCurrentPower(), 0.0f, 1.0f);
@@ -86,14 +86,14 @@ void AThrowHUD::DrawHUD()
 
 	// 게이지 라벨
 	DrawCentered(TEXT("Space 를 눌러 파워 충전 → 떼면 송구"),
-		W * 0.5f, GaugeY - 26.0f * S, TextDim, 0.8f * S);
+		W * 0.5f, GaugeY - 26.0f * S, TwTextDim, 0.8f * S);
 
 	const FString PowerPct = FString::Printf(TEXT("파워 %d%%"), FMath::RoundToInt(Power * 100.0f));
 	DrawCentered(PowerPct, W * 0.5f, GaugeY + GaugeH + 6.0f * S,
-		Pawn->IsCharging() ? GaugeFill : TextDim, 0.85f * S);
+		Pawn->IsCharging() ? GaugeFill : TwTextDim, 0.85f * S);
 
 	// ── 조작 안내 ──
-	DrawCentered(TEXT("M 나가기"), W * 0.5f, H - 40.0f * S, TextDim, 0.75f * S);
+	DrawCentered(TEXT("M 나가기"), W * 0.5f, H - 40.0f * S, TwTextDim, 0.75f * S);
 
 	// ── 판정 결과 (중앙) ──
 	FString ResultLine;

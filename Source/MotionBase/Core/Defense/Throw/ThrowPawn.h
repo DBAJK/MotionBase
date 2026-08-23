@@ -7,6 +7,8 @@
 
 class UCameraComponent;
 class UCapsuleComponent;
+class UMotionControllerComponent;
+class UStaticMeshComponent;
 class ACatchBall;
 
 /**
@@ -49,6 +51,27 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, Category = "Throw")
 	TObjectPtr<UCameraComponent> Camera;
+
+	/** VR 송구 손 = 오른손 컨트롤러. 앞으로 던지는 동작 속도로 파워가 정해진다. */
+	UPROPERTY(VisibleAnywhere, Category = "Throw|VR")
+	TObjectPtr<UMotionControllerComponent> ThrowController;
+
+	/** 손에 든 공 시각 표시. */
+	UPROPERTY(VisibleAnywhere, Category = "Throw|VR")
+	TObjectPtr<UStaticMeshComponent> BallInHandMesh;
+
+	// ── VR 송구 튜닝 ──
+	/** 이 속도(cm/s) 이상으로 컨트롤러를 휘두르면 송구로 인식. */
+	UPROPERTY(EditAnywhere, Category = "Throw|VR")
+	float ThrowTriggerSpeedCms = 250.0f;
+
+	/** 파워 0 에 대응하는 손 속도 (cm/s). */
+	UPROPERTY(EditAnywhere, Category = "Throw|VR")
+	float MinThrowSpeedCms = 250.0f;
+
+	/** 파워 1 에 대응하는 손 속도 (cm/s). 이 이상은 최대 파워. */
+	UPROPERTY(EditAnywhere, Category = "Throw|VR")
+	float MaxThrowSpeedCms = 1500.0f;
 
 	// ── 설정값 ──
 
@@ -127,4 +150,13 @@ private:
 
 	FThrowResult LastResult;
 	bool bHasResult = false;
+
+	// ── VR 상태 ──
+	bool    bVR = false;
+	FVector PrevControllerLoc = FVector::ZeroVector;
+	bool    bHasPrevControllerLoc = false;
+	float   ThrowCooldown = 0.0f;   // 던진 직후 재던짐 방지
+
+	/** VR: 컨트롤러 속도로 송구 인식 + 파워 산출. */
+	void TickVRThrow(float DeltaSeconds);
 };

@@ -6,6 +6,11 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "MotionControllerComponent.h"
+#include "HeadMountedDisplayFunctionLibrary.h"
+#include "Engine/StaticMesh.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
@@ -25,6 +30,21 @@ ACatchBallPawn::ACatchBallPawn()
 	Camera->SetupAttachment(Capsule);
 	Camera->SetRelativeLocation(FVector(0.0f, 0.0f, 70.0f)); // 눈높이
 	Camera->bUsePawnControlRotation = false; // 시점 고정 (좌우 이동만)
+
+	// VR 글러브 = 오른손 컨트롤러 + 손 위치 구체.
+	GloveController = CreateDefaultSubobject<UMotionControllerComponent>(TEXT("GloveController"));
+	GloveController->SetupAttachment(Capsule);
+	GloveController->MotionSource = FName(TEXT("Right"));
+
+	GloveMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("GloveMesh"));
+	GloveMesh->SetupAttachment(GloveController);
+	GloveMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sph(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	if (Sph.Succeeded())
+	{
+		GloveMesh->SetStaticMesh(Sph.Object);
+		GloveMesh->SetRelativeScale3D(FVector(0.22f)); // 지름 22cm 글러브
+	}
 }
 
 void ACatchBallPawn::BeginPlay()
@@ -34,6 +54,17 @@ void ACatchBallPawn::BeginPlay()
 	// 시점을 정면(+X)으로 고정한다. 이후 모든 발사·낙구지점을 이 정면 기준으로 만든다.
 	SetActorRotation(FRotator::ZeroRotator);
 	HomeLocation = GetActorLocation();
+
+	// HMD 연결 시 글러브(컨트롤러) 근접 포구 모드. 아니면 키보드.
+	bVR = UHeadMountedDisplayFunctionLibrary::IsHeadMountedDisplayEnabled();
+	if (bVR)
+	{
+		UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
+	}
+	if (GloveMesh)
+	{
+		GloveMesh->SetVisibility(bVR); // 글러브는 VR 에서만 보인다.
+	}
 
 	StartSession();
 }
@@ -248,7 +279,8 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	// 이동 (눌림 플래그만큼 매 프레임 이동).
+	// 이동 (키보드 모드만 — VR 에선 실제 몸으로 움직인다).
+	if (!bVR)
 	{
 		FVector Move = FVector::ZeroVector;
 		if (bMoveFwd)   Move.X += 1.0f;
@@ -261,6 +293,12 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 			Move = Move.GetSafeNormal() * MoveSpeed * DeltaSeconds;
 			AddActorWorldOffset(Move, false);
 		}
+	}
+
+	// VR: 글러브(컨트롤러)를 공에 가져가면 자동 포구.
+	if (bVR)
+	{
+		TickVRCatch();
 	}
 
 	// 다음 공 대기.
@@ -281,12 +319,44 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 			CurrentTrial.CatchRadius, 32, FColor::Yellow, false, -1.0f, 0, 3.0f,
 			FVector(1, 0, 0), FVector(0, 1, 0), false);
 
-		// 내 캐치 반경도 표시 (내가 지금 커버하는 범위).
-		DrawDebugCircle(GetWorld(), GetActorLocation() - FVector(0, 0, 86.0f),
+		// 내 캐치 반경 표시 — VR 은 글러브 위치, 키보드는 발밑 기준.
+		const FVector CatchCenter = (bVR && GloveController)
+			? GloveController->GetComponentLocation()
+			: GetActorLocation() - FVector(0, 0, 86.0f);
+		DrawDebugCircle(GetWorld(), CatchCenter,
 			CurrentTrial.CatchRadius, 32, FColor::Cyan, false, -1.0f, 0, 2.0f,
 			FVector(1, 0, 0), FVector(0, 1, 0), false);
 	}
-	
+}
+
+void ACatchBallPawn::TickVRCatch()
+{
+	if (!bPitchActive || !ActiveBall || !GloveController)
+	{
+		return;
+	}
+
+	const float Elapsed = ActiveBall->GetElapsedTime();
+
+	// 타이밍 창에 들어와야 판정 시작 (너무 이른 포구 방지).
+	if (Elapsed < CurrentTrial.TimeToLanding - TimingTolerance)
+	{
+		return;
+	}
+
+	const FCatchResult Result = FCatchBallJudge::JudgePress(
+		ActiveBall->GetActorLocation(),
+		GloveController->GetComponentLocation(),
+		CurrentTrial.CatchRadius,
+		Elapsed,
+		CurrentTrial.TimeToLanding,
+		TimingTolerance);
+
+	// 글러브가 닿아 성공이거나, 타이밍 창을 지났으면 이번 구 종료.
+	if (Result.IsSuccess() || Elapsed > CurrentTrial.TimeToLanding + TimingTolerance)
+	{
+		FinishPitch(Result);
+	}
 }
 
 void ACatchBallPawn::ReturnToModeSelect()

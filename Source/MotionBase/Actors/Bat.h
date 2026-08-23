@@ -93,9 +93,17 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "MotionBase|Bat")
 	TObjectPtr<USceneComponent> BatTip;
 
-	/** 보이는 배트 메시 (그립→BatTip 원기둥). */
+	/** 손잡이(그립) 메시 — 가는 원기둥. */
 	UPROPERTY(VisibleAnywhere, Category = "MotionBase|Bat")
 	TObjectPtr<UStaticMeshComponent> BatMesh;
+
+	/** 배럴(굵은 타격면) 메시 — 배트처럼 보이게 끝부분을 굵게. */
+	UPROPERTY(VisibleAnywhere, Category = "MotionBase|Bat")
+	TObjectPtr<UStaticMeshComponent> BarrelMesh;
+
+	/** 그립 끝 노브 메시. */
+	UPROPERTY(VisibleAnywhere, Category = "MotionBase|Bat")
+	TObjectPtr<UStaticMeshComponent> KnobMesh;
 
 	/** 어떤 입력 소스를 쓸지. Vive 없이 테스트하려면 Mock 으로. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionBase|Bat")

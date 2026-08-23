@@ -208,13 +208,11 @@ void UModeManager::RecordResult(const FScoreResult& Result)
 
 TArray<EGameModeId> UModeManager::GetMenuModes()
 {
+	// 현재 구현된 두 모드만 메뉴에 노출한다. 나머지 모드(신체인식·반응속도·베이스러닝·
+	// 기능성피트니스)는 구현되면 여기에 다시 추가한다 (열거형·표시명·설명은 그대로 유지).
 	return {
-		EGameModeId::BodyScan,
-		EGameModeId::ReactionSpeed,
 		EGameModeId::Defense,
-		EGameModeId::BaseRunning,
-		EGameModeId::Batting,
-		EGameModeId::FunctionalFitness
+		EGameModeId::Batting
 	};
 }
 

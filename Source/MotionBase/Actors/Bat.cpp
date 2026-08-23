@@ -23,18 +23,46 @@ ABat::ABat()
 	// 배트 길이 오프셋 (cm). 실제 배트/그립에 맞춰 조정.
 	BatTip->SetRelativeLocation(FVector(80.0f, 0.0f, 0.0f));
 
-	// 눈에 보이는 배트 (그립 → BatTip 방향의 가는 원기둥). VR 에서 손에 배트가 보인다.
+	// 눈에 보이는 배트 — 그립(가는 손잡이) + 배럴(굵은 타격면) + 노브 로 실제 배트처럼 구성.
+	// 배트는 그립(x=0)에서 +X 방향으로 뻗는다. 총 길이 ≈ 84cm.
+	// 실린더 기본 메시: 로컬 Z축 길이 100cm·지름 100cm → rot(90,0,0) 으로 +X 로 눕히고,
+	//   Z스케일=길이(m), XY스케일=지름(m) 으로 잡는다.
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cyl(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sph(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+
+	// 손잡이(그립): 가는 원기둥, 길이 46cm·지름 3.4cm, 중심 x=23.
 	BatMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BatMesh"));
 	BatMesh->SetupAttachment(MotionController);
 	BatMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cyl(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
 	if (Cyl.Succeeded())
 	{
 		BatMesh->SetStaticMesh(Cyl.Object);
-		// 실린더(로컬 Z축 100cm)를 +X 로 눕혀 길이 80cm·지름 ~6cm 배트로.
 		BatMesh->SetRelativeRotation(FRotator(90.0f, 0.0f, 0.0f));
-		BatMesh->SetRelativeLocation(FVector(40.0f, 0.0f, 0.0f));
-		BatMesh->SetRelativeScale3D(FVector(0.06f, 0.06f, 0.8f));
+		BatMesh->SetRelativeLocation(FVector(23.0f, 0.0f, 0.0f));
+		BatMesh->SetRelativeScale3D(FVector(0.034f, 0.034f, 0.46f));
+	}
+
+	// 배럴(타격면): 굵은 원기둥, 길이 38cm·지름 6.6cm, 중심 x=65 (그립 끝~배트 끝).
+	BarrelMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BarrelMesh"));
+	BarrelMesh->SetupAttachment(MotionController);
+	BarrelMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	if (Cyl.Succeeded())
+	{
+		BarrelMesh->SetStaticMesh(Cyl.Object);
+		BarrelMesh->SetRelativeRotation(FRotator(90.0f, 0.0f, 0.0f));
+		BarrelMesh->SetRelativeLocation(FVector(65.0f, 0.0f, 0.0f));
+		BarrelMesh->SetRelativeScale3D(FVector(0.066f, 0.066f, 0.38f));
+	}
+
+	// 노브(그립 끝): 작은 구, 지름 5cm, x=0.
+	KnobMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("KnobMesh"));
+	KnobMesh->SetupAttachment(MotionController);
+	KnobMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	if (Sph.Succeeded())
+	{
+		KnobMesh->SetStaticMesh(Sph.Object);
+		KnobMesh->SetRelativeLocation(FVector(0.0f, 0.0f, 0.0f));
+		KnobMesh->SetRelativeScale3D(FVector(0.05f, 0.05f, 0.05f));
 	}
 }
 

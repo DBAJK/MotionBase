@@ -27,16 +27,17 @@ SporTrack : Baseball — 비착용형 XR 야구 콘텐츠. 정본 브리프: [hi
 - [x] 시작 화면 — 모드 선택 (`AModeSelectPawn` + `AModeSelectHUD`, Canvas 렌더 / 에셋 불필요)
 - [x] `UModeManager` 배선 — 모드 메타데이터·세션 초기화·`ModeId` 기입 (죽은 코드였음)
 - [x] 폰 교체 흐름 (`AMotionBaseGameMode::StartMode` / `ReturnToModeSelect`, 레벨 이동 없음)
-- [ ] 난이도 **동적 조정** (기록 기반으로 구속·변화구 비율 자동 상승)
+- [x] 난이도 **동적 조정** — `PitchingZone` DynamicLevel(0~1)로 프리셋 위에 구속·변화구·간격 상승.
+      세션 시작 시 과거 평균 점수로 시드(`SeedDynamicLevel`) + 스윙마다 성적 반영(`RegisterSwingOutcome`)
 - [x] 스트라이크/볼·볼카운트·타석(삼진/볼넷) 판정
 - [x] 모드 선택 3단계: 모드 → 난이도 → **타석(좌타/우타)** (타격 전용)
 - [x] 스타일라이즈드 야구장 + 배터 박스 (좌/우 타석) — 절차적 생성(Python)
-- [ ] 가상 타구 결과 모델 (비거리/방향 → 효율 점수 반영)
+- [x] 가상 타구 결과 모델 (비거리/방향 → 효율 점수 반영) — `UHitModel` + `FBattedBall`(홈런/안타/파울)
 - [ ] UMG HUD (디버그 텍스트 → 정식 점수/피드백 UI) — 투사 환경 가독성 기준으로 재설계
-- [ ] ⚠️ 채점 결함 수정 — 헛스윙이 25~60점을 받는다 (`ScoreSwing` 이 `bContacted` 무시,
-      `Consistency` 단일 스윙 만점 고정). 기능 추가보다 우선.
-- [ ] ⚠️ 컨택 판정에 시간 창 도입 — 현재 `AnalyzeSwing` 은 링버퍼에서 **공간상 최근접** 샘플만
-      찾아 시간을 무시한다. Vive 연결 시 배트를 들고 서 있기만 해도 컨택 판정이 난다.
+- [x] ⚠️ 채점 결함 수정 — 헛스윙 0점 처리. `ScoreSwing` 이 `bContacted` 검사, `Consistency` 는
+      단일 스윙 시 0 + 정확도·효율 재정규화, 세션 일관성은 헛스윙 제외·컨택 표본 ≥2 요건 (`ScoringService`)
+- [x] ⚠️ 컨택 판정에 시간 창 도입 — `AnalyzeSwing` 이 시간 창(±0.15s)+동작 게이트(≥8m/s) 두 관문으로
+      컨택 후보를 거른다. 정지한 배트가 공 근처에 있다는 이유만으로 컨택되던 결함 해소 (`SwingAnalyzer`)
 
 ## Phase 2 — Vive 연동 (하드웨어) ★ 실제 다음 목표
 
@@ -56,9 +57,10 @@ SporTrack : Baseball — 비착용형 XR 야구 콘텐츠. 정본 브리프: [hi
 
 ## Phase 3 — 반응속도 + 로컬 저장
 
-- [ ] 반응속도 모드 (바닥 타깃 점등/밟기, 콤보) — 입력 스텁(키보드)부터
-- [~] `UMotionBaseSaveGame` — 저장/로드 실배선 (구조체만 있음, 호출부 0건)
-- [~] `UModeManager` — 모드 전환·결과 누적은 배선됨(Phase 1). **저장 연결만 남음**
+- [ ] 반응속도 모드 (바닥 타깃 점등/밟기, 콤보) — 입력 스텁(키보드)부터. enum/메타만 있고 게임플레이 미구현
+- [x] `UMotionBaseSaveGame` — 저장/로드 실배선. `ModeManager`가 `LoadGameFromSlot`으로 로드,
+      `FinalizeSession` → `PersistSaveData` → `SaveGameToSlot` 으로 세션 기록 영속화
+- [x] `UModeManager` — 모드 전환·결과 누적·저장 연결 완료
 - [ ] 개인 기준선 데이터 (신체 인식 셋업 결과)
 
 ## Phase 4 — LiDAR 모드 (뉴작 장비)
@@ -73,9 +75,9 @@ SporTrack : Baseball — 비착용형 XR 야구 콘텐츠. 정본 브리프: [hi
 
 ## Phase 5 — 생성형 AI 피드백
 
-- [~] `UAIFeedbackService` — HTTP 실구현 (async, 프롬프트만 있음)
-- [ ] `Config/Secrets.ini` API 키 분리 (gitignore)
-- [ ] 누적 데이터 → 프롬프트 → 코칭 텍스트 표시
+- [x] `UAIFeedbackService` — HTTP 실구현 (`FHttpModule` async, Anthropic Messages API 호출)
+- [x] `Config/Secrets.ini` API 키 분리 — 로더(`LoadApiKey`) + `Secrets.ini.template` + `.gitignore` 등록
+- [x] 누적 데이터 → 프롬프트 → 코칭 텍스트 표시 (`OnFeedbackReady` → `CoachingText` → 결과 HUD)
 
 ## Phase 6 — 확장
 

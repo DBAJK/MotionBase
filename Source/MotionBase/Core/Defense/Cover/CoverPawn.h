@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
@@ -7,14 +7,19 @@
 
 class UCameraComponent;
 class UCapsuleComponent;
+class UMotionControllerComponent;
+class UTextRenderComponent;
+class USceneComponent;
 
 /**
- * 커버 훈련 폰 (1인칭).
+ * 백업 위치 판단 훈련 폰 — **선택형 판단 퀴즈**.
  *
- * 흐름: 베이스 4개 배치 → 정답 베이스 랜덤 하이라이트 → 제한 시간 안에 WASD 로
- *       그 베이스로 이동 → 도착 판정(FCoverJudge) → 10회 반복 → "N / 10" 집계.
+ * 흐름: 랜덤 경기 상황(타구/송구) + 당신의 수비 위치 제시 → 어디를 백업/커버할지
+ *       4지선다로 선택 → 정답/오답 + 해설 → N문제 반복 → "N / 10" 집계.
  *
- * 공/송구 없음 — 상황 판단 + 이동 훈련. 지금은 정답 베이스가 노랗게 빛난다.
+ * 이동이 아니라 **판단** 훈련이다 (요청 반영).
+ *   - VR(HMD): 오른손 컨트롤러로 보기 카드를 겨누고 잠시 유지(드웰)하면 선택.
+ *   - PC: 숫자키 1~4 로 선택.
  */
 UCLASS()
 class MOTIONBASE_API ACoverPawn : public APawn
@@ -26,16 +31,22 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
-	// ── HUD 가 읽는 상태 접근자 ──
+	// ── HUD(평면) 가 읽는 상태 접근자 ──
 	int32 GetTotalTrials() const { return TotalTrials; }
 	int32 GetSuccessCount() const { return SuccessCount; }
 	int32 GetTrialNumber() const { return FMath::Min(TrialIndex + 1, TotalTrials); }
 
-	/** 남은 시간 (초). */
-	float GetTimeLeft() const { return TimeLeft; }
+	FString GetSituationText() const { return CurrentQuiz.Situation; }
+	FString GetRoleText() const { return CurrentQuiz.Role; }
+	int32   GetOptionCount() const { return CurrentQuiz.Options.Num(); }
+	FString GetOptionText(int32 Index) const;
+	FString GetExplainText() const { return CurrentQuiz.Explain; }
 
-	/** 이번에 커버할 베이스 이름 (예: "2루"). */
-	FString GetTargetBaseName() const;
+	/** 현재 커서(강조) 인덱스. */
+	int32 GetSelectedIndex() const { return SelectedIndex; }
+	/** 답을 낸 뒤엔 정답 인덱스를 알려준다(초록 표시용). 아니면 -1. */
+	int32 GetRevealCorrectIndex() const { return bAnswered ? CurrentQuiz.Correct : -1; }
+	bool  IsAnswered() const { return bAnswered; }
 
 	/** 마지막 판정 결과 문구/색. 표시할 게 있으면 true. */
 	bool GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) const;
@@ -50,78 +61,87 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Cover")
 	TObjectPtr<UCameraComponent> Camera;
 
-	// ── 설정값 ──
+	// ── VR 인메뉴(선택 카드) ──
+	UPROPERTY(VisibleAnywhere, Category = "Cover|VR")
+	TObjectPtr<UMotionControllerComponent> PointerController;
 
+	UPROPERTY(VisibleAnywhere, Category = "Cover|VR")
+	TObjectPtr<USceneComponent> MenuRoot;
+
+	UPROPERTY(VisibleAnywhere, Category = "Cover|VR")
+	TObjectPtr<UTextRenderComponent> VrSituationText;
+
+	UPROPERTY(VisibleAnywhere, Category = "Cover|VR")
+	TObjectPtr<UTextRenderComponent> VrResultText;
+
+	UPROPERTY()
+	TArray<TObjectPtr<UTextRenderComponent>> VrOptionTexts;
+
+	// ── 설정값 ──
 	UPROPERTY(EditAnywhere, Category = "Cover")
 	int32 TotalTrials = 10;
 
-	/** 제한 시간 (초). */
 	UPROPERTY(EditAnywhere, Category = "Cover")
-	float TimeLimit = 3.0f;
+	float IntervalBetweenTrials = 2.0f;
 
-	/** 성공 반경 (cm). */
-	UPROPERTY(EditAnywhere, Category = "Cover")
-	float CoverRadius = 150.0f;
+	UPROPERTY(EditAnywhere, Category = "Cover|VR")
+	float DwellTimeSec = 1.5f;
 
-	/** 홈에서 각 베이스까지 거리 (cm). 다이아몬드 한 변 기준. */
-	UPROPERTY(EditAnywhere, Category = "Cover")
-	float BaseDistance = 900.0f;
+	UPROPERTY(EditAnywhere, Category = "Cover|VR")
+	float DwellAngleDeg = 8.0f;
 
-	/** 한 회 사이 간격 (초). */
-	UPROPERTY(EditAnywhere, Category = "Cover")
-	float IntervalBetweenTrials = 1.5f;
+	UPROPERTY(EditAnywhere, Category = "Cover|VR")
+	float MenuDistanceCm = 250.0f;
 
-	/** 이동 속도 (cm/s). */
-	UPROPERTY(EditAnywhere, Category = "Cover")
-	float MoveSpeed = 700.0f;
+	UPROPERTY(EditAnywhere, Category = "Cover|VR")
+	float MenuHeightCm = 150.0f;
 
 private:
-	// ── 입력 (BindKey 눌림/뗌 → 플래그) ──
-	void OnRightPressed()  { bMoveRight = true; }
-	void OnRightReleased() { bMoveRight = false; }
-	void OnLeftPressed()   { bMoveLeft = true; }
-	void OnLeftReleased()  { bMoveLeft = false; }
-	void OnFwdPressed()    { bMoveFwd = true; }
-	void OnFwdReleased()   { bMoveFwd = false; }
-	void OnBackPressed()   { bMoveBack = true; }
-	void OnBackReleased()  { bMoveBack = false; }
+	static constexpr int32 MaxOptions = 4;
+
+	// ── 입력 ──
+	void SelectPrev();   // VR/키보드 커서 이동
+	void SelectNext();
+	void ConfirmSelection();
+	void PickOption0();  // 숫자키 1~4
+	void PickOption1();
+	void PickOption2();
+	void PickOption3();
 	void ReturnToModeSelect();
 
 	// ── 세션 ──
 	void StartSession();
 	void SpawnNextTrial();
-	void FinishTrial(const FCoverResult& Result);
+	void Answer(int32 OptionIndex);
 	void EndSession();
 
-	/** 베이스 4개 위치를 홈 기준 다이아몬드로 계산. */
-	void SetupBaseLocations();
+	void BuildQuizPool();
 
-	FVector GetBaseLocation(EBaseType Base) const;
+	// ── VR ──
+	void InitVRMenu();
+	void UpdateVRMenu(float DeltaSeconds);
+	void RefreshVRTexts();
+	int32 PickHoveredCard() const;
 
 	// ── 상태 ──
-	FVector HomeLocation = FVector::ZeroVector;
-
-	// 이동 입력 플래그 (BindKey 눌림 상태 유지용)
-	bool bMoveRight = false;
-	bool bMoveLeft  = false;
-	bool bMoveFwd   = false;
-	bool bMoveBack  = false;
-
-	/** 베이스 4개 월드 위치 (First/Second/Third/Home 순). */
-	FVector BaseLocations[4];
-
-	FCoverTrial CurrentTrial;
+	TArray<FBackupQuiz> QuizPool;
+	FBackupQuiz CurrentQuiz;
 
 	int32 TrialIndex = 0;
 	int32 SuccessCount = 0;
-
-	float TimeLeft = 0.0f;
-	bool  bTrialActive = false;   // 카운트다운 중
+	int32 SelectedIndex = 0;     // 커서
+	int32 ChosenIndex = -1;      // 이번에 고른 답
+	bool  bAnswered = false;     // 답 제출됨(결과 표시 중)
 	bool  bSessionOver = false;
 
 	bool  bWaitingNext = false;
 	float IntervalTimer = 0.0f;
 
 	FCoverResult LastResult;
-	bool bHasResult = false;
+
+	// VR
+	bool  bVR = false;
+	int32 VrHoverIndex = INDEX_NONE;
+	float VrDwellTimer = 0.0f;
+	float VrCooldown = 0.0f;
 };

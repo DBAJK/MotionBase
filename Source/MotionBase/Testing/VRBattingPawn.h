@@ -11,6 +11,7 @@
 
 class UCameraComponent;
 class USceneComponent;
+class UTextRenderComponent;
 class ABat;
 class APitchingZone;
 
@@ -52,6 +53,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "VRBatting")
 	TObjectPtr<UCameraComponent> Camera;
 
+	/** 타격 결과("HIT!"/"HOME RUN!" 등) 를 헤드셋 안에 띄우는 3D 텍스트. */
+	UPROPERTY(VisibleAnywhere, Category = "VRBatting")
+	TObjectPtr<UTextRenderComponent> ResultText;
+
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "VRBatting")
 	TObjectPtr<ABat> Bat;
 
@@ -65,6 +70,20 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "VRBatting")
 	float PostContactDelaySec = 0.12f;
 
+	// ── 컨택 지점(공이 도착할 곳) — 플레이어 기준 오프셋 (cm) ──
+	// 공이 몸 정중앙으로 날아오지 않게, 앞/옆/위로 옮겨 스윙하기 좋은 위치에 도착시킨다.
+	/** 플레이어 앞쪽 거리 (cm). 배트를 앞으로 내밀어 맞히는 지점. */
+	UPROPERTY(EditAnywhere, Category = "VRBatting|Plate")
+	float ContactForwardCm = 45.0f;
+
+	/** 좌우 오프셋 (cm). 0=정면. 우타는 -, 좌타는 + 로 살짝 밀 수 있음. */
+	UPROPERTY(EditAnywhere, Category = "VRBatting|Plate")
+	float ContactSideCm = 0.0f;
+
+	/** 컨택 높이 (cm). 가슴~허리. */
+	UPROPERTY(EditAnywhere, Category = "VRBatting|Plate")
+	float ContactHeightCm = 110.0f;
+
 	UFUNCTION()
 	void HandlePitchThrown(EPitchType PitchType, FVector InPlateLocation, float InArrivalWorldTime);
 
@@ -76,6 +95,12 @@ protected:
 
 private:
 	void AnalyzeSwingNow();
+
+	/** 타격 결과를 3D 텍스트로 띄운다 (헤드셋 안에서 보이게). 영문/기호라 폰트 의존 없음. */
+	void ShowResultText(const FString& Text, const FLinearColor& Color);
+
+	/** 결과 텍스트가 남아 있는 시간 (초). */
+	float ResultTimer = 0.0f;
 
 	// 현재 투구
 	FVector CurrentPlate = FVector::ZeroVector;

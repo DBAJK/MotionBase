@@ -22,7 +22,8 @@ APitchingZone::APitchingZone()
 	if (SphereMesh.Succeeded())
 	{
 		Ball->SetStaticMesh(SphereMesh.Object);
-		Ball->SetWorldScale3D(FVector(0.073f));
+		// 실제 야구공은 7.3cm 지만 VR 에서 잘 보이도록 10cm 로 키운다.
+		Ball->SetWorldScale3D(FVector(0.10f));
 	}
 }
 
@@ -84,8 +85,53 @@ void APitchingZone::ApplyDifficulty(EDifficultyLevel Level)
 		break;
 	}
 
+	// 방금 세팅한 프리셋을 동적 조정의 기준선(base)으로 잡는다. 이후 SeedDynamicLevel /
+	// RegisterSwingOutcome 이 이 base 위에 headroom 을 얹는다. (수준 0 → 프리셋 그대로.)
+	BaseSpeedMinKmh = SpeedMinKmh;
+	BaseSpeedMaxKmh = SpeedMaxKmh;
+	BaseBreakingBallRatio = BreakingBallRatio;
+	BaseAutoPitchIntervalSec = AutoPitchIntervalSec;
+	DynamicLevel = 0.0f;
+
 	UE_LOG(LogMotionBase, Log, TEXT("PitchingZone: 난이도 적용 (구속 %.0f~%.0f, 변화구 %.0f%%, 간격 %.1fs)"),
 		SpeedMinKmh, SpeedMaxKmh, BreakingBallRatio * 100.0f, AutoPitchIntervalSec);
+}
+
+void APitchingZone::RefreshDynamicPitchParams()
+{
+	const float L = bDynamicDifficulty ? FMath::Clamp(DynamicLevel, 0.0f, 1.0f) : 0.0f;
+
+	SpeedMinKmh = BaseSpeedMinKmh + L * DynamicSpeedHeadroomKmh;
+	SpeedMaxKmh = BaseSpeedMaxKmh + L * DynamicSpeedHeadroomKmh;
+	BreakingBallRatio = FMath::Clamp(BaseBreakingBallRatio + L * DynamicBreakingHeadroom, 0.0f, 1.0f);
+	AutoPitchIntervalSec = FMath::Max(BaseAutoPitchIntervalSec - L * DynamicIntervalReductionSec, MinAutoPitchIntervalSec);
+}
+
+void APitchingZone::SeedDynamicLevel(float Level01)
+{
+	DynamicLevel = FMath::Clamp(Level01, 0.0f, 1.0f);
+	RefreshDynamicPitchParams();
+
+	UE_LOG(LogMotionBase, Log, TEXT("PitchingZone: 동적 난이도 시드 %.2f → 구속 %.0f~%.0f, 변화구 %.0f%%, 간격 %.1fs"),
+		DynamicLevel, SpeedMinKmh, SpeedMaxKmh, BreakingBallRatio * 100.0f, AutoPitchIntervalSec);
+}
+
+void APitchingZone::RegisterSwingOutcome(bool bContacted, float SwingScore01)
+{
+	if (!bDynamicDifficulty)
+	{
+		return;
+	}
+
+	// 잘 친 스윙(컨택 + 기준 점수 이상)이면 상승, 헛스윙/약한 컨택이면 하강.
+	const bool bGood = bContacted && (SwingScore01 >= DynamicGoodSwingScore01);
+	const float Prev = DynamicLevel;
+	DynamicLevel = FMath::Clamp(DynamicLevel + (bGood ? DynamicStepUp : -DynamicStepDown), 0.0f, 1.0f);
+
+	if (!FMath::IsNearlyEqual(Prev, DynamicLevel))
+	{
+		RefreshDynamicPitchParams();
+	}
 }
 
 bool APitchingZone::IsLastPitchStrike() const

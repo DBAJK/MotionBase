@@ -5,7 +5,36 @@
 #include "Camera/CameraComponent.h"
 #include "Components/InputComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/TextRenderComponent.h"
+#include "MotionControllerComponent.h"
+#include "HeadMountedDisplayFunctionLibrary.h"
+#include "DrawDebugHelpers.h"
+#include "Engine/Font.h"
 #include "Engine/World.h"
+#include "UObject/ConstructorHelpers.h"
+
+namespace
+{
+	// 드웰 진행바 (ASCII — 폰트 글리프 걱정 없음). 예: "   [===...]"
+	FString MsDwellBar(float Progress)
+	{
+		const int32 Cells = 6;
+		const int32 Filled = FMath::Clamp(FMath::RoundToInt(Progress * Cells), 0, Cells);
+		return FString::Printf(TEXT("   [%s%s]"),
+			*FString::ChrN(Filled, TEXT('=')),
+			*FString::ChrN(Cells - Filled, TEXT('.')));
+	}
+
+	// 행 색: 준비중=회색, 일반=흰색, 호버중=앰버→초록(진행도).
+	FColor MsRowColor(bool bAvail, bool bHovered, float Progress)
+	{
+		if (!bAvail)   { return FColor(110, 110, 122); }
+		if (!bHovered) { return FColor(228, 233, 244); }
+		const FLinearColor A(1.00f, 0.70f, 0.35f);
+		const FLinearColor B(0.40f, 0.86f, 0.47f);
+		return FLinearColor::LerpUsingHSV(A, B, Progress).ToFColor(true);
+	}
+}
 
 AModeSelectPawn::AModeSelectPawn()
 {
@@ -19,6 +48,53 @@ AModeSelectPawn::AModeSelectPawn()
 	// 타자 시점과 비슷한 높이 — 모드를 고르고 바로 타격으로 넘어가도 시점이 튀지 않는다.
 	Camera->SetRelativeLocation(FVector(-400.0f, 0.0f, 170.0f));
 	Camera->SetRelativeRotation(FRotator(-10.0f, 0.0f, 0.0f));
+
+	// ── VR 인메뉴 컴포넌트 (HMD 없으면 BeginPlay 에서 숨긴다) ──
+	// 겨눔 포인터 = 컨트롤러(오른손). 배트와 같은 방식으로 추적된다.
+	PointerController = CreateDefaultSubobject<UMotionControllerComponent>(TEXT("PointerController"));
+	PointerController->SetupAttachment(SceneRoot);
+	PointerController->MotionSource = FName(TEXT("Right"));
+
+	// 3D 카드는 트래킹 원점(플레이 공간)에 부착 → 월드에 고정된다.
+	// (카메라에 붙이면 머리에 붙어 따라다녀서 "시점이 안 움직인다"고 느껴진다.)
+	// 머리를 돌리면 시야가 실제로 움직이고, 카드는 앞 정면에 그대로 있는다.
+	MenuRoot = CreateDefaultSubobject<USceneComponent>(TEXT("MenuRoot"));
+	MenuRoot->SetupAttachment(SceneRoot);
+	MenuRoot->SetRelativeLocation(FVector(MenuDistanceCm, 0.0f, MenuHeightCm));
+
+	// 한글 폰트 (Content/Fonts/KRFont). 없으면 엔진 기본으로 폴백(한글 깨질 수 있음).
+	static ConstructorHelpers::FObjectFinder<UFont> KRFontFinder(TEXT("/Game/Fonts/KRFont.KRFont"));
+	UFont* MenuFont = KRFontFinder.Succeeded() ? KRFontFinder.Object : nullptr;
+
+	auto MakeText = [this, MenuFont](const TCHAR* Name, float WorldSize) -> UTextRenderComponent*
+	{
+		UTextRenderComponent* T = CreateDefaultSubobject<UTextRenderComponent>(Name);
+		T->SetupAttachment(MenuRoot);
+		// 텍스트가 카메라를 향하도록 180 회전 (안 하면 뒤집혀/거울로 보인다).
+		T->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
+		T->SetHorizontalAlignment(EHTA_Center);
+		T->SetVerticalAlignment(EVRTA_TextCenter);
+		T->SetWorldSize(WorldSize);
+		if (MenuFont) { T->SetFont(MenuFont); }
+		T->SetVisibility(false);
+		return T;
+	};
+
+	VrTitleText = MakeText(TEXT("VrTitle"), 14.0f);
+	VrTitleText->SetRelativeLocation(FVector(0.0f, 0.0f, 60.0f));
+
+	for (int32 i = 0; i < VrMaxRows; ++i)
+	{
+		UTextRenderComponent* Row = MakeText(*FString::Printf(TEXT("VrRow%d"), i), 11.0f);
+		Row->SetRelativeLocation(FVector(0.0f, 0.0f, 30.0f - i * 22.0f));
+		VrRowTexts.Add(Row);
+	}
+
+	VrBackText = MakeText(TEXT("VrBack"), 10.0f);
+	VrDescText = MakeText(TEXT("VrDesc"), 7.5f);
+	VrDescText->SetRelativeLocation(FVector(0.0f, 0.0f, -95.0f));
+	VrHintText = MakeText(TEXT("VrHint"), 6.0f);
+	VrHintText->SetRelativeLocation(FVector(0.0f, 0.0f, -120.0f));
 }
 
 void AModeSelectPawn::BeginPlay()
@@ -29,17 +105,19 @@ void AModeSelectPawn::BeginPlay()
 	MenuDifficulties = UModeManager::GetMenuDifficulties();
 	MenuStances = UModeManager::GetMenuStances();
 
-	// 수비 세부 종목 4개 (요청: 포구 / 송구 / 풋워크·반응속도 / 백업 위치 판단).
+	// 수비 세부 종목 3개 (포구 / 송구 / 백업 위치 판단). 풋워크·반응속도는 제외.
 	DefenseDrills = {
 		FText::FromString(TEXT("포구")),
 		FText::FromString(TEXT("송구")),
-		FText::FromString(TEXT("풋워크 / 반응속도")),
 		FText::FromString(TEXT("백업 위치 판단"))
 	};
 
 	Stage = EStage::Mode;
 	// 커서는 플레이 가능한 모드 위에서 시작한다 (0번은 미구현이라 첫인상이 나쁘다).
 	SelectedIndex = FindFirstImplementedIndex();
+
+	// HMD 가 켜져 있으면 헤드셋 안 3D 메뉴 활성화 (없으면 기존 키보드+평면 HUD).
+	InitVRMenu();
 }
 
 int32 AModeSelectPawn::FindFirstImplementedIndex() const
@@ -67,10 +145,9 @@ FText AModeSelectPawn::DefenseDrillNameAt(int32 Index) const
 FText AModeSelectPawn::DefenseDrillDescAt(int32 Index) const
 {
 	static const TArray<FText> Descs = {
-		FText::FromString(TEXT("타구를 받아내는 포구 동작 훈련")),
-		FText::FromString(TEXT("포구 후 정확한 송구 동작 훈련")),
-		FText::FromString(TEXT("첫 스텝 풋워크와 반응속도 훈련")),
-		FText::FromString(TEXT("상황별 백업 위치 판단 훈련"))
+		FText::FromString(TEXT("타구를 받아내는 포구 동작 훈련 (컨트롤러로 글러브)")),
+		FText::FromString(TEXT("포구 후 정확한 송구 동작 훈련 (컨트롤러 스윙)")),
+		FText::FromString(TEXT("랜덤 타구 상황에서 백업 위치를 고르는 판단 훈련"))
 	};
 	return Descs.IsValidIndex(Index) ? Descs[Index] : FText::GetEmpty();
 }
@@ -356,5 +433,182 @@ void AModeSelectPawn::Tick(float DeltaSeconds)
 		{
 			NoticeText.Reset();
 		}
+	}
+
+	if (bVRMenu)
+	{
+		UpdateVRMenu(DeltaSeconds);
+	}
+}
+
+// ── VR 인메뉴 구현 ──────────────────────────────────────────────
+
+void AModeSelectPawn::InitVRMenu()
+{
+	bVRMenu = UHeadMountedDisplayFunctionLibrary::IsHeadMountedDisplayEnabled();
+
+	if (bVRMenu)
+	{
+		// 바닥 기준 트래킹 → MenuHeightCm(눈높이)이 실제 높이와 맞는다.
+		UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
+	}
+
+	if (MenuRoot) { MenuRoot->SetRelativeLocation(FVector(MenuDistanceCm, 0.0f, MenuHeightCm)); }
+
+	if (VrTitleText) { VrTitleText->SetVisibility(bVRMenu); }
+	if (VrDescText)  { VrDescText->SetVisibility(bVRMenu); }
+	if (VrHintText)  { VrHintText->SetVisibility(bVRMenu); }
+
+	if (!bVRMenu)
+	{
+		// PC(키보드) 모드 — 3D 카드는 전부 끈다.
+		for (UTextRenderComponent* Row : VrRowTexts) { if (Row) { Row->SetVisibility(false); } }
+		if (VrBackText) { VrBackText->SetVisibility(false); }
+		return;
+	}
+
+	RefreshVRMenuTexts();
+	UE_LOG(LogMotionBase, Log, TEXT("ModeSelect: VR 인메뉴 활성화 (드웰 %.1fs / %.0f°)"),
+		DwellTimeSec, DwellAngleDeg);
+}
+
+int32 AModeSelectPawn::PickHoveredCard() const
+{
+	if (!PointerController || !PointerController->IsTracked())
+	{
+		return INDEX_NONE; // 추적 안 되면(베이스 스테이션 꺼짐 등) 오선택 방지.
+	}
+
+	const FVector Origin = PointerController->GetComponentLocation();
+	const FVector Aim    = PointerController->GetForwardVector();
+	const float   CosThresh = FMath::Cos(FMath::DegreesToRadians(DwellAngleDeg));
+
+	int32 Best = INDEX_NONE;
+	float BestCos = CosThresh;
+
+	const int32 RowCount = GetRowCount();
+	for (int32 i = 0; i < RowCount && i < VrRowTexts.Num(); ++i)
+	{
+		if (!VrRowTexts[i] || !IsRowAvailable(i)) { continue; } // 준비 중 카드는 겨눔 대상 아님.
+		const FVector Dir = (VrRowTexts[i]->GetComponentLocation() - Origin).GetSafeNormal();
+		const float C = FVector::DotProduct(Aim, Dir);
+		if (C > BestCos) { BestCos = C; Best = i; }
+	}
+
+	// 뒤로 카드 (모드 단계 외에서만) — 호버 인덱스는 RowCount.
+	if (Stage != EStage::Mode && VrBackText && VrBackText->IsVisible())
+	{
+		const FVector Dir = (VrBackText->GetComponentLocation() - Origin).GetSafeNormal();
+		const float C = FVector::DotProduct(Aim, Dir);
+		if (C > BestCos) { BestCos = C; Best = RowCount; }
+	}
+
+	return Best;
+}
+
+void AModeSelectPawn::UpdateVRMenu(float DeltaSeconds)
+{
+	if (VrCooldown > 0.0f) { VrCooldown = FMath::Max(0.0f, VrCooldown - DeltaSeconds); }
+
+	// 포인터 광선 표시 (컨트롤러 → 정면).
+	if (PointerController && PointerController->IsTracked() && GetWorld())
+	{
+		const FVector Origin = PointerController->GetComponentLocation();
+		const FVector End = Origin + PointerController->GetForwardVector() * (MenuDistanceCm + 60.0f);
+		DrawDebugLine(GetWorld(), Origin, End, FColor(80, 200, 255), false, -1.0f, 0, 0.4f);
+	}
+
+	const int32 Hover = (VrCooldown > 0.0f) ? INDEX_NONE : PickHoveredCard();
+
+	if (Hover != VrHoverIndex)
+	{
+		VrHoverIndex = Hover;
+		VrDwellTimer = 0.0f;
+	}
+
+	if (Hover != INDEX_NONE)
+	{
+		if (Hover < GetRowCount()) { SelectedIndex = Hover; } // 설명 표시를 커서와 동기화.
+
+		VrDwellTimer += DeltaSeconds;
+		if (VrDwellTimer >= DwellTimeSec)
+		{
+			const int32 RowCount = GetRowCount();
+			VrHoverIndex = INDEX_NONE;
+			VrDwellTimer = 0.0f;
+			VrCooldown   = 0.6f; // 확정 직후 오선택 방지.
+
+			if (Hover == RowCount) { Back(); }
+			else { SelectedIndex = Hover; Confirm(); }
+			return; // Confirm 이 폰 교체를 예약할 수 있으니 이 프레임은 종료.
+		}
+	}
+	else
+	{
+		VrDwellTimer = 0.0f;
+	}
+
+	RefreshVRMenuTexts();
+}
+
+void AModeSelectPawn::RefreshVRMenuTexts()
+{
+	if (!bVRMenu) { return; }
+
+	if (VrTitleText) { VrTitleText->SetText(GetHeaderSubtitle()); }
+
+	const int32 RowCount = GetRowCount();
+	const float Progress = (DwellTimeSec > 0.0f)
+		? FMath::Clamp(VrDwellTimer / DwellTimeSec, 0.0f, 1.0f) : 0.0f;
+
+	for (int32 i = 0; i < VrRowTexts.Num(); ++i)
+	{
+		UTextRenderComponent* Row = VrRowTexts[i];
+		if (!Row) { continue; }
+
+		if (i >= RowCount) { Row->SetVisibility(false); continue; }
+		Row->SetVisibility(true);
+
+		const bool bAvail   = IsRowAvailable(i);
+		const bool bHovered = (VrHoverIndex == i);
+
+		FString Label = GetRowLabel(i).ToString();
+		if (!bAvail)   { Label += TEXT("  (준비 중)"); }
+		if (bHovered)  { Label += MsDwellBar(Progress); }
+
+		Row->SetText(FText::FromString(Label));
+		Row->SetTextRenderColor(MsRowColor(bAvail, bHovered, Progress));
+	}
+
+	// 뒤로 카드.
+	if (VrBackText)
+	{
+		const bool bShowBack = (Stage != EStage::Mode);
+		VrBackText->SetVisibility(bShowBack);
+		if (bShowBack)
+		{
+			const bool bHovered = (VrHoverIndex == RowCount);
+			VrBackText->SetRelativeLocation(FVector(0.0f, 0.0f, 30.0f - RowCount * 22.0f - 14.0f));
+			FString Label = TEXT("◀ 뒤로");
+			if (bHovered) { Label += MsDwellBar(Progress); }
+			VrBackText->SetText(FText::FromString(Label));
+			VrBackText->SetTextRenderColor(MsRowColor(true, bHovered, Progress));
+		}
+	}
+
+	// 설명 / 안내 문구.
+	if (VrDescText)
+	{
+		const FString Desc = !NoticeText.IsEmpty() ? NoticeText : GetSelectedDescription().ToString();
+		VrDescText->SetText(FText::FromString(Desc));
+		VrDescText->SetTextRenderColor(!NoticeText.IsEmpty()
+			? FColor(255, 180, 90) : FColor(150, 156, 168));
+	}
+
+	if (VrHintText)
+	{
+		VrHintText->SetText(FText::FromString(
+			TEXT("컨트롤러로 카드를 겨누고 잠시 유지하면 선택  ·  (키보드 W/S · Enter 도 가능)")));
+		VrHintText->SetTextRenderColor(FColor(110, 116, 128));
 	}
 }
