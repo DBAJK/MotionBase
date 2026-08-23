@@ -225,7 +225,7 @@ void AModeSelectHUD::DrawHUD()
 	DrawRect(Accent, ContentX, TitleY + TitleH * 0.08f, 6.0f * S, TitleH * 0.84f);
 	DrawText(Title, TextTitle, ContentX + 24.0f * S, TitleY, FontLarge, TitleScale);
 
-	// 부제는 단계(모드/난이도)에 따라 폰이 정한다.
+	// 부제는 단계(모드/난이도/타석/수비종목)에 따라 폰이 정한다.
 	const FString Subtitle = SelectPawn->GetHeaderSubtitle().ToString();
 	const float SubScale = FitScale(Subtitle, FontBody, 0.95f * S, ContentW);
 	GetTextSize(Subtitle, TW, TH, FontBody, SubScale);
@@ -236,7 +236,7 @@ void AModeSelectHUD::DrawHUD()
 	const float DividerY = SubY + TH + 26.0f * S;
 	DrawRect(Divider, ContentX, DividerY, ContentW, FMath::Max(1.5f * S, 1.0f));
 
-	// ── 선택 목록 (모드 단계 또는 난이도 단계 — 폰이 행 데이터를 준다) ──
+	// ── 선택 목록 (단계별 행 데이터를 폰이 준다: 모드/난이도/타석/수비종목) ──
 	const int32 RowCount = SelectPawn->GetRowCount();
 	const int32 Selected = SelectPawn->GetSelectedIndex();
 
@@ -321,7 +321,7 @@ void AModeSelectHUD::DrawHUD()
 				PillX + PillPadX, PillY + (PillH - TH) * 0.5f, FontBody, PillScale);
 		}
 
-		// 행 이름 (모드 이름 또는 난이도 이름)
+		// 행 이름 (모드/난이도/타석/수비종목 이름)
 		const FString Name = SelectPawn->GetRowLabel(i).ToString();
 		const float NameAvail = (PillX - 16.0f * S) - NameX;
 		const float NameScale = FitScale(Name, FontBody, 1.25f * S, NameAvail);

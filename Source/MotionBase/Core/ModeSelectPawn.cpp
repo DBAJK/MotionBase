@@ -29,6 +29,14 @@ void AModeSelectPawn::BeginPlay()
 	MenuDifficulties = UModeManager::GetMenuDifficulties();
 	MenuStances = UModeManager::GetMenuStances();
 
+	// 수비 세부 종목 4개 (요청: 포구 / 송구 / 풋워크·반응속도 / 백업 위치 판단).
+	DefenseDrills = {
+		FText::FromString(TEXT("포구")),
+		FText::FromString(TEXT("송구")),
+		FText::FromString(TEXT("풋워크 / 반응속도")),
+		FText::FromString(TEXT("백업 위치 판단"))
+	};
+
 	Stage = EStage::Mode;
 	// 커서는 플레이 가능한 모드 위에서 시작한다 (0번은 미구현이라 첫인상이 나쁘다).
 	SelectedIndex = FindFirstImplementedIndex();
@@ -51,6 +59,22 @@ EGameModeId AModeSelectPawn::ModeAt(int32 Index) const
 	return MenuModes.IsValidIndex(Index) ? MenuModes[Index] : EGameModeId::Batting;
 }
 
+FText AModeSelectPawn::DefenseDrillNameAt(int32 Index) const
+{
+	return DefenseDrills.IsValidIndex(Index) ? DefenseDrills[Index] : FText::GetEmpty();
+}
+
+FText AModeSelectPawn::DefenseDrillDescAt(int32 Index) const
+{
+	static const TArray<FText> Descs = {
+		FText::FromString(TEXT("타구를 받아내는 포구 동작 훈련")),
+		FText::FromString(TEXT("포구 후 정확한 송구 동작 훈련")),
+		FText::FromString(TEXT("첫 스텝 풋워크와 반응속도 훈련")),
+		FText::FromString(TEXT("상황별 백업 위치 판단 훈련"))
+	};
+	return Descs.IsValidIndex(Index) ? Descs[Index] : FText::GetEmpty();
+}
+
 EDifficultyLevel AModeSelectPawn::DifficultyAt(int32 Index) const
 {
 	return MenuDifficulties.IsValidIndex(Index) ? MenuDifficulties[Index] : EDifficultyLevel::Amateur;
@@ -67,10 +91,11 @@ int32 AModeSelectPawn::GetRowCount() const
 {
 	switch (Stage)
 	{
-	case EStage::Mode:       return MenuModes.Num();
-	case EStage::Difficulty: return MenuDifficulties.Num();
-	case EStage::Stance:     return MenuStances.Num();
-	default:                 return 0;
+	case EStage::Mode:         return MenuModes.Num();
+	case EStage::Difficulty:   return MenuDifficulties.Num();
+	case EStage::Stance:       return MenuStances.Num();
+	case EStage::DefenseDrill: return DefenseDrills.Num();
+	default:                   return 0;
 	}
 }
 
@@ -78,10 +103,11 @@ FText AModeSelectPawn::GetRowLabel(int32 Index) const
 {
 	switch (Stage)
 	{
-	case EStage::Mode:       return UModeManager::GetModeDisplayName(ModeAt(Index));
-	case EStage::Difficulty: return UModeManager::GetDifficultyDisplayName(DifficultyAt(Index));
-	case EStage::Stance:     return UModeManager::GetStanceDisplayName(StanceAt(Index));
-	default:                 return FText::GetEmpty();
+	case EStage::Mode:         return UModeManager::GetModeDisplayName(ModeAt(Index));
+	case EStage::Difficulty:   return UModeManager::GetDifficultyDisplayName(DifficultyAt(Index));
+	case EStage::Stance:       return UModeManager::GetStanceDisplayName(StanceAt(Index));
+	case EStage::DefenseDrill: return DefenseDrillNameAt(Index);
+	default:                   return FText::GetEmpty();
 	}
 }
 
@@ -115,6 +141,8 @@ FText AModeSelectPawn::GetHeaderSubtitle() const
 		return FText::FromString(FString::Printf(TEXT("%s · %s — 타석을 선택하세요 (좌타/우타)"),
 			*UModeManager::GetModeDisplayName(PendingMode).ToString(),
 			*UModeManager::GetDifficultyDisplayName(PendingDifficulty).ToString()));
+	case EStage::DefenseDrill:
+		return FText::FromString(TEXT("수비 훈련 — 세부 종목을 선택하세요"));
 	default:
 		return FText::GetEmpty();
 	}
@@ -124,10 +152,11 @@ FText AModeSelectPawn::GetSelectedDescription() const
 {
 	switch (Stage)
 	{
-	case EStage::Mode:       return UModeManager::GetModeDescription(ModeAt(SelectedIndex));
-	case EStage::Difficulty: return UModeManager::GetDifficultyDescription(DifficultyAt(SelectedIndex));
-	case EStage::Stance:     return UModeManager::GetStanceDescription(StanceAt(SelectedIndex));
-	default:                 return FText::GetEmpty();
+	case EStage::Mode:         return UModeManager::GetModeDescription(ModeAt(SelectedIndex));
+	case EStage::Difficulty:   return UModeManager::GetDifficultyDescription(DifficultyAt(SelectedIndex));
+	case EStage::Stance:       return UModeManager::GetStanceDescription(StanceAt(SelectedIndex));
+	case EStage::DefenseDrill: return DefenseDrillDescAt(SelectedIndex);
+	default:                   return FText::GetEmpty();
 	}
 }
 
@@ -148,6 +177,8 @@ FText AModeSelectPawn::GetFooterStatus() const
 		return FText::FromString(FString::Printf(TEXT("난이도 %d단계"), MenuDifficulties.Num()));
 	case EStage::Stance:
 		return FText::FromString(TEXT("타석 2종 (우타 / 좌타)"));
+	case EStage::DefenseDrill:
+		return FText::FromString(FString::Printf(TEXT("수비 세부 종목 %d종"), DefenseDrills.Num()));
 	default:
 		return FText::GetEmpty();
 	}
@@ -168,7 +199,7 @@ void AModeSelectPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 	PlayerInputComponent->BindKey(EKeys::Enter, IE_Pressed, this, &AModeSelectPawn::Confirm);
 	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Pressed, this, &AModeSelectPawn::Confirm);
 
-	// 뒤로 (난이도 → 모드).
+	// 뒤로 (타석→난이도→모드, 수비종목→모드).
 	PlayerInputComponent->BindKey(EKeys::BackSpace, IE_Pressed, this, &AModeSelectPawn::Back);
 	PlayerInputComponent->BindKey(EKeys::Left, IE_Pressed, this, &AModeSelectPawn::Back);
 
@@ -214,8 +245,18 @@ void AModeSelectPawn::Confirm()
 			return;
 		}
 
-		// 난이도 단계로 진입. 커서는 아마추어(가운데)에서 시작.
 		PendingMode = Mode;
+
+		// 수비는 세부 종목 선택 단계로, 그 외는 난이도 단계로 진입한다.
+		if (Mode == EGameModeId::Defense)
+		{
+			Stage = EStage::DefenseDrill;
+			SelectedIndex = 0;
+			NoticeText.Reset();
+			return;
+		}
+
+		// 난이도 단계로 진입. 커서는 아마추어(가운데)에서 시작.
 		Stage = EStage::Difficulty;
 		const int32 AmateurIdx = MenuDifficulties.IndexOfByKey(EDifficultyLevel::Amateur);
 		SelectedIndex = (AmateurIdx != INDEX_NONE) ? AmateurIdx : 0;
@@ -226,6 +267,21 @@ void AModeSelectPawn::Confirm()
 	if (Stage == EStage::Difficulty)
 	{
 		ConfirmDifficulty();
+		return;
+	}
+
+	if (Stage == EStage::DefenseDrill)
+	{
+		// 수비 세부 종목 확정 → 해당 훈련 폰으로 진입.
+		// SelectedIndex: 0=포구, 1=송구, 2=풋워크/반응속도, 3=백업
+		AMotionBaseGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMotionBaseGameMode>() : nullptr;
+		if (GM && !GM->StartDefenseDrill(SelectedIndex))
+		{
+			// 아직 준비 중인 종목 — 안내만.
+			NoticeText = FString::Printf(TEXT("%s — 아직 준비 중인 종목입니다."),
+				*DefenseDrillNameAt(SelectedIndex).ToString());
+			NoticeTimer = NoticeDurationSec;
+		}
 		return;
 	}
 
@@ -275,9 +331,9 @@ void AModeSelectPawn::Back()
 		return;
 	}
 
-	if (Stage == EStage::Difficulty)
+	if (Stage == EStage::Difficulty || Stage == EStage::DefenseDrill)
 	{
-		// 난이도 → 모드. 방금 고른 모드 위로 커서를 돌려놓는다.
+		// 난이도/수비종목 → 모드. 방금 고른 모드 위로 커서를 돌려놓는다.
 		Stage = EStage::Mode;
 		const int32 Idx = MenuModes.IndexOfByKey(PendingMode);
 		SelectedIndex = (Idx != INDEX_NONE) ? Idx : FindFirstImplementedIndex();

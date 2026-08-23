@@ -28,6 +28,10 @@ public:
 	bool StartMode(EGameModeId Mode, EDifficultyLevel Difficulty = EDifficultyLevel::Amateur,
 		EBattingStance Stance = EBattingStance::Right);
 
+	/** 수비 세부 종목 선택 → 해당 훈련 폰으로 진입. (0=포구, 1=송구, 2=풋워크, 3=백업) */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")
+	bool StartDefenseDrill(int32 DrillIndex);
+	
 	/** 시작 화면(모드 선택)으로 복귀. */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")
 	void ReturnToModeSelect();

@@ -9,11 +9,13 @@ class UCameraComponent;
 class USceneComponent;
 
 /**
- * 시작 화면(모드 선택) 폰. **2단계 선택**: 모드 → 난이도.
+ * 시작 화면(모드 선택) 폰. **단계형 선택**:
  *
- *   [모드 단계]  6개 모드 목록 → 타격 확정 → [난이도 단계] 로 진입
- *   [난이도 단계] 초보/아마추어/프로 → 확정 → GameMode 가 폰 교체
- *   Back 키로 난이도 단계에서 모드 단계로 되돌아간다.
+ *   [모드 단계]   모드 목록 → 확정
+ *                  · 타격  → [난이도] → [타석(좌타/우타)] → 시작
+ *                  · 수비  → [수비 세부 종목] → 시작
+ *                  · 그 외 → [난이도] → 시작
+ *   Back 키로 한 단계씩 되돌아간다.
  *
  * 폰은 **선택 상태만** 들고, 그리기는 AModeSelectHUD 가 한다. HUD 가 모드/난이도를
  * 구분하지 않도록, 폰이 "현재 단계의 행 데이터"를 일반 접근자(GetRow*)로 넘긴다 —
@@ -40,18 +42,18 @@ public:
 	/** 현재 커서 위치 (현재 단계 기준). */
 	int32 GetSelectedIndex() const { return SelectedIndex; }
 
-	// ── HUD 가 읽는 일반 행 데이터 (모드/난이도 단계 공통) ──
+	// ── HUD 가 읽는 일반 행 데이터 (모드/난이도/타석/수비종목 단계 공통) ──
 
 	/** 현재 단계 행 개수. */
 	int32 GetRowCount() const;
 
-	/** 행 라벨 (모드 이름 또는 난이도 이름). */
+	/** 행 라벨 (모드/난이도/타석/수비종목 이름). */
 	FText GetRowLabel(int32 Index) const;
 
-	/** 이 행이 선택 가능한지 (모드 단계: 구현됨?; 난이도 단계: 항상 true). */
+	/** 이 행이 선택 가능한지 (모드 단계: 구현됨?; 그 외 단계: 항상 true). */
 	bool IsRowAvailable(int32 Index) const;
 
-	/** 오른쪽 상태 태그. 비어 있으면 태그를 그리지 않는다 (난이도 행은 태그 없음). */
+	/** 오른쪽 상태 태그. 비어 있으면 태그를 그리지 않는다 (모드 단계 외에는 태그 없음). */
 	FText GetRowTag(int32 Index) const;
 
 	/** 헤더 부제 (단계에 따라 달라진다). */
@@ -84,14 +86,17 @@ protected:
 	void SelectPrev();
 	void SelectNext();
 	void Confirm();
-	void Back();
+	void Back();   // 한 단계 뒤로 (타석→난이도→모드, 수비종목→모드)
 
 	/** Vive 브링업 진단 하네스 열기 (개발 도구 — 목록에 없다). */
 	void OpenViveBringup();
 
 private:
-	/** 선택 단계. 타격 모드만 Stance 단계를 거친다 (그 외는 난이도에서 바로 시작). */
-	enum class EStage : uint8 { Mode, Difficulty, Stance };
+	/**
+	 * 선택 단계.
+	 *   타격 → Difficulty → Stance, 수비 → DefenseDrill, 그 외 → Difficulty 에서 바로 시작.
+	 */
+	enum class EStage : uint8 { Mode, Difficulty, Stance, DefenseDrill };
 
 	void MoveSelection(int32 Delta);
 
@@ -102,6 +107,10 @@ private:
 	EDifficultyLevel DifficultyAt(int32 Index) const;
 	EBattingStance StanceAt(int32 Index) const;
 
+	/** 수비 세부 종목 이름/설명 (인덱스 안전). */
+	FText DefenseDrillNameAt(int32 Index) const;
+	FText DefenseDrillDescAt(int32 Index) const;
+
 	/** 난이도 확정 후: 타격이면 Stance 단계로, 아니면 바로 시작. */
 	void ConfirmDifficulty();
 
@@ -110,6 +119,7 @@ private:
 	TArray<EGameModeId> MenuModes;
 	TArray<EDifficultyLevel> MenuDifficulties;
 	TArray<EBattingStance> MenuStances;
+	TArray<FText> DefenseDrills;   // 수비 세부 종목 이름 (수비 모드 전용)
 
 	int32 SelectedIndex = 0;
 
@@ -120,5 +130,5 @@ private:
 	EDifficultyLevel PendingDifficulty = EDifficultyLevel::Amateur;
 
 	FString NoticeText;
-	float NoticeTimer = 0.0f;
+	float   NoticeTimer = 0.0f;
 };
