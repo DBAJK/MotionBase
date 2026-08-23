@@ -27,6 +27,7 @@ void AModeSelectPawn::BeginPlay()
 
 	MenuModes = UModeManager::GetMenuModes();
 	MenuDifficulties = UModeManager::GetMenuDifficulties();
+	MenuStances = UModeManager::GetMenuStances();
 
 	Stage = EStage::Mode;
 	// 커서는 플레이 가능한 모드 위에서 시작한다 (0번은 미구현이라 첫인상이 나쁘다).
@@ -55,23 +56,38 @@ EDifficultyLevel AModeSelectPawn::DifficultyAt(int32 Index) const
 	return MenuDifficulties.IsValidIndex(Index) ? MenuDifficulties[Index] : EDifficultyLevel::Amateur;
 }
 
+EBattingStance AModeSelectPawn::StanceAt(int32 Index) const
+{
+	return MenuStances.IsValidIndex(Index) ? MenuStances[Index] : EBattingStance::Right;
+}
+
 // ── HUD 용 일반 행 데이터 ──
 
 int32 AModeSelectPawn::GetRowCount() const
 {
-	return (Stage == EStage::Mode) ? MenuModes.Num() : MenuDifficulties.Num();
+	switch (Stage)
+	{
+	case EStage::Mode:       return MenuModes.Num();
+	case EStage::Difficulty: return MenuDifficulties.Num();
+	case EStage::Stance:     return MenuStances.Num();
+	default:                 return 0;
+	}
 }
 
 FText AModeSelectPawn::GetRowLabel(int32 Index) const
 {
-	return (Stage == EStage::Mode)
-		? UModeManager::GetModeDisplayName(ModeAt(Index))
-		: UModeManager::GetDifficultyDisplayName(DifficultyAt(Index));
+	switch (Stage)
+	{
+	case EStage::Mode:       return UModeManager::GetModeDisplayName(ModeAt(Index));
+	case EStage::Difficulty: return UModeManager::GetDifficultyDisplayName(DifficultyAt(Index));
+	case EStage::Stance:     return UModeManager::GetStanceDisplayName(StanceAt(Index));
+	default:                 return FText::GetEmpty();
+	}
 }
 
 bool AModeSelectPawn::IsRowAvailable(int32 Index) const
 {
-	// 난이도는 전부 선택 가능. 모드는 구현된 것만.
+	// 난이도·스탠스는 전부 선택 가능. 모드는 구현된 것만.
 	return (Stage == EStage::Mode) ? UModeManager::IsModeImplemented(ModeAt(Index)) : true;
 }
 
@@ -79,7 +95,7 @@ FText AModeSelectPawn::GetRowTag(int32 Index) const
 {
 	if (Stage != EStage::Mode)
 	{
-		return FText::GetEmpty(); // 난이도 행은 태그 없음
+		return FText::GetEmpty(); // 난이도·스탠스 행은 태그 없음
 	}
 	return IsRowAvailable(Index)
 		? FText::FromString(TEXT("플레이 가능"))
@@ -88,24 +104,38 @@ FText AModeSelectPawn::GetRowTag(int32 Index) const
 
 FText AModeSelectPawn::GetHeaderSubtitle() const
 {
-	if (Stage == EStage::Mode)
+	switch (Stage)
 	{
+	case EStage::Mode:
 		return FText::FromString(TEXT("SporTrack : Baseball    모드를 선택하세요"));
+	case EStage::Difficulty:
+		return FText::FromString(FString::Printf(TEXT("%s — 난이도를 선택하세요"),
+			*UModeManager::GetModeDisplayName(PendingMode).ToString()));
+	case EStage::Stance:
+		return FText::FromString(FString::Printf(TEXT("%s · %s — 타석을 선택하세요 (좌타/우타)"),
+			*UModeManager::GetModeDisplayName(PendingMode).ToString(),
+			*UModeManager::GetDifficultyDisplayName(PendingDifficulty).ToString()));
+	default:
+		return FText::GetEmpty();
 	}
-	return FText::FromString(FString::Printf(TEXT("%s — 난이도를 선택하세요"),
-		*UModeManager::GetModeDisplayName(PendingMode).ToString()));
 }
 
 FText AModeSelectPawn::GetSelectedDescription() const
 {
-	return (Stage == EStage::Mode)
-		? UModeManager::GetModeDescription(ModeAt(SelectedIndex))
-		: UModeManager::GetDifficultyDescription(DifficultyAt(SelectedIndex));
+	switch (Stage)
+	{
+	case EStage::Mode:       return UModeManager::GetModeDescription(ModeAt(SelectedIndex));
+	case EStage::Difficulty: return UModeManager::GetDifficultyDescription(DifficultyAt(SelectedIndex));
+	case EStage::Stance:     return UModeManager::GetStanceDescription(StanceAt(SelectedIndex));
+	default:                 return FText::GetEmpty();
+	}
 }
 
 FText AModeSelectPawn::GetFooterStatus() const
 {
-	if (Stage == EStage::Mode)
+	switch (Stage)
+	{
+	case EStage::Mode:
 	{
 		int32 Ready = 0;
 		for (const EGameModeId M : MenuModes)
@@ -114,7 +144,13 @@ FText AModeSelectPawn::GetFooterStatus() const
 		}
 		return FText::FromString(FString::Printf(TEXT("구현 %d / %d 모드"), Ready, MenuModes.Num()));
 	}
-	return FText::FromString(FString::Printf(TEXT("난이도 %d단계"), MenuDifficulties.Num()));
+	case EStage::Difficulty:
+		return FText::FromString(FString::Printf(TEXT("난이도 %d단계"), MenuDifficulties.Num()));
+	case EStage::Stance:
+		return FText::FromString(TEXT("타석 2종 (우타 / 좌타)"));
+	default:
+		return FText::GetEmpty();
+	}
 }
 
 // ── 입력 ──
@@ -187,29 +223,70 @@ void AModeSelectPawn::Confirm()
 		return;
 	}
 
-	// 난이도 확정 → 게임 시작.
+	if (Stage == EStage::Difficulty)
+	{
+		ConfirmDifficulty();
+		return;
+	}
+
+	// 스탠스 확정 → 게임 시작 (타석 포함).
 	AMotionBaseGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMotionBaseGameMode>() : nullptr;
 	if (!GM)
 	{
 		UE_LOG(LogMotionBase, Warning, TEXT("ModeSelect: AMotionBaseGameMode 를 찾지 못해 시작할 수 없습니다."));
 		return;
 	}
-	GM->StartMode(PendingMode, DifficultyAt(SelectedIndex));
+	GM->StartMode(PendingMode, PendingDifficulty, StanceAt(SelectedIndex));
+}
+
+void AModeSelectPawn::ConfirmDifficulty()
+{
+	PendingDifficulty = DifficultyAt(SelectedIndex);
+
+	// 타격 모드만 타석(좌타/우타)을 고른다. 그 외 모드는 난이도 확정 = 바로 시작.
+	if (PendingMode == EGameModeId::Batting)
+	{
+		Stage = EStage::Stance;
+		const int32 RightIdx = MenuStances.IndexOfByKey(EBattingStance::Right);
+		SelectedIndex = (RightIdx != INDEX_NONE) ? RightIdx : 0;
+		NoticeText.Reset();
+		return;
+	}
+
+	AMotionBaseGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMotionBaseGameMode>() : nullptr;
+	if (!GM)
+	{
+		UE_LOG(LogMotionBase, Warning, TEXT("ModeSelect: AMotionBaseGameMode 를 찾지 못해 시작할 수 없습니다."));
+		return;
+	}
+	GM->StartMode(PendingMode, PendingDifficulty);
 }
 
 void AModeSelectPawn::Back()
 {
-	if (Stage != EStage::Difficulty)
+	if (Stage == EStage::Stance)
 	{
-		return; // 모드 단계에서는 되돌아갈 곳이 없다
+		// 스탠스 → 난이도. 방금 고른 난이도 위로 커서를 돌려놓는다.
+		Stage = EStage::Difficulty;
+		const int32 Idx = MenuDifficulties.IndexOfByKey(PendingDifficulty);
+		SelectedIndex = (Idx != INDEX_NONE) ? Idx : 0;
+		NoticeText.Reset();
+		NoticeTimer = 0.0f;
+		return;
 	}
 
-	Stage = EStage::Mode;
-	// 방금 고른 모드 위로 커서를 돌려놓는다.
-	const int32 Idx = MenuModes.IndexOfByKey(PendingMode);
-	SelectedIndex = (Idx != INDEX_NONE) ? Idx : FindFirstImplementedIndex();
-	NoticeText.Reset();
-	NoticeTimer = 0.0f;
+	if (Stage == EStage::Difficulty)
+	{
+		// 난이도 → 모드. 방금 고른 모드 위로 커서를 돌려놓는다.
+		Stage = EStage::Mode;
+		const int32 Idx = MenuModes.IndexOfByKey(PendingMode);
+		SelectedIndex = (Idx != INDEX_NONE) ? Idx : FindFirstImplementedIndex();
+		NoticeText.Reset();
+		NoticeTimer = 0.0f;
+		return;
+	}
+
+	// 모드 단계에서는 되돌아갈 곳이 없다.
 }
 
 void AModeSelectPawn::Tick(float DeltaSeconds)

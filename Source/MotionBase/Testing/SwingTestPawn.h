@@ -153,6 +153,9 @@ private:
 	// 난이도 (ModeManager 에서 읽어 BeginPlay 에서 투구에 반영)
 	EDifficultyLevel SessionDifficulty = EDifficultyLevel::Amateur;
 
+	// 타석(좌타/우타). BeginPlay 에서 읽어 카메라 위치·타구 방향에 반영.
+	EBattingStance SessionStance = EBattingStance::Right;
+
 	// 집계
 	int32 SwingCount = 0;
 	int32 ContactCount = 0;

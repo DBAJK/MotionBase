@@ -44,3 +44,15 @@ enum class EDifficultyLevel : uint8
 	Amateur   UMETA(DisplayName = "아마추어"),
 	Pro       UMETA(DisplayName = "프로")
 };
+
+/**
+ * 타석(타자 스탠스). 타격 모드 전용 — 모드 선택 3단계(모드→난이도→스탠스)의 마지막.
+ * 타자가 서는 타석(홈플레이트 좌/우)과 스윙·당겨치기 방향을 결정한다.
+ *   Right(우타) = 3루 쪽 타석, Left(좌타) = 1루 쪽 타석.
+ */
+UENUM(BlueprintType)
+enum class EBattingStance : uint8
+{
+	Right  UMETA(DisplayName = "우타"),
+	Left   UMETA(DisplayName = "좌타")
+};

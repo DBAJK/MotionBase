@@ -36,18 +36,20 @@ void UModeManager::Deinitialize()
 	Super::Deinitialize();
 }
 
-void UModeManager::SetActiveMode(EGameModeId NewMode, EDifficultyLevel NewDifficulty)
+void UModeManager::SetActiveMode(EGameModeId NewMode, EDifficultyLevel NewDifficulty, EBattingStance NewStance)
 {
 	const bool bChanged = (NewMode != ActiveMode);
 	ActiveMode = NewMode;
 	ActiveDifficulty = NewDifficulty;
+	ActiveStance = NewStance;
 
 	// 모드 진입 = 새 세션. 같은 모드를 다시 고른 경우에도 반드시 비운다.
 	SessionResults.Reset();
 	SessionStartedAt = FDateTime::Now();
 
-	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 모드 진입 → %s / 난이도 %s (세션 초기화)"),
-		*GetModeDisplayName(NewMode).ToString(), *GetDifficultyDisplayName(NewDifficulty).ToString());
+	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 모드 진입 → %s / 난이도 %s / 타석 %s (세션 초기화)"),
+		*GetModeDisplayName(NewMode).ToString(), *GetDifficultyDisplayName(NewDifficulty).ToString(),
+		*GetStanceDisplayName(NewStance).ToString());
 
 	if (bChanged)
 	{
@@ -203,6 +205,67 @@ void UModeManager::RecordResult(const FScoreResult& Result)
 	// FinalizeSession 에서 한 번에 일어난다 (스윙마다 디스크에 쓰지 않는다).
 }
 
+bool UModeManager::FinalizeSession(const FScoreResult& SessionAverage)
+{
+	// 빈 세션은 저장하지 않는다 — Deinitialize 가 무조건 호출해도 안전하도록.
+	if (SessionResults.Num() == 0 || !SaveData)
+	{
+		return false;
+	}
+
+	FSessionResult Session;
+	Session.Mode = ActiveMode;
+	Session.StartedAt = SessionStartedAt;
+	Session.AttemptCount = SessionResults.Num();
+	Session.Attempts = SessionResults;
+	Session.Average = SessionAverage;
+	Session.DifficultyLevel = static_cast<int32>(ActiveDifficulty);
+
+	SaveData->History.Add(Session);
+	PersistSaveData();
+
+	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 세션 확정 저장 (mode=%s, 시도 %d, 평균 %.1f) — 누적 %d세션"),
+		*GetModeIdName(ActiveMode).ToString(), Session.AttemptCount,
+		SessionAverage.TotalScore, SaveData->History.Num());
+
+	// 같은 세션이 두 번 저장되지 않도록 비운다.
+	SessionResults.Reset();
+	return true;
+}
+
+const TArray<FSessionResult>& UModeManager::GetHistory() const
+{
+	static const TArray<FSessionResult> Empty;
+	return SaveData ? SaveData->History : Empty;
+}
+
+float UModeManager::GetBestTotalScore(EGameModeId Mode) const
+{
+	// 기록 없음 = -1 (호출부가 '첫 기록'과 '0점'을 구분할 수 있게).
+	float Best = -1.0f;
+	if (!SaveData)
+	{
+		return Best;
+	}
+	for (const FSessionResult& S : SaveData->History)
+	{
+		if (S.Mode == Mode)
+		{
+			Best = FMath::Max(Best, S.Average.TotalScore);
+		}
+	}
+	return Best;
+}
+
+void UModeManager::PersistSaveData() const
+{
+	if (SaveData)
+	{
+		UGameplayStatics::SaveGameToSlot(SaveData,
+			UMotionBaseSaveGame::DefaultSlotName, UMotionBaseSaveGame::DefaultUserIndex);
+	}
+}
+
 TArray<EGameModeId> UModeManager::GetMenuModes()
 {
 	return {
@@ -310,5 +373,43 @@ FName UModeManager::GetDifficultyIdName(EDifficultyLevel Level)
 	case EDifficultyLevel::Amateur:  return TEXT("Amateur");
 	case EDifficultyLevel::Pro:      return TEXT("Pro");
 	default:                         return NAME_None;
+	}
+}
+
+TArray<EBattingStance> UModeManager::GetMenuStances()
+{
+	return { EBattingStance::Right, EBattingStance::Left };
+}
+
+FText UModeManager::GetStanceDisplayName(EBattingStance Stance)
+{
+	switch (Stance)
+	{
+	case EBattingStance::Right: return FText::FromString(TEXT("우타"));
+	case EBattingStance::Left:  return FText::FromString(TEXT("좌타"));
+	default:                    return FText::FromString(TEXT("알 수 없음"));
+	}
+}
+
+FText UModeManager::GetStanceDescription(EBattingStance Stance)
+{
+	switch (Stance)
+	{
+	case EBattingStance::Right:
+		return FText::FromString(TEXT("오른손잡이 타석 — 홈플레이트 3루 쪽에 서서 왼쪽으로 당겨칩니다."));
+	case EBattingStance::Left:
+		return FText::FromString(TEXT("왼손잡이 타석 — 홈플레이트 1루 쪽에 서서 오른쪽으로 당겨칩니다."));
+	default:
+		return FText::GetEmpty();
+	}
+}
+
+FName UModeManager::GetStanceIdName(EBattingStance Stance)
+{
+	switch (Stance)
+	{
+	case EBattingStance::Right: return TEXT("Right");
+	case EBattingStance::Left:  return TEXT("Left");
+	default:                    return NAME_None;
 	}
 }

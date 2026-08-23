@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Data/CameraPose.h"
+#include "Data/CameraPoseFrame.h"
 #include "BodyMechanicsAnalyzer.generated.h"
 
 /**

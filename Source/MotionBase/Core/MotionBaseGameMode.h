@@ -25,7 +25,8 @@ public:
 	 * @return 미구현 모드이거나 폰이 등록돼 있지 않으면 false (시작 화면 유지).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")
-	bool StartMode(EGameModeId Mode, EDifficultyLevel Difficulty = EDifficultyLevel::Amateur);
+	bool StartMode(EGameModeId Mode, EDifficultyLevel Difficulty = EDifficultyLevel::Amateur,
+		EBattingStance Stance = EBattingStance::Right);
 
 	/** 시작 화면(모드 선택)으로 복귀. */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")

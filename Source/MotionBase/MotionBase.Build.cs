@@ -18,7 +18,8 @@ public class MotionBase : ModuleRules
 			"Engine",
 			"InputCore",
 			"EnhancedInput",   // Vive 컨트롤러 입력 매핑
-			"HeadMountedDisplay", // OpenXR / MotionController
+			"HeadMountedDisplay", // IMotionController 등
+			"XRBase",          // UE 5.8: HeadMountedDisplayFunctionLibrary·MotionControllerComponent 여기로 이동
 			"HTTP",            // (후반) 생성형 AI API 호출
 			"Json",            // 결과 직렬화 / API 페이로드
 			"JsonUtilities"

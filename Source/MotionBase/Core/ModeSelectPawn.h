@@ -90,8 +90,8 @@ protected:
 	void OpenViveBringup();
 
 private:
-	/** 선택 단계. */
-	enum class EStage : uint8 { Mode, Difficulty };
+	/** 선택 단계. 타격 모드만 Stance 단계를 거친다 (그 외는 난이도에서 바로 시작). */
+	enum class EStage : uint8 { Mode, Difficulty, Stance };
 
 	void MoveSelection(int32 Delta);
 
@@ -100,16 +100,24 @@ private:
 
 	EGameModeId ModeAt(int32 Index) const;
 	EDifficultyLevel DifficultyAt(int32 Index) const;
+	EBattingStance StanceAt(int32 Index) const;
+
+	/** 난이도 확정 후: 타격이면 Stance 단계로, 아니면 바로 시작. */
+	void ConfirmDifficulty();
 
 	EStage Stage = EStage::Mode;
 
 	TArray<EGameModeId> MenuModes;
 	TArray<EDifficultyLevel> MenuDifficulties;
+	TArray<EBattingStance> MenuStances;
 
 	int32 SelectedIndex = 0;
 
-	/** 모드 단계에서 확정한 모드 (난이도 단계에서 사용). */
+	/** 모드 단계에서 확정한 모드 (이후 단계에서 사용). */
 	EGameModeId PendingMode = EGameModeId::Batting;
+
+	/** 난이도 단계에서 확정한 난이도 (스탠스 단계에서 사용). */
+	EDifficultyLevel PendingDifficulty = EDifficultyLevel::Amateur;
 
 	FString NoticeText;
 	float NoticeTimer = 0.0f;

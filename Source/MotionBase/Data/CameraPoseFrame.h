@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "CameraPose.generated.h"
+#include "CameraPoseFrame.generated.h"
 
 /**
  * MediaPipe Pose 랜드마크 부분집합 — 타격 신체역학에 필요한 관절만 추린다.

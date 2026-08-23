@@ -68,9 +68,21 @@ void ASwingTestPawn::BeginPlay()
 		if (UModeManager* ModeManager = GI->GetSubsystem<UModeManager>())
 		{
 			SessionDifficulty = ModeManager->GetActiveDifficulty();
+			SessionStance = ModeManager->GetActiveStance();
 		}
 	}
 	PitchingZone->ApplyDifficulty(SessionDifficulty);
+
+	// 타석에 맞춰 시점을 홈플레이트 옆으로 옮긴다.
+	//   우타 = 3루 쪽(-Y), 좌타 = 1루 쪽(+Y). (배터가 서는 타석 위치)
+	if (Camera)
+	{
+		const float SideSign = (SessionStance == EBattingStance::Left) ? 1.0f : -1.0f;
+		constexpr float BatterBoxOffsetY = 76.0f; // cm — 타석 중심 오프셋
+		FVector CamLoc = Camera->GetRelativeLocation();
+		CamLoc.Y = SideSign * BatterBoxOffsetY;
+		Camera->SetRelativeLocation(CamLoc);
+	}
 
 	// AI 코칭 서비스 (키가 없으면 요청 시 조용히 생략됨).
 	FeedbackService = NewObject<UAIFeedbackService>(this);
@@ -366,7 +378,9 @@ void ASwingTestPawn::SimulateSwing()
 
 		// 타구 연출 — 무작위가 아니라 계산된 발사각·좌우각·타구 속도로 날린다.
 		// (파울도 파울 방향으로 날아간다. 헛스윙만 연출 없음.)
-		const FVector LocalDir = FRotator(LastHit.LaunchAngleDeg, LastHit.SprayAngleDeg, 0.0f).Vector();
+		// 좌타는 당겨치는 방향이 반대(1루→3루 대칭)이므로 좌우각을 반전한다.
+		const float SpraySign = (SessionStance == EBattingStance::Left) ? -1.0f : 1.0f;
+		const FVector LocalDir = FRotator(LastHit.LaunchAngleDeg, LastHit.SprayAngleDeg * SpraySign, 0.0f).Vector();
 		const FVector HitDir = GetActorTransform().TransformVectorNoScale(LocalDir).GetSafeNormal();
 		PitchingZone->LaunchHitBall(HitDir, LastHit.ExitVelocityMps);
 	}
@@ -460,8 +474,9 @@ void ASwingTestPawn::Tick(float DeltaSeconds)
 	}
 
 	GEngine->AddOnScreenDebugMessage(1, 2.0f, FColor::White,
-		FString::Printf(TEXT("=== MotionBase 타격 훈련 [%s] ===   [Space] 스윙   [F] 분석·추천   [R] 리셋   [M] 모드 선택"),
-			*UModeManager::GetDifficultyDisplayName(SessionDifficulty).ToString()));
+		FString::Printf(TEXT("=== MotionBase 타격 훈련 [%s · %s] ===   [Space] 스윙   [F] 분석·추천   [R] 리셋   [M] 모드 선택"),
+			*UModeManager::GetDifficultyDisplayName(SessionDifficulty).ToString(),
+			*UModeManager::GetStanceDisplayName(SessionStance).ToString()));
 
 	// 투구 상태
 	if (PitchingZone && PitchingZone->IsPitchInFlight())

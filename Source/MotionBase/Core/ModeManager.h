@@ -38,7 +38,8 @@ public:
 	 * 다음 판 평균/일관성에 섞이면 점수가 조용히 오염된다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Mode")
-	void SetActiveMode(EGameModeId NewMode, EDifficultyLevel NewDifficulty = EDifficultyLevel::Amateur);
+	void SetActiveMode(EGameModeId NewMode, EDifficultyLevel NewDifficulty = EDifficultyLevel::Amateur,
+		EBattingStance NewStance = EBattingStance::Right);
 
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
 	EGameModeId GetActiveMode() const { return ActiveMode; }
@@ -46,6 +47,10 @@ public:
 	/** 현재 세션의 난이도. 모드 폰(ASwingTestPawn 등)이 읽어 파라미터에 반영한다. */
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
 	EDifficultyLevel GetActiveDifficulty() const { return ActiveDifficulty; }
+
+	/** 현재 세션의 타석(좌타/우타). 타격 폰이 읽어 타석 위치·타구 방향에 반영한다. */
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
+	EBattingStance GetActiveStance() const { return ActiveStance; }
 
 	/** 한 판(모드 세션)의 결과를 기록. ModeId 가 비어 있으면 현재 모드 이름으로 채운다. */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Mode")
@@ -133,6 +138,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
 	static FName GetDifficultyIdName(EDifficultyLevel Level);
 
+	// ── 스탠스(좌타/우타) 선택용 메타데이터 (타격 모드 전용) ──
+
+	/** 타석 목록 (우타, 좌타 순). */
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
+	static TArray<EBattingStance> GetMenuStances();
+
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
+	static FText GetStanceDisplayName(EBattingStance Stance);
+
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
+	static FText GetStanceDescription(EBattingStance Stance);
+
+	/** 저장·집계용 안정 식별자 (ASCII). */
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
+	static FName GetStanceIdName(EBattingStance Stance);
+
 	UPROPERTY(BlueprintAssignable, Category = "MotionBase|Mode")
 	FOnModeChanged OnModeChanged;
 
@@ -142,6 +163,9 @@ private:
 
 	UPROPERTY()
 	EDifficultyLevel ActiveDifficulty = EDifficultyLevel::Amateur;
+
+	UPROPERTY()
+	EBattingStance ActiveStance = EBattingStance::Right;
 
 	/** 세션 내 누적 결과 (저장/피드백 입력). */
 	UPROPERTY()

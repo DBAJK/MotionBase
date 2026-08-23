@@ -33,7 +33,7 @@ TSubclassOf<APawn> AMotionBaseGameMode::GetPawnClassForMode(EGameModeId Mode) co
 	}
 }
 
-bool AMotionBaseGameMode::StartMode(EGameModeId Mode, EDifficultyLevel Difficulty)
+bool AMotionBaseGameMode::StartMode(EGameModeId Mode, EDifficultyLevel Difficulty, EBattingStance Stance)
 {
 	if (!UModeManager::IsModeImplemented(Mode))
 	{
@@ -58,15 +58,16 @@ bool AMotionBaseGameMode::StartMode(EGameModeId Mode, EDifficultyLevel Difficult
 	{
 		if (UModeManager* ModeManager = GI->GetSubsystem<UModeManager>())
 		{
-			ModeManager->SetActiveMode(Mode, Difficulty);
+			ModeManager->SetActiveMode(Mode, Difficulty, Stance);
 		}
 	}
 
 	RequestPawnSwap(PawnClass);
 
-	UE_LOG(LogMotionBase, Log, TEXT("GameMode: 모드 시작 → %s / %s"),
+	UE_LOG(LogMotionBase, Log, TEXT("GameMode: 모드 시작 → %s / %s / %s"),
 		*UModeManager::GetModeDisplayName(Mode).ToString(),
-		*UModeManager::GetDifficultyDisplayName(Difficulty).ToString());
+		*UModeManager::GetDifficultyDisplayName(Difficulty).ToString(),
+		*UModeManager::GetStanceDisplayName(Stance).ToString());
 	return true;
 }
 
