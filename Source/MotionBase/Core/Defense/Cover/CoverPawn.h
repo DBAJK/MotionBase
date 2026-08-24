@@ -10,6 +10,7 @@ class UCapsuleComponent;
 class UMotionControllerComponent;
 class UTextRenderComponent;
 class USceneComponent;
+class UVRInfoPanel;
 
 /**
  * 백업 위치 판단 훈련 폰 — **선택형 판단 퀴즈**.
@@ -65,17 +66,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Cover|VR")
 	TObjectPtr<UMotionControllerComponent> PointerController;
 
+	/** VR 3D 패널 (상황=제목 · 보기 4개=행 · 결과/해설=푸터/힌트). 월드 고정. */
 	UPROPERTY(VisibleAnywhere, Category = "Cover|VR")
-	TObjectPtr<USceneComponent> MenuRoot;
-
-	UPROPERTY(VisibleAnywhere, Category = "Cover|VR")
-	TObjectPtr<UTextRenderComponent> VrSituationText;
-
-	UPROPERTY(VisibleAnywhere, Category = "Cover|VR")
-	TObjectPtr<UTextRenderComponent> VrResultText;
-
-	UPROPERTY()
-	TArray<TObjectPtr<UTextRenderComponent>> VrOptionTexts;
+	TObjectPtr<UVRInfoPanel> VrPanel;
 
 	// ── 설정값 ──
 	UPROPERTY(EditAnywhere, Category = "Cover")

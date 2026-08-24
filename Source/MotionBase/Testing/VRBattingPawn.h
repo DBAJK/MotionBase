@@ -12,6 +12,7 @@
 class UCameraComponent;
 class USceneComponent;
 class UTextRenderComponent;
+class UVRInfoPanel;
 class ABat;
 class APitchingZone;
 
@@ -53,9 +54,13 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "VRBatting")
 	TObjectPtr<UCameraComponent> Camera;
 
-	/** 타격 결과("HIT!"/"HOME RUN!" 등) 를 헤드셋 안에 띄우는 3D 텍스트. */
+	/** 타격 결과("HIT!"/"HOME RUN!" 등) 를 헤드셋 안에 띄우는 3D 텍스트 (토스트 — 헤드락 허용). */
 	UPROPERTY(VisibleAnywhere, Category = "VRBatting")
 	TObjectPtr<UTextRenderComponent> ResultText;
+
+	/** 상태·세션 정보를 담는 월드 고정 3D 패널 (기존 화면 디버그 텍스트를 승격). */
+	UPROPERTY(VisibleAnywhere, Category = "VRBatting")
+	TObjectPtr<UVRInfoPanel> VrPanel;
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "VRBatting")
 	TObjectPtr<ABat> Bat;
@@ -98,6 +103,9 @@ private:
 
 	/** 타격 결과를 3D 텍스트로 띄운다 (헤드셋 안에서 보이게). 영문/기호라 폰트 의존 없음. */
 	void ShowResultText(const FString& Text, const FLinearColor& Color);
+
+	/** 상태·세션 정보를 3D 패널에 갱신 (기존 AddOnScreenDebugMessage 대체). */
+	void RefreshVrPanel();
 
 	/** 결과 텍스트가 남아 있는 시간 (초). */
 	float ResultTimer = 0.0f;

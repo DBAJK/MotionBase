@@ -9,9 +9,8 @@
 #include "MotionControllerComponent.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
 #include "DrawDebugHelpers.h"
-#include "Engine/Font.h"
 #include "Engine/World.h"
-#include "UObject/ConstructorHelpers.h"
+#include "UI/VRInfoPanel.h"
 
 namespace
 {
@@ -55,46 +54,12 @@ AModeSelectPawn::AModeSelectPawn()
 	PointerController->SetupAttachment(SceneRoot);
 	PointerController->MotionSource = FName(TEXT("Right"));
 
-	// 3D 카드는 트래킹 원점(플레이 공간)에 부착 → 월드에 고정된다.
-	// (카메라에 붙이면 머리에 붙어 따라다녀서 "시점이 안 움직인다"고 느껴진다.)
-	// 머리를 돌리면 시야가 실제로 움직이고, 카드는 앞 정면에 그대로 있는다.
-	MenuRoot = CreateDefaultSubobject<USceneComponent>(TEXT("MenuRoot"));
-	MenuRoot->SetupAttachment(SceneRoot);
-	MenuRoot->SetRelativeLocation(FVector(MenuDistanceCm, 0.0f, MenuHeightCm));
-
-	// 한글 폰트 (Content/Fonts/KRFont). 없으면 엔진 기본으로 폴백(한글 깨질 수 있음).
-	static ConstructorHelpers::FObjectFinder<UFont> KRFontFinder(TEXT("/Game/Fonts/KRFont.KRFont"));
-	UFont* MenuFont = KRFontFinder.Succeeded() ? KRFontFinder.Object : nullptr;
-
-	auto MakeText = [this, MenuFont](const TCHAR* Name, float WorldSize) -> UTextRenderComponent*
-	{
-		UTextRenderComponent* T = CreateDefaultSubobject<UTextRenderComponent>(Name);
-		T->SetupAttachment(MenuRoot);
-		// 텍스트가 카메라를 향하도록 180 회전 (안 하면 뒤집혀/거울로 보인다).
-		T->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
-		T->SetHorizontalAlignment(EHTA_Center);
-		T->SetVerticalAlignment(EVRTA_TextCenter);
-		T->SetWorldSize(WorldSize);
-		if (MenuFont) { T->SetFont(MenuFont); }
-		T->SetVisibility(false);
-		return T;
-	};
-
-	VrTitleText = MakeText(TEXT("VrTitle"), 14.0f);
-	VrTitleText->SetRelativeLocation(FVector(0.0f, 0.0f, 60.0f));
-
-	for (int32 i = 0; i < VrMaxRows; ++i)
-	{
-		UTextRenderComponent* Row = MakeText(*FString::Printf(TEXT("VrRow%d"), i), 11.0f);
-		Row->SetRelativeLocation(FVector(0.0f, 0.0f, 30.0f - i * 22.0f));
-		VrRowTexts.Add(Row);
-	}
-
-	VrBackText = MakeText(TEXT("VrBack"), 10.0f);
-	VrDescText = MakeText(TEXT("VrDesc"), 7.5f);
-	VrDescText->SetRelativeLocation(FVector(0.0f, 0.0f, -95.0f));
-	VrHintText = MakeText(TEXT("VrHint"), 6.0f);
-	VrHintText->SetRelativeLocation(FVector(0.0f, 0.0f, -120.0f));
+	// VR 3D 패널 — 트래킹 원점(SceneRoot)에 붙여 **월드 고정**한다. 카메라(머리)에
+	// 붙이면 고개를 돌려도 따라와 "시점이 안 움직인다"고 느껴지고 멀미를 유발한다.
+	// 패널 내부 레이아웃(제목·행·설명·힌트 Z)이 기존 배치와 동일하다 (UVRInfoPanel).
+	VrPanel = CreateDefaultSubobject<UVRInfoPanel>(TEXT("VrPanel"));
+	VrPanel->SetupAttachment(SceneRoot);
+	VrPanel->SetPlacement(MenuDistanceCm, MenuHeightCm);
 }
 
 void AModeSelectPawn::BeginPlay()
@@ -117,6 +82,7 @@ void AModeSelectPawn::BeginPlay()
 	SelectedIndex = FindFirstImplementedIndex();
 
 	// HMD 가 켜져 있으면 헤드셋 안 3D 메뉴 활성화 (없으면 기존 키보드+평면 HUD).
+	if (VrPanel) { VrPanel->BuildPanel(); }
 	InitVRMenu();
 }
 
@@ -447,25 +413,17 @@ void AModeSelectPawn::InitVRMenu()
 {
 	bVRMenu = UHeadMountedDisplayFunctionLibrary::IsHeadMountedDisplayEnabled();
 
-	if (bVRMenu)
-	{
-		// 바닥 기준 트래킹 → MenuHeightCm(눈높이)이 실제 높이와 맞는다.
-		UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
-	}
-
-	if (MenuRoot) { MenuRoot->SetRelativeLocation(FVector(MenuDistanceCm, 0.0f, MenuHeightCm)); }
-
-	if (VrTitleText) { VrTitleText->SetVisibility(bVRMenu); }
-	if (VrDescText)  { VrDescText->SetVisibility(bVRMenu); }
-	if (VrHintText)  { VrHintText->SetVisibility(bVRMenu); }
+	if (VrPanel) { VrPanel->SetPlacement(MenuDistanceCm, MenuHeightCm); }
 
 	if (!bVRMenu)
 	{
-		// PC(키보드) 모드 — 3D 카드는 전부 끈다.
-		for (UTextRenderComponent* Row : VrRowTexts) { if (Row) { Row->SetVisibility(false); } }
-		if (VrBackText) { VrBackText->SetVisibility(false); }
+		// PC(키보드) 모드 — 3D 패널은 전부 끈다.
+		if (VrPanel) { VrPanel->HideAll(); }
 		return;
 	}
+
+	// 바닥 기준 트래킹 → MenuHeightCm(눈높이)이 실제 높이와 맞는다.
+	UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
 
 	RefreshVRMenuTexts();
 	UE_LOG(LogMotionBase, Log, TEXT("ModeSelect: VR 인메뉴 활성화 (드웰 %.1fs / %.0f°)"),
@@ -474,7 +432,7 @@ void AModeSelectPawn::InitVRMenu()
 
 int32 AModeSelectPawn::PickHoveredCard() const
 {
-	if (!PointerController || !PointerController->IsTracked())
+	if (!PointerController || !PointerController->IsTracked() || !VrPanel)
 	{
 		return INDEX_NONE; // 추적 안 되면(베이스 스테이션 꺼짐 등) 오선택 방지.
 	}
@@ -487,20 +445,25 @@ int32 AModeSelectPawn::PickHoveredCard() const
 	float BestCos = CosThresh;
 
 	const int32 RowCount = GetRowCount();
-	for (int32 i = 0; i < RowCount && i < VrRowTexts.Num(); ++i)
+	for (int32 i = 0; i < RowCount && i < UVRInfoPanel::MaxRows; ++i)
 	{
-		if (!VrRowTexts[i] || !IsRowAvailable(i)) { continue; } // 준비 중 카드는 겨눔 대상 아님.
-		const FVector Dir = (VrRowTexts[i]->GetComponentLocation() - Origin).GetSafeNormal();
+		UTextRenderComponent* Row = VrPanel->GetRowText(i);
+		if (!Row || !IsRowAvailable(i)) { continue; } // 준비 중 카드는 겨눔 대상 아님.
+		const FVector Dir = (Row->GetComponentLocation() - Origin).GetSafeNormal();
 		const float C = FVector::DotProduct(Aim, Dir);
 		if (C > BestCos) { BestCos = C; Best = i; }
 	}
 
 	// 뒤로 카드 (모드 단계 외에서만) — 호버 인덱스는 RowCount.
-	if (Stage != EStage::Mode && VrBackText && VrBackText->IsVisible())
+	if (Stage != EStage::Mode)
 	{
-		const FVector Dir = (VrBackText->GetComponentLocation() - Origin).GetSafeNormal();
-		const float C = FVector::DotProduct(Aim, Dir);
-		if (C > BestCos) { BestCos = C; Best = RowCount; }
+		UTextRenderComponent* Back = VrPanel->GetBackText();
+		if (Back && Back->IsVisible())
+		{
+			const FVector Dir = (Back->GetComponentLocation() - Origin).GetSafeNormal();
+			const float C = FVector::DotProduct(Aim, Dir);
+			if (C > BestCos) { BestCos = C; Best = RowCount; }
+		}
 	}
 
 	return Best;
@@ -553,22 +516,16 @@ void AModeSelectPawn::UpdateVRMenu(float DeltaSeconds)
 
 void AModeSelectPawn::RefreshVRMenuTexts()
 {
-	if (!bVRMenu) { return; }
+	if (!bVRMenu || !VrPanel) { return; }
 
-	if (VrTitleText) { VrTitleText->SetText(GetHeaderSubtitle()); }
+	VrPanel->SetTitle(GetHeaderSubtitle().ToString(), FColor(228, 233, 244));
 
 	const int32 RowCount = GetRowCount();
 	const float Progress = (DwellTimeSec > 0.0f)
 		? FMath::Clamp(VrDwellTimer / DwellTimeSec, 0.0f, 1.0f) : 0.0f;
 
-	for (int32 i = 0; i < VrRowTexts.Num(); ++i)
+	for (int32 i = 0; i < RowCount && i < UVRInfoPanel::MaxRows; ++i)
 	{
-		UTextRenderComponent* Row = VrRowTexts[i];
-		if (!Row) { continue; }
-
-		if (i >= RowCount) { Row->SetVisibility(false); continue; }
-		Row->SetVisibility(true);
-
 		const bool bAvail   = IsRowAvailable(i);
 		const bool bHovered = (VrHoverIndex == i);
 
@@ -576,39 +533,29 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 		if (!bAvail)   { Label += TEXT("  (준비 중)"); }
 		if (bHovered)  { Label += MsDwellBar(Progress); }
 
-		Row->SetText(FText::FromString(Label));
-		Row->SetTextRenderColor(MsRowColor(bAvail, bHovered, Progress));
+		VrPanel->SetRow(i, Label, MsRowColor(bAvail, bHovered, Progress));
+	}
+	VrPanel->HideRowsFrom(RowCount);
+
+	// 뒤로 카드 (모드 단계 외에서만) — 행 바로 아래에 배치.
+	if (Stage != EStage::Mode)
+	{
+		const bool bHovered = (VrHoverIndex == RowCount);
+		FString Label = TEXT("◀ 뒤로");
+		if (bHovered) { Label += MsDwellBar(Progress); }
+		VrPanel->SetBackBelowRows(RowCount, Label, MsRowColor(true, bHovered, Progress), true);
+	}
+	else
+	{
+		VrPanel->SetBackBelowRows(RowCount, FString(), FColor::White, false);
 	}
 
-	// 뒤로 카드.
-	if (VrBackText)
-	{
-		const bool bShowBack = (Stage != EStage::Mode);
-		VrBackText->SetVisibility(bShowBack);
-		if (bShowBack)
-		{
-			const bool bHovered = (VrHoverIndex == RowCount);
-			VrBackText->SetRelativeLocation(FVector(0.0f, 0.0f, 30.0f - RowCount * 22.0f - 14.0f));
-			FString Label = TEXT("◀ 뒤로");
-			if (bHovered) { Label += MsDwellBar(Progress); }
-			VrBackText->SetText(FText::FromString(Label));
-			VrBackText->SetTextRenderColor(MsRowColor(true, bHovered, Progress));
-		}
-	}
+	// 설명 / 안내 문구 → 푸터.
+	const FString Desc = !NoticeText.IsEmpty() ? NoticeText : GetSelectedDescription().ToString();
+	VrPanel->SetFooter(Desc, !NoticeText.IsEmpty() ? FColor(255, 180, 90) : FColor(150, 156, 168));
 
-	// 설명 / 안내 문구.
-	if (VrDescText)
-	{
-		const FString Desc = !NoticeText.IsEmpty() ? NoticeText : GetSelectedDescription().ToString();
-		VrDescText->SetText(FText::FromString(Desc));
-		VrDescText->SetTextRenderColor(!NoticeText.IsEmpty()
-			? FColor(255, 180, 90) : FColor(150, 156, 168));
-	}
-
-	if (VrHintText)
-	{
-		VrHintText->SetText(FText::FromString(
-			TEXT("컨트롤러로 카드를 겨누고 잠시 유지하면 선택  ·  (키보드 W/S · Enter 도 가능)")));
-		VrHintText->SetTextRenderColor(FColor(110, 116, 128));
-	}
+	// 힌트.
+	VrPanel->SetHint(
+		TEXT("컨트롤러로 카드를 겨누고 잠시 유지하면 선택  ·  (키보드 W/S · Enter 도 가능)"),
+		FColor(110, 116, 128));
 }

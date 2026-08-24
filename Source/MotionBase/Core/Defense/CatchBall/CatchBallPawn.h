@@ -9,6 +9,7 @@ class UCameraComponent;
 class UCapsuleComponent;
 class UMotionControllerComponent;
 class UStaticMeshComponent;
+class UVRInfoPanel;
 class ACatchBall;
 
 /**
@@ -59,6 +60,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "CatchBall|VR")
 	TObjectPtr<UStaticMeshComponent> GloveMesh;
 
+	/** VR 헤드셋 안 상태 패널 (진행·결과·안내). 월드 고정. PC 모드에선 숨김. */
+	UPROPERTY(VisibleAnywhere, Category = "CatchBall|VR")
+	TObjectPtr<UVRInfoPanel> VrPanel;
+
 	// ── 설정값 ──
 
 	/** 이 세션에서 던질 타구 유형. Mixed 면 매 구 랜덤. */
@@ -92,6 +97,34 @@ protected:
 	/** 낙구지점이 좌우로 퍼지는 최대 폭 (cm). 이동해서 잡게 만든다. */
 	UPROPERTY(EditAnywhere, Category = "CatchBall")
 	float SideSpread = 500.0f;
+
+	// ── 유형별 포구 허용 반경 (cm) — 작을수록 정밀하게 잡아야 한다 ──
+	// ⚠️ 실측 캘리브레이션 대상 (CLAUDE §규칙). 에디터에서 바로 튜닝.
+	/** 땅볼: 낮고 빠름, 그나마 관대. */
+	UPROPERTY(EditAnywhere, Category = "CatchBall|Radius", meta = (ClampMin = "10.0"))
+	float GroundBallCatchRadius = 90.0f;
+
+	/** 뜬공: 높이 뜨고 체공이 김. */
+	UPROPERTY(EditAnywhere, Category = "CatchBall|Radius", meta = (ClampMin = "10.0"))
+	float FlyBallCatchRadius = 75.0f;
+
+	/** 라인드라이브: 빠르고 빡셈. */
+	UPROPERTY(EditAnywhere, Category = "CatchBall|Radius", meta = (ClampMin = "10.0"))
+	float LineDriveCatchRadius = 55.0f;
+
+	// ── 유형별 체공시간 (초) — 짧을수록 공이 빨라 반응이 빡세다 ──
+	// ⚠️ 실측 캘리브레이션 대상. 발사 속도를 이 시간으로 역산하므로 0 이면 안 된다.
+	/** 땅볼: 낮고 빠름. */
+	UPROPERTY(EditAnywhere, Category = "CatchBall|Flight", meta = (ClampMin = "0.2"))
+	float GroundBallFlightSec = 1.2f;
+
+	/** 뜬공: 높이 뜨고 체공이 김. */
+	UPROPERTY(EditAnywhere, Category = "CatchBall|Flight", meta = (ClampMin = "0.2"))
+	float FlyBallFlightSec = 2.4f;
+
+	/** 라인드라이브: 빠르고 낮게 쏘아온다. */
+	UPROPERTY(EditAnywhere, Category = "CatchBall|Flight", meta = (ClampMin = "0.2"))
+	float LineDriveFlightSec = 1.0f;
 
 	/** 공 액터 클래스. 미지정 시 ACatchBall 기본 사용. */
 	UPROPERTY(EditAnywhere, Category = "CatchBall")
@@ -159,4 +192,7 @@ private:
 
 	/** VR 포구 판정 — 글러브가 공에 닿았는지 매 틱 확인. */
 	void TickVRCatch();
+
+	/** VR 상태 패널 내용 갱신 (bVR 일 때 매 틱). */
+	void RefreshVrPanel();
 };

@@ -9,6 +9,7 @@ class UCameraComponent;
 class UCapsuleComponent;
 class UMotionControllerComponent;
 class UStaticMeshComponent;
+class UVRInfoPanel;
 class ACatchBall;
 
 /**
@@ -59,6 +60,10 @@ protected:
 	/** 손에 든 공 시각 표시. */
 	UPROPERTY(VisibleAnywhere, Category = "Throw|VR")
 	TObjectPtr<UStaticMeshComponent> BallInHandMesh;
+
+	/** VR 헤드셋 안 상태 패널 (진행·파워·결과·안내). 월드 고정. PC 모드에선 숨김. */
+	UPROPERTY(VisibleAnywhere, Category = "Throw|VR")
+	TObjectPtr<UVRInfoPanel> VrPanel;
 
 	// ── VR 송구 튜닝 ──
 	/** 이 속도(cm/s) 이상으로 컨트롤러를 휘두르면 송구로 인식. */
@@ -159,4 +164,7 @@ private:
 
 	/** VR: 컨트롤러 속도로 송구 인식 + 파워 산출. */
 	void TickVRThrow(float DeltaSeconds);
+
+	/** VR 상태 패널 내용 갱신 (bVR 일 때 매 틱). */
+	void RefreshVrPanel();
 };

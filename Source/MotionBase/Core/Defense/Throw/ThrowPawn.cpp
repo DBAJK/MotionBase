@@ -16,6 +16,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Core/Defense/Throw/ThrowHUD.h"
 #include "UI/ModeSelectHUD.h"
+#include "UI/VRInfoPanel.h"
 
 AThrowPawn::AThrowPawn()
 {
@@ -44,6 +45,11 @@ AThrowPawn::AThrowPawn()
 		BallInHandMesh->SetStaticMesh(Sph.Object);
 		BallInHandMesh->SetRelativeScale3D(FVector(0.10f));
 	}
+
+	// VR 상태 패널 — 캡슐 루트에 월드 고정(정면 +X, Y=0, 눈높이쯤). 헤드락 아님.
+	VrPanel = CreateDefaultSubobject<UVRInfoPanel>(TEXT("VrPanel"));
+	VrPanel->SetupAttachment(Capsule);
+	VrPanel->SetPlacement(UVRInfoPanel::DefaultDistanceCm, 70.0f);
 }
 
 void AThrowPawn::BeginPlay()
@@ -62,6 +68,13 @@ void AThrowPawn::BeginPlay()
 	if (BallInHandMesh)
 	{
 		BallInHandMesh->SetVisibility(bVR); // 손에 든 공은 VR 에서만.
+	}
+
+	// 상태 패널은 VR 에서만. PC 는 평면 HUD(AThrowHUD)가 담당한다.
+	if (VrPanel)
+	{
+		VrPanel->BuildPanel();
+		if (!bVR) { VrPanel->HideAll(); }
 	}
 
 	StartSession();
@@ -280,6 +293,47 @@ void AThrowPawn::Tick(float DeltaSeconds)
 		DrawDebugCircle(GetWorld(), T + FVector(0, 0, 2.0f), CurrentTrial.HitRadius, 32,
 			FColor::Yellow, false, -1.0f, 0, 3.0f, FVector(1, 0, 0), FVector(0, 1, 0), false);
 	}
+
+	// VR 상태 패널 갱신.
+	if (bVR)
+	{
+		RefreshVrPanel();
+	}
+}
+
+void AThrowPawn::RefreshVrPanel()
+{
+	if (!VrPanel) { return; }
+
+	// 제목: 진행 + 성공 수.
+	VrPanel->SetTitle(
+		FString::Printf(TEXT("송구  %d / %d 구      성공 %d"),
+			GetThrowNumber(), GetTotalThrows(), GetSuccessCount()),
+		FColor(228, 233, 244));
+
+	// 행0: 파워 게이지 (ASCII 바 — 폰트 글리프 걱정 없음).
+	const int32 Cells = 10;
+	const int32 Filled = FMath::Clamp(FMath::RoundToInt(CurrentPower * Cells), 0, Cells);
+	const FString Bar = FString::Printf(TEXT("파워 [%s%s] %3.0f%%"),
+		*FString::ChrN(Filled, TEXT('=')), *FString::ChrN(Cells - Filled, TEXT('.')),
+		CurrentPower * 100.0f);
+	VrPanel->SetRow(0, Bar, bCharging ? FColor(255, 190, 90) : FColor(150, 200, 255));
+	VrPanel->HideRowsFrom(1);
+
+	// 푸터: 직전 결과(색 포함), 없으면 조준 안내.
+	FString Outcome; FLinearColor OColor;
+	if (GetLastOutcomeText(Outcome, OColor))
+	{
+		VrPanel->SetFooter(Outcome, OColor.ToFColor(true));
+	}
+	else
+	{
+		VrPanel->SetFooter(TEXT("정면 타겟으로 자동 조준 — 파워(거리)만 맞추세요"), FColor(150, 156, 168));
+	}
+
+	// 힌트: 조작 안내.
+	VrPanel->SetHint(TEXT("컨트롤러를 앞으로 던지면 송구 (손 속도 = 파워)   ·   M: 나가기"),
+		FColor(110, 116, 128));
 }
 
 void AThrowPawn::TickVRThrow(float DeltaSeconds)

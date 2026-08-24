@@ -9,6 +9,7 @@ class UCameraComponent;
 class USceneComponent;
 class UMotionControllerComponent;
 class UTextRenderComponent;
+class UVRInfoPanel;
 
 /**
  * 시작 화면(모드 선택) 폰. **단계형 선택**:
@@ -91,26 +92,12 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
 	TObjectPtr<UMotionControllerComponent> PointerController;
 
-	/** 3D 메뉴 카드들의 부모 (카메라 앞에 부착 — 항상 시야에 들어온다). */
+	/**
+	 * VR 3D 패널 (제목·행 카드·뒤로·설명·힌트). SceneRoot 에 붙여 **월드 고정**.
+	 * HMD 없으면 숨긴다. 드웰 겨눔 판정은 패널의 GetRowText/GetBackText 를 쓴다.
+	 */
 	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
-	TObjectPtr<USceneComponent> MenuRoot;
-
-	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
-	TObjectPtr<UTextRenderComponent> VrTitleText;
-
-	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
-	TObjectPtr<UTextRenderComponent> VrDescText;
-
-	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
-	TObjectPtr<UTextRenderComponent> VrHintText;
-
-	/** 뒤로 카드 (모드 단계 외에서만 표시). 호버 인덱스는 행 개수와 같은 값. */
-	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
-	TObjectPtr<UTextRenderComponent> VrBackText;
-
-	/** 행 텍스트 풀 (단계별 최대 행 수만큼). */
-	UPROPERTY()
-	TArray<TObjectPtr<UTextRenderComponent>> VrRowTexts;
+	TObjectPtr<UVRInfoPanel> VrPanel;
 
 	/** 카드를 이 시간(초)만큼 계속 겨누고 있으면 선택 확정. */
 	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")

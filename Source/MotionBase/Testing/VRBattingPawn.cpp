@@ -9,6 +9,7 @@
 #include "Components/InputComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/TextRenderComponent.h"
+#include "UI/VRInfoPanel.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
@@ -34,6 +35,12 @@ AVRBattingPawn::AVRBattingPawn()
 	ResultText->SetVerticalAlignment(EVRTA_TextCenter);
 	ResultText->SetWorldSize(40.0f);
 	ResultText->SetVisibility(false);
+
+	// 상태·세션 패널 — 트래킹 원점(VROrigin)에 월드 고정. 결과 토스트(ResultText)와 달리
+	// 머리를 따라오지 않아 고개를 돌려도 제자리에 있는다.
+	VrPanel = CreateDefaultSubobject<UVRInfoPanel>(TEXT("VrPanel"));
+	VrPanel->SetupAttachment(VROrigin);
+	VrPanel->SetPlacement(UVRInfoPanel::DefaultDistanceCm, UVRInfoPanel::DefaultHeightCm);
 }
 
 void AVRBattingPawn::BeginPlay()
@@ -48,6 +55,9 @@ void AVRBattingPawn::BeginPlay()
 
 	// 룸스케일 기준(바닥) — 서 있는 타자의 실제 키가 반영되도록.
 	UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
+
+	// VR 상태 패널 자식 텍스트 생성 (한 번).
+	if (VrPanel) { VrPanel->BuildPanel(); }
 
 	// 세션 파라미터 (모드 선택에서 고른 난이도·타석).
 	if (UGameInstance* GI = GetGameInstance())
@@ -275,53 +285,75 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 		}
 	}
 
-	if (!GEngine)
+	// 상태·세션 정보는 월드 고정 3D 패널로 (헤드셋 안에서 보이게).
+	RefreshVrPanel();
+}
+
+void AVRBattingPawn::RefreshVrPanel()
+{
+	if (!VrPanel)
 	{
 		return;
 	}
 
-	// 추적 상태 — 베이스 스테이션이 없으면 여기서 바로 경고.
 	const bool bTracking = Bat && Bat->IsTracking();
+
+	// 제목: 모드·난이도·타석. 추적 끊기면 붉게.
+	VrPanel->SetTitle(
+		FString::Printf(TEXT("VR 타격   [%s · %s]"),
+			*UModeManager::GetDifficultyDisplayName(SessionDifficulty).ToString(),
+			*UModeManager::GetStanceDisplayName(SessionStance).ToString()),
+		bTracking ? FColor(228, 233, 244) : FColor(235, 90, 90));
+
+	int32 Row = 0;
+
+	// 추적 경고 / 동적 난이도.
 	if (!bTracking)
 	{
-		GEngine->AddOnScreenDebugMessage(20, 2.0f, FColor::Red,
-			TEXT("⚠ 컨트롤러 추적 안됨 — SteamVR/베이스 스테이션을 확인하세요 (위치 추적 없이는 스윙 측정 불가)"));
+		VrPanel->SetRow(Row++, TEXT("⚠ 컨트롤러 추적 안됨 — SteamVR·베이스 스테이션 확인"),
+			FColor(235, 90, 90));
 	}
-
-	GEngine->AddOnScreenDebugMessage(1, 2.0f, FColor::White,
-		FString::Printf(TEXT("=== VR 타격 [%s · %s] ===   추적:%s   [M] 모드선택  [R] 리셋"),
-			*UModeManager::GetDifficultyDisplayName(SessionDifficulty).ToString(),
-			*UModeManager::GetStanceDisplayName(SessionStance).ToString(),
-			bTracking ? TEXT("정상") : TEXT("없음")));
-
-	if (PitchingZone)
+	else if (PitchingZone)
 	{
-		GEngine->AddOnScreenDebugMessage(5, 2.0f, FColor(255, 180, 90),
-			FString::Printf(TEXT("동적 난이도: %.0f%%  (잘 치면 상승 · 놓치면 하강)"),
-				PitchingZone->GetDynamicLevel() * 100.0f));
+		VrPanel->SetRow(Row++,
+			FString::Printf(TEXT("동적 난이도 %.0f%%  (잘 치면 상승 · 놓치면 하강)"),
+				PitchingZone->GetDynamicLevel() * 100.0f),
+			FColor(255, 180, 90));
 	}
 
+	// 투구 중 정보.
 	if (PitchingZone && PitchingZone->IsPitchInFlight())
 	{
 		const float Remain = PitchingZone->GetArrivalWorldTime() - (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
-		GEngine->AddOnScreenDebugMessage(2, 2.0f, FColor::Yellow,
+		VrPanel->SetRow(Row++,
 			FString::Printf(TEXT("%s 투구 중 — 도달까지 %.2f초"),
 				CurrentPitchType == EPitchType::Breaking ? TEXT("변화구") : TEXT("직구"),
-				FMath::Max(0.0f, Remain)));
+				FMath::Max(0.0f, Remain)),
+			FColor(240, 220, 90));
 	}
+	VrPanel->HideRowsFrom(Row);
 
+	// 푸터: 직전 타격 결과 상세.
 	if (bHasResult)
 	{
-		GEngine->AddOnScreenDebugMessage(3, 2.0f, FColor::Green,
-			FString::Printf(TEXT("최근: %s | 배트속도 %.1f m/s | 타구 %.1f m/s · %.0f m | 총점 %.1f"),
+		VrPanel->SetFooter(
+			FString::Printf(TEXT("최근: %s | 배트 %.1f m/s | 타구 %.1f m/s · %.0f m | 총점 %.1f"),
 				*LastCall, LastMetrics.ContactSpeedMps, LastHit.ExitVelocityMps, LastHit.CarryDistanceM,
-				LastSwingScore.TotalScore));
-		GEngine->AddOnScreenDebugMessage(4, 2.0f, FColor::Orange,
-			FString::Printf(TEXT("세션: 스윙 %d · 홈런 %d · 안타 %d · 지켜봄 %d | 평균 총점 %.1f"),
-				SwingCount, HomeRunCount, HitCount, MissedPitchCount, SessionScore.TotalScore));
+				LastSwingScore.TotalScore),
+			FColor(120, 220, 130));
 	}
 	else if (!LastCall.IsEmpty())
 	{
-		GEngine->AddOnScreenDebugMessage(3, 2.0f, FColor::Silver, FString::Printf(TEXT("최근: %s"), *LastCall));
+		VrPanel->SetFooter(FString::Printf(TEXT("최근: %s"), *LastCall), FColor(180, 184, 192));
 	}
+	else
+	{
+		VrPanel->SetFooter(TEXT("공을 지켜보다 타이밍에 맞춰 스윙하세요"), FColor(150, 156, 168));
+	}
+
+	// 힌트: 세션 집계 + 조작.
+	VrPanel->SetHint(
+		FString::Printf(TEXT("세션 스윙 %d · 홈런 %d · 안타 %d · 지켜봄 %d | 평균 %.1f    ·    [M] 나가기  [R] 리셋"),
+			SwingCount, HomeRunCount, HitCount, MissedPitchCount, SessionScore.TotalScore),
+		FColor(110, 116, 128));
 }

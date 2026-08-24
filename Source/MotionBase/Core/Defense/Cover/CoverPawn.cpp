@@ -15,6 +15,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Core/Defense/Cover/CoverHUD.h"
 #include "UI/ModeSelectHUD.h"
+#include "UI/VRInfoPanel.h"
 
 ACoverPawn::ACoverPawn()
 {
@@ -34,40 +35,11 @@ ACoverPawn::ACoverPawn()
 	PointerController->SetupAttachment(Capsule);
 	PointerController->MotionSource = FName(TEXT("Right"));
 
-	// 3D 선택 카드는 카메라 앞에 부착 (항상 시야에 보이게). 퀴즈 패널이라 헤드락 허용.
-	MenuRoot = CreateDefaultSubobject<USceneComponent>(TEXT("MenuRoot"));
-	MenuRoot->SetupAttachment(Camera);
-	MenuRoot->SetRelativeLocation(FVector(MenuDistanceCm, 0.0f, -10.0f));
-
-	// 한글 폰트 (Content/Fonts/KRFont). 없으면 엔진 기본으로 폴백(한글 깨질 수 있음).
-	static ConstructorHelpers::FObjectFinder<UFont> KRFontFinder(TEXT("/Game/Fonts/KRFont.KRFont"));
-	UFont* MenuFont = KRFontFinder.Succeeded() ? KRFontFinder.Object : nullptr;
-
-	auto MakeText = [this, MenuFont](const TCHAR* Name, float WorldSize) -> UTextRenderComponent*
-	{
-		UTextRenderComponent* T = CreateDefaultSubobject<UTextRenderComponent>(Name);
-		T->SetupAttachment(MenuRoot);
-		T->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f)); // 카메라를 향하게
-		T->SetHorizontalAlignment(EHTA_Center);
-		T->SetVerticalAlignment(EVRTA_TextCenter);
-		T->SetWorldSize(WorldSize);
-		if (MenuFont) { T->SetFont(MenuFont); }
-		T->SetVisibility(false);
-		return T;
-	};
-
-	VrSituationText = MakeText(TEXT("VrSituation"), 8.0f);
-	VrSituationText->SetRelativeLocation(FVector(0.0f, 0.0f, 70.0f));
-
-	for (int32 i = 0; i < MaxOptions; ++i)
-	{
-		UTextRenderComponent* Opt = MakeText(*FString::Printf(TEXT("VrOption%d"), i), 10.0f);
-		Opt->SetRelativeLocation(FVector(0.0f, 0.0f, 30.0f - i * 24.0f));
-		VrOptionTexts.Add(Opt);
-	}
-
-	VrResultText = MakeText(TEXT("VrResult"), 9.0f);
-	VrResultText->SetRelativeLocation(FVector(0.0f, 0.0f, -80.0f));
+	// VR 3D 패널 — 카메라(머리)가 아니라 캡슐 루트에 붙여 **월드 고정**한다.
+	// (헤드락은 고개를 돌리면 패널이 따라와 부자연스럽고 멀미를 유발한다. #3)
+	VrPanel = CreateDefaultSubobject<UVRInfoPanel>(TEXT("VrPanel"));
+	VrPanel->SetupAttachment(Capsule);
+	VrPanel->SetPlacement(MenuDistanceCm, 60.0f); // 캡슐 중심 기준 눈높이 부근
 }
 
 void ACoverPawn::BeginPlay()
@@ -81,6 +53,8 @@ void ACoverPawn::BeginPlay()
 	{
 		UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
 	}
+
+	if (VrPanel) { VrPanel->BuildPanel(); }
 
 	BuildQuizPool();
 	InitVRMenu();
@@ -277,21 +251,14 @@ void ACoverPawn::Tick(float DeltaSeconds)
 
 void ACoverPawn::InitVRMenu()
 {
-	if (MenuRoot) { MenuRoot->SetRelativeLocation(FVector(MenuDistanceCm, 0.0f, -10.0f)); }
-
-	const bool bShow = bVR;
-	if (VrSituationText) { VrSituationText->SetVisibility(bShow); }
-	if (VrResultText)    { VrResultText->SetVisibility(bShow); }
-	for (UTextRenderComponent* Opt : VrOptionTexts)
-	{
-		if (Opt) { Opt->SetVisibility(false); }
-	}
-	if (bShow) { RefreshVRTexts(); }
+	if (!VrPanel) { return; }
+	if (!bVR) { VrPanel->HideAll(); return; }
+	RefreshVRTexts();
 }
 
 int32 ACoverPawn::PickHoveredCard() const
 {
-	if (!PointerController || !PointerController->IsTracked())
+	if (!PointerController || !PointerController->IsTracked() || !VrPanel)
 	{
 		return INDEX_NONE;
 	}
@@ -303,10 +270,11 @@ int32 ACoverPawn::PickHoveredCard() const
 	float BestCos = CosThresh;
 
 	const int32 N = GetOptionCount();
-	for (int32 i = 0; i < N && i < VrOptionTexts.Num(); ++i)
+	for (int32 i = 0; i < N; ++i)
 	{
-		if (!VrOptionTexts[i]) { continue; }
-		const FVector Dir = (VrOptionTexts[i]->GetComponentLocation() - Origin).GetSafeNormal();
+		UTextRenderComponent* Row = VrPanel->GetRowText(i);
+		if (!Row) { continue; }
+		const FVector Dir = (Row->GetComponentLocation() - Origin).GetSafeNormal();
 		const float C = FVector::DotProduct(Aim, Dir);
 		if (C > BestCos) { BestCos = C; Best = i; }
 	}
@@ -357,78 +325,65 @@ void ACoverPawn::UpdateVRMenu(float DeltaSeconds)
 
 void ACoverPawn::RefreshVRTexts()
 {
-	if (!bVR) { return; }
+	if (!bVR || !VrPanel) { return; }
 
-	if (VrSituationText)
-	{
-		const FString Head = bSessionOver
-			? FString::Printf(TEXT("훈련 종료   성공 %d / %d"), SuccessCount, TotalTrials)
-			: FString::Printf(TEXT("[%s]  당신은 %s — 어디를 백업?"),
-				*CurrentQuiz.Situation, *CurrentQuiz.Role);
-		VrSituationText->SetText(FText::FromString(Head));
-		VrSituationText->SetTextRenderColor(FColor(228, 233, 244));
-	}
+	// 제목 = 상황·역할 (또는 종료 집계).
+	const FString Head = bSessionOver
+		? FString::Printf(TEXT("훈련 종료   성공 %d / %d"), SuccessCount, TotalTrials)
+		: FString::Printf(TEXT("[%s]  당신은 %s — 어디를 백업?"),
+			*CurrentQuiz.Situation, *CurrentQuiz.Role);
+	VrPanel->SetTitle(Head, FColor(228, 233, 244));
 
 	const int32 N = GetOptionCount();
 	const float Progress = (DwellTimeSec > 0.0f)
 		? FMath::Clamp(VrDwellTimer / DwellTimeSec, 0.0f, 1.0f) : 0.0f;
 
-	for (int32 i = 0; i < VrOptionTexts.Num(); ++i)
+	if (bSessionOver)
 	{
-		UTextRenderComponent* Opt = VrOptionTexts[i];
-		if (!Opt) { continue; }
-
-		if (bSessionOver || i >= N)
+		VrPanel->HideRowsFrom(0);
+	}
+	else
+	{
+		for (int32 i = 0; i < N; ++i)
 		{
-			Opt->SetVisibility(false);
-			continue;
-		}
-		Opt->SetVisibility(true);
+			FString Label = FString::Printf(TEXT("%d. %s"), i + 1, *CurrentQuiz.Options[i]);
+			FColor Color(228, 233, 244);
 
-		FString Label = FString::Printf(TEXT("%d. %s"), i + 1, *CurrentQuiz.Options[i]);
-		FColor Color(228, 233, 244);
-
-		if (bAnswered)
-		{
-			// 정답=초록, 내가 고른 오답=빨강.
-			if (i == CurrentQuiz.Correct) { Color = FColor(90, 220, 110); Label += TEXT("  (정답)"); }
-			else if (i == ChosenIndex)    { Color = FColor(230, 90, 90);  Label += TEXT("  (내 선택)"); }
-			else                          { Color = FColor(120, 124, 134); }
+			if (bAnswered)
+			{
+				// 정답=초록, 내가 고른 오답=빨강.
+				if (i == CurrentQuiz.Correct) { Color = FColor(90, 220, 110); Label += TEXT("  (정답)"); }
+				else if (i == ChosenIndex)    { Color = FColor(230, 90, 90);  Label += TEXT("  (내 선택)"); }
+				else                          { Color = FColor(120, 124, 134); }
+			}
+			else if (VrHoverIndex == i)
+			{
+				// 겨누는 중 — 진행바 + 앰버.
+				const int32 Cells = 6;
+				const int32 Filled = FMath::Clamp(FMath::RoundToInt(Progress * Cells), 0, Cells);
+				Label += FString::Printf(TEXT("   [%s%s]"),
+					*FString::ChrN(Filled, TEXT('=')), *FString::ChrN(Cells - Filled, TEXT('.')));
+				Color = FColor(255, 190, 90);
+			}
+			VrPanel->SetRow(i, Label, Color);
 		}
-		else if (VrHoverIndex == i)
-		{
-			// 겨누는 중 — 진행바 + 앰버.
-			const int32 Cells = 6;
-			const int32 Filled = FMath::Clamp(FMath::RoundToInt(Progress * Cells), 0, Cells);
-			Label += FString::Printf(TEXT("   [%s%s]"),
-				*FString::ChrN(Filled, TEXT('=')), *FString::ChrN(Cells - Filled, TEXT('.')));
-			Color = FColor(255, 190, 90);
-		}
-
-		Opt->SetText(FText::FromString(Label));
-		Opt->SetTextRenderColor(Color);
+		VrPanel->HideRowsFrom(N);
 	}
 
-	if (VrResultText)
+	// 결과·해설·힌트 → 푸터.
+	if (bSessionOver)
 	{
-		FString RText;
-		FColor  RColor(150, 156, 168);
-		if (bSessionOver)
-		{
-			RText = TEXT("M: 모드 선택으로");
-		}
-		else if (bAnswered)
-		{
-			const bool bCorrect = (LastResult.Outcome == ECoverOutcome::Covered);
-			RText = (bCorrect ? TEXT("정답!  ") : TEXT("오답  ")) + CurrentQuiz.Explain;
-			RColor = bCorrect ? FColor(90, 220, 110) : FColor(230, 130, 90);
-		}
-		else
-		{
-			RText = bVR ? TEXT("컨트롤러로 보기를 겨누고 잠시 유지") : TEXT("숫자키 1~4 로 선택");
-		}
-		VrResultText->SetText(FText::FromString(RText));
-		VrResultText->SetTextRenderColor(RColor);
+		VrPanel->SetFooter(TEXT("M: 모드 선택으로"), FColor(150, 156, 168));
+	}
+	else if (bAnswered)
+	{
+		const bool bCorrect = (LastResult.Outcome == ECoverOutcome::Covered);
+		VrPanel->SetFooter((bCorrect ? TEXT("정답!  ") : TEXT("오답  ")) + CurrentQuiz.Explain,
+			bCorrect ? FColor(90, 220, 110) : FColor(230, 130, 90));
+	}
+	else
+	{
+		VrPanel->SetFooter(TEXT("컨트롤러로 보기를 겨누고 잠시 유지"), FColor(150, 156, 168));
 	}
 }
 

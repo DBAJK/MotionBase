@@ -16,7 +16,23 @@
 #include "DrawDebugHelpers.h"
 #include "Core/Defense/CatchBall/CatchBallHUD.h"
 #include "UI/ModeSelectHUD.h"
+#include "UI/VRInfoPanel.h"
 #include "GameFramework/PlayerController.h"
+
+namespace
+{
+	// 타구 유형 한글 이름 (UMETA DisplayName 은 에디터 전용이라 런타임엔 직접 반환).
+	FString CatchTypeName(ECatchBallType Type)
+	{
+		switch (Type)
+		{
+		case ECatchBallType::GroundBall: return TEXT("땅볼");
+		case ECatchBallType::FlyBall:    return TEXT("뜬공");
+		case ECatchBallType::LineDrive:  return TEXT("라인드라이브");
+		default:                         return TEXT("혼합");
+		}
+	}
+}
 
 ACatchBallPawn::ACatchBallPawn()
 {
@@ -45,6 +61,11 @@ ACatchBallPawn::ACatchBallPawn()
 		GloveMesh->SetStaticMesh(Sph.Object);
 		GloveMesh->SetRelativeScale3D(FVector(0.22f)); // 지름 22cm 글러브
 	}
+
+	// VR 상태 패널 — 캡슐 루트에 월드 고정(정면 +X, Y=0, 눈높이쯤). 헤드락 아님.
+	VrPanel = CreateDefaultSubobject<UVRInfoPanel>(TEXT("VrPanel"));
+	VrPanel->SetupAttachment(Capsule);
+	VrPanel->SetPlacement(UVRInfoPanel::DefaultDistanceCm, 70.0f); // 캡슐 중심 기준 눈높이
 }
 
 void ACatchBallPawn::BeginPlay()
@@ -64,6 +85,13 @@ void ACatchBallPawn::BeginPlay()
 	if (GloveMesh)
 	{
 		GloveMesh->SetVisibility(bVR); // 글러브는 VR 에서만 보인다.
+	}
+
+	// 상태 패널은 VR 에서만. PC 는 평면 HUD(ACatchBallHUD)가 담당한다.
+	if (VrPanel)
+	{
+		VrPanel->BuildPanel();
+		if (!bVR) { VrPanel->HideAll(); }
 	}
 
 	StartSession();
@@ -252,9 +280,9 @@ FCatchTrial ACatchBallPawn::BuildTrial(ECatchBallType Type) const
 	float Flight = 1.6f;
 	switch (Trial.ResolvedType)
 	{
-	case ECatchBallType::GroundBall: Flight = 1.2f; Trial.CatchRadius = 160.0f; break; // 낮고 빠름, 관대
-	case ECatchBallType::FlyBall:    Flight = 2.4f; Trial.CatchRadius = 140.0f; break; // 높이 뜨고 김
-	case ECatchBallType::LineDrive:  Flight = 1.0f; Trial.CatchRadius = 110.0f; break; // 빠르고 빡셈
+	case ECatchBallType::GroundBall: Flight = GroundBallFlightSec; Trial.CatchRadius = GroundBallCatchRadius; break; // 낮고 빠름, 그나마 관대
+	case ECatchBallType::FlyBall:    Flight = FlyBallFlightSec;    Trial.CatchRadius = FlyBallCatchRadius;    break; // 높이 뜨고 김
+	case ECatchBallType::LineDrive:  Flight = LineDriveFlightSec;  Trial.CatchRadius = LineDriveCatchRadius;  break; // 빠르고 빡셈
 	default: break;
 	}
 
@@ -299,6 +327,7 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 	if (bVR)
 	{
 		TickVRCatch();
+		RefreshVrPanel();
 	}
 
 	// 다음 공 대기.
@@ -405,3 +434,32 @@ void ACatchBallPawn::SelectGround() { SessionType = ECatchBallType::GroundBall; 
 void ACatchBallPawn::SelectFly()    { SessionType = ECatchBallType::FlyBall; }
 void ACatchBallPawn::SelectLine()   { SessionType = ECatchBallType::LineDrive; }
 void ACatchBallPawn::SelectRandom() { SessionType = ECatchBallType::Mixed; }
+
+void ACatchBallPawn::RefreshVrPanel()
+{
+	if (!VrPanel) { return; }
+
+	// 제목: 진행 + 성공 수.
+	VrPanel->SetTitle(
+		FString::Printf(TEXT("포구  %d / %d 구      성공 %d"),
+			GetPitchNumber(), GetTotalPitches(), GetSuccessCount()),
+		FColor(228, 233, 244));
+
+	// 행0: 이번 세션 타구 유형.
+	VrPanel->SetRow(0, FString::Printf(TEXT("유형: %s"), *CatchTypeName(SessionType)), FColor(150, 200, 255));
+	VrPanel->HideRowsFrom(1);
+
+	// 푸터: 직전 결과(색 포함), 없으면 진행 상태 문구.
+	FString Outcome; FLinearColor OColor;
+	if (GetLastOutcomeText(Outcome, OColor))
+	{
+		VrPanel->SetFooter(Outcome, OColor.ToFColor(true));
+	}
+	else
+	{
+		VrPanel->SetFooter(StatusLine, FColor(150, 156, 168));
+	}
+
+	// 힌트: 조작 안내.
+	VrPanel->SetHint(TEXT("글러브(컨트롤러)로 공을 잡으세요   ·   M: 나가기"), FColor(110, 116, 128));
+}
