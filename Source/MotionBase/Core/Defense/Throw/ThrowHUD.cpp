@@ -59,11 +59,11 @@ void AThrowHUD::DrawHUD()
 	const float PanelY = 28.0f * S;
 	DrawPanel(PanelX, PanelY, PanelW, PanelH, TwPanelBg, TwPanelLine);
 
-	const FString Progress = FString::Printf(TEXT("%d / %d 구"),
+	const FString Progress = FString::Printf(TEXT("%d / %d"),
 		Pawn->GetThrowNumber(), Pawn->GetTotalThrows());
 	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 14.0f * S, TwTextMain, 1.1f * S);
 
-	const FString SuccessStr = FString::Printf(TEXT("성공  %d"), Pawn->GetSuccessCount());
+	const FString SuccessStr = FString::Printf(TEXT("On-target  %d"), Pawn->GetSuccessCount());
 	DrawLabel(SuccessStr, PanelX + PanelW - 140.0f * S, PanelY + 14.0f * S, TwGood, 1.1f * S);
 
 	// ── 하단 파워 게이지 ──
@@ -85,15 +85,15 @@ void AThrowHUD::DrawHUD()
 	// (정답선을 그리려면 Pawn 에 GetIdealPower() 를 추가하면 된다 — 아래 참고)
 
 	// 게이지 라벨
-	DrawCentered(TEXT("Space 를 눌러 파워 충전 → 떼면 송구"),
+	DrawCentered(TEXT("Hold Space to charge power, release to throw"),
 		W * 0.5f, GaugeY - 26.0f * S, TwTextDim, 0.8f * S);
 
-	const FString PowerPct = FString::Printf(TEXT("파워 %d%%"), FMath::RoundToInt(Power * 100.0f));
+	const FString PowerPct = FString::Printf(TEXT("Power %d%%"), FMath::RoundToInt(Power * 100.0f));
 	DrawCentered(PowerPct, W * 0.5f, GaugeY + GaugeH + 6.0f * S,
 		Pawn->IsCharging() ? GaugeFill : TwTextDim, 0.85f * S);
 
 	// ── 조작 안내 ──
-	DrawCentered(TEXT("M 나가기"), W * 0.5f, H - 40.0f * S, TwTextDim, 0.75f * S);
+	DrawCentered(TEXT("M to exit"), W * 0.5f, H - 40.0f * S, TwTextDim, 0.75f * S);
 
 	// ── 판정 결과 (중앙) ──
 	FString ResultLine;

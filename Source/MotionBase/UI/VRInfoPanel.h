@@ -68,7 +68,7 @@ public:
 	 * 뒤로 카드를 행 아래에 배치·표시한다 (선택 메뉴 전용).
 	 * @param RowCount 현재 보이는 행 수 — 그 바로 아래에 놓기 위한 값.
 	 */
-	void SetBackBelowRows(int32 RowCount, const FString& Text, const FColor& Color, bool bVisible);
+	void SetBackBelowRows(int32 RowCount, const FString& Text, const FColor& Color, bool bShow);
 
 	// ── 드웰 겨눔 판정용 접근자 ──
 	UTextRenderComponent* GetRowText(int32 Index) const;

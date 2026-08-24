@@ -21,6 +21,13 @@ void UVRInfoPanel::BuildPanel()
 	if (bBuilt) { return; }
 	bBuilt = true;
 
+	// 생성자(CDO) 시점에 폰트가 없었더라도, 나중에 추가된 KRFont 를 런타임에 다시 찾는다.
+	// (에디터 재시작 없이 폰트를 넣어도 잡히게 — 없으면 null 로 폴백.)
+	if (!PanelFont)
+	{
+		PanelFont = LoadObject<UFont>(nullptr, TEXT("/Game/Fonts/KRFont.KRFont"));
+	}
+
 	SetRelativeLocation(FVector(PendingDistanceCm, 0.0f, PendingHeightCm));
 
 	TitleText = CreateText(TEXT("VrTitle"), 14.0f);
@@ -108,11 +115,11 @@ void UVRInfoPanel::HideRowsFrom(int32 FirstHiddenIndex)
 	}
 }
 
-void UVRInfoPanel::SetBackBelowRows(int32 RowCount, const FString& Text, const FColor& Color, bool bVisible)
+void UVRInfoPanel::SetBackBelowRows(int32 RowCount, const FString& Text, const FColor& Color, bool bShow)
 {
 	if (!BackText) { return; }
-	BackText->SetVisibility(bVisible);
-	if (!bVisible) { return; }
+	BackText->SetVisibility(bShow);
+	if (!bShow) { return; }
 	BackText->SetRelativeLocation(FVector(0.0f, 0.0f, RowTopZ - RowCount * RowStepZ - 14.0f));
 	BackText->SetText(FText::FromString(Text));
 	BackText->SetTextRenderColor(Color);

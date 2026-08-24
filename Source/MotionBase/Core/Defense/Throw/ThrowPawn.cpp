@@ -249,6 +249,18 @@ void AThrowPawn::Tick(float DeltaSeconds)
 	// VR: 컨트롤러 던지기 동작 인식 (파워는 손 속도로).
 	if (bVR)
 	{
+		// 뒤로가기 — 컨트롤러를 위로 들고 유지하면 모드 선택으로 복귀.
+		if (ThrowController)
+		{
+			bool bExit = false;
+			ExitGesture.Update(ThrowController->GetForwardVector(), ThrowController->IsTracked(), DeltaSeconds, bExit);
+			if (bExit)
+			{
+				ReturnToModeSelect();
+				return; // 폰이 곧 교체된다 — 이 프레임 종료.
+			}
+		}
+
 		TickVRThrow(DeltaSeconds);
 	}
 
@@ -307,14 +319,14 @@ void AThrowPawn::RefreshVrPanel()
 
 	// 제목: 진행 + 성공 수.
 	VrPanel->SetTitle(
-		FString::Printf(TEXT("송구  %d / %d 구      성공 %d"),
+		FString::Printf(TEXT("Throw  %d / %d      On-target %d"),
 			GetThrowNumber(), GetTotalThrows(), GetSuccessCount()),
 		FColor(228, 233, 244));
 
 	// 행0: 파워 게이지 (ASCII 바 — 폰트 글리프 걱정 없음).
 	const int32 Cells = 10;
 	const int32 Filled = FMath::Clamp(FMath::RoundToInt(CurrentPower * Cells), 0, Cells);
-	const FString Bar = FString::Printf(TEXT("파워 [%s%s] %3.0f%%"),
+	const FString Bar = FString::Printf(TEXT("Power [%s%s] %3.0f%%"),
 		*FString::ChrN(Filled, TEXT('=')), *FString::ChrN(Cells - Filled, TEXT('.')),
 		CurrentPower * 100.0f);
 	VrPanel->SetRow(0, Bar, bCharging ? FColor(255, 190, 90) : FColor(150, 200, 255));
@@ -328,12 +340,20 @@ void AThrowPawn::RefreshVrPanel()
 	}
 	else
 	{
-		VrPanel->SetFooter(TEXT("정면 타겟으로 자동 조준 — 파워(거리)만 맞추세요"), FColor(150, 156, 168));
+		VrPanel->SetFooter(TEXT("Auto-aimed at the target - just match the power (distance)"), FColor(150, 156, 168));
 	}
 
-	// 힌트: 조작 안내.
-	VrPanel->SetHint(TEXT("컨트롤러를 앞으로 던지면 송구 (손 속도 = 파워)   ·   M: 나가기"),
-		FColor(110, 116, 128));
+	// 힌트: 조작 안내. 컨트롤러를 위로 드는 중이면 나가기 진행바를 보여준다.
+	if (ExitGesture.IsHolding())
+	{
+		VrPanel->SetHint(FString::Printf(TEXT("Raise controller to exit  %s"), *ExitGesture.ProgressBar()),
+			FColor(255, 190, 90));
+	}
+	else
+	{
+		VrPanel->SetHint(TEXT("Fling the controller forward to throw (hand speed = power)   ·   raise controller = exit"),
+			FColor(110, 116, 128));
+	}
 }
 
 void AThrowPawn::TickVRThrow(float DeltaSeconds)
@@ -392,7 +412,7 @@ bool AThrowPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) co
 {
 	if (bSessionOver)
 	{
-		OutText  = FString::Printf(TEXT("훈련 종료!  성공 %d / %d"), SuccessCount, TotalThrows);
+		OutText  = FString::Printf(TEXT("Session over!  On-target %d / %d"), SuccessCount, TotalThrows);
 		OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f);
 		return true;
 	}
@@ -404,11 +424,11 @@ bool AThrowPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) co
 	switch (LastResult.Outcome)
 	{
 	case EThrowOutcome::Ontarget:
-		OutText = TEXT("명중!");            OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
+		OutText = TEXT("On target!");        OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
 	case EThrowOutcome::Short:
-		OutText = TEXT("짧음 — 더 세게");   OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
+		OutText = TEXT("Short - throw harder"); OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
 	case EThrowOutcome::Over:
-		OutText = TEXT("넘김 — 살살");      OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
+		OutText = TEXT("Long - ease up");    OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
 	default:
 		return false;
 	}

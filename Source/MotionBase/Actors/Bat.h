@@ -81,6 +81,9 @@ public:
 	/** BatTip 현재 월드 위치 (cm). 트래킹이 죽어 있으면 값이 고정된다. */
 	FVector GetBatTipWorldLocation() const;
 
+	/** 컨트롤러(손) 조준 방향 (월드 +X). VR '위로 들어 나가기' 제스처 판정용. */
+	FVector GetAimForwardVector() const;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

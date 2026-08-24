@@ -7,6 +7,7 @@
 #include "Data/ScoreResult.h"
 #include "Data/BattedBall.h"
 #include "Scoring/ScoringService.h"
+#include "UI/VRExitGesture.h"
 #include "VRBattingPawn.generated.h"
 
 class UCameraComponent;
@@ -135,4 +136,7 @@ private:
 	int32 HitCount = 0;
 	int32 MissedPitchCount = 0;
 	bool bHasResult = false;
+
+	/** VR '배트 위로 들어 나가기' 제스처 상태 (헤드셋만으로 모드 선택 복귀). */
+	FVRExitGesture ExitGesture;
 };

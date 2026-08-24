@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "Core/Defense/CatchBall/CatchBallTypes.h"
+#include "UI/VRExitGesture.h"
 #include "CatchBallPawn.generated.h"
 
 class UCameraComponent;
@@ -195,4 +196,7 @@ private:
 
 	/** VR 상태 패널 내용 갱신 (bVR 일 때 매 틱). */
 	void RefreshVrPanel();
+
+	/** VR '글러브 위로 들어 나가기' 제스처 상태 (헤드셋만으로 모드 선택 복귀). */
+	FVRExitGesture ExitGesture;
 };

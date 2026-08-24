@@ -55,12 +55,12 @@ void ACoverHUD::DrawHUD()
 	const float PanelY = 28.0f * S;
 	DrawPanel(PanelX, PanelY, PanelW, PanelH, CvPanelBg, CvPanelLine);
 
-	const FString Progress = FString::Printf(TEXT("%d / %d 문제      성공 %d"),
+	const FString Progress = FString::Printf(TEXT("Q %d / %d      Correct %d"),
 		Pawn->GetTrialNumber(), Pawn->GetTotalTrials(), Pawn->GetSuccessCount());
 	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 12.0f * S, CvTextDim, 0.85f * S);
 
 	DrawCentered(Pawn->GetSituationText(), W * 0.5f, PanelY + 42.0f * S, CvTextMain, 1.15f * S);
-	const FString RoleLine = FString::Printf(TEXT("당신은 [%s] — 어디를 백업?"), *Pawn->GetRoleText());
+	const FString RoleLine = FString::Printf(TEXT("You: [%s]  -  which base to back up?"), *Pawn->GetRoleText());
 	DrawCentered(RoleLine, W * 0.5f, PanelY + 78.0f * S, CvGood, 1.0f * S);
 
 	// ── 보기 4개 ──
@@ -86,7 +86,7 @@ void ACoverHUD::DrawHUD()
 		FString Line = FString::Printf(TEXT("%s %d. %s"),
 			(!bAnswered && i == Sel) ? TEXT("▶") : TEXT("   "),
 			i + 1, *Pawn->GetOptionText(i));
-		if (bAnswered && i == Correct) { Line += TEXT("   (정답)"); }
+		if (bAnswered && i == Correct) { Line += TEXT("   (correct)"); }
 		DrawCentered(Line, W * 0.5f, OptY0 + i * OptStep, Col, 1.2f * S);
 	}
 
@@ -104,6 +104,6 @@ void ACoverHUD::DrawHUD()
 	}
 
 	// ── 조작 안내 ──
-	DrawCentered(TEXT("숫자키 1~4 선택 (VR: 컨트롤러로 겨누고 유지)    ·    M 나가기"),
+	DrawCentered(TEXT("Press 1-4 to answer (VR: aim & hold)    -    M to exit"),
 		W * 0.5f, H - 40.0f * S, CvTextDim, 0.78f * S);
 }

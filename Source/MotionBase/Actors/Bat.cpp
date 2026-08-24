@@ -134,6 +134,11 @@ FVector ABat::GetBatTipWorldLocation() const
 	return BatTip ? BatTip->GetComponentLocation() : FVector::ZeroVector;
 }
 
+FVector ABat::GetAimForwardVector() const
+{
+	return MotionController ? MotionController->GetForwardVector() : FVector::ForwardVector;
+}
+
 void ABat::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);

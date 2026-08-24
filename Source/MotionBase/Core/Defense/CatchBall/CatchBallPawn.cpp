@@ -26,10 +26,10 @@ namespace
 	{
 		switch (Type)
 		{
-		case ECatchBallType::GroundBall: return TEXT("땅볼");
-		case ECatchBallType::FlyBall:    return TEXT("뜬공");
-		case ECatchBallType::LineDrive:  return TEXT("라인드라이브");
-		default:                         return TEXT("혼합");
+		case ECatchBallType::GroundBall: return TEXT("Grounder");
+		case ECatchBallType::FlyBall:    return TEXT("Fly ball");
+		case ECatchBallType::LineDrive:  return TEXT("Line drive");
+		default:                         return TEXT("Mixed");
 		}
 	}
 }
@@ -174,7 +174,7 @@ void ACatchBallPawn::SpawnNextPitch()
 		ActiveBall->Launch(CurrentTrial.LaunchVelocity);
 		bPitchActive = true;
 
-		StatusLine = FString::Printf(TEXT("%d / %d 구 — 잡을 준비!"), PitchIndex + 1, TotalPitches);
+		StatusLine = FString::Printf(TEXT("%d / %d   Get ready!"), PitchIndex + 1, TotalPitches);
 	}
 }
 
@@ -216,11 +216,11 @@ void ACatchBallPawn::FinishPitch(const FCatchResult& Result)
 	FString OutcomeText;
 	switch (Result.Outcome)
 	{
-	case ECatchOutcome::Success: OutcomeText = TEXT("포구 성공!"); break;
-	case ECatchOutcome::Miss:    OutcomeText = TEXT("헛손질"); break;
-	default:                     OutcomeText = TEXT("놓침"); break;
+	case ECatchOutcome::Success: OutcomeText = TEXT("Caught!"); break;
+	case ECatchOutcome::Miss:    OutcomeText = TEXT("Whiff"); break;
+	default:                     OutcomeText = TEXT("Dropped"); break;
 	}
-	StatusLine = FString::Printf(TEXT("%s  (거리 %.0fcm, 타이밍 %+.2fs)"),
+	StatusLine = FString::Printf(TEXT("%s  (dist %.0fcm, timing %+.2fs)"),
 		*OutcomeText, Result.DistanceError, Result.TimingError);
 
 	++PitchIndex;
@@ -240,7 +240,7 @@ void ACatchBallPawn::FinishPitch(const FCatchResult& Result)
 void ACatchBallPawn::EndSession()
 {
 	bSessionOver = true;
-	StatusLine = FString::Printf(TEXT("훈련 종료!  성공 %d / %d    (M: 모드 선택으로)"),
+	StatusLine = FString::Printf(TEXT("Session over!  Caught %d / %d    (M: back to menu)"),
 		SuccessCount, TotalPitches);
 }
 
@@ -326,6 +326,18 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 	// VR: 글러브(컨트롤러)를 공에 가져가면 자동 포구.
 	if (bVR)
 	{
+		// 뒤로가기 — 글러브(컨트롤러)를 위로 들고 유지하면 모드 선택으로 복귀.
+		if (GloveController)
+		{
+			bool bExit = false;
+			ExitGesture.Update(GloveController->GetForwardVector(), GloveController->IsTracked(), DeltaSeconds, bExit);
+			if (bExit)
+			{
+				ReturnToModeSelect();
+				return; // 폰이 곧 교체된다 — 이 프레임 종료.
+			}
+		}
+
 		TickVRCatch();
 		RefreshVrPanel();
 	}
@@ -412,7 +424,7 @@ bool ACatchBallPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor
 
 	if (bSessionOver)
 	{
-		OutText  = FString::Printf(TEXT("훈련 종료!  성공 %d / %d"), SuccessCount, TotalPitches);
+		OutText  = FString::Printf(TEXT("Session over!  Caught %d / %d"), SuccessCount, TotalPitches);
 		OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f);
 		return true;
 	}
@@ -420,11 +432,11 @@ bool ACatchBallPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor
 	switch (LastResult.Outcome)
 	{
 	case ECatchOutcome::Success:
-		OutText = TEXT("포구 성공!");  OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
+		OutText = TEXT("Caught!");   OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
 	case ECatchOutcome::Miss:
-		OutText = TEXT("헛손질");      OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
+		OutText = TEXT("Whiff");     OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
 	case ECatchOutcome::Dropped:
-		OutText = TEXT("놓침");        OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
+		OutText = TEXT("Dropped");   OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
 	default:
 		return false;
 	}
@@ -441,12 +453,12 @@ void ACatchBallPawn::RefreshVrPanel()
 
 	// 제목: 진행 + 성공 수.
 	VrPanel->SetTitle(
-		FString::Printf(TEXT("포구  %d / %d 구      성공 %d"),
+		FString::Printf(TEXT("Catch  %d / %d      Caught %d"),
 			GetPitchNumber(), GetTotalPitches(), GetSuccessCount()),
 		FColor(228, 233, 244));
 
 	// 행0: 이번 세션 타구 유형.
-	VrPanel->SetRow(0, FString::Printf(TEXT("유형: %s"), *CatchTypeName(SessionType)), FColor(150, 200, 255));
+	VrPanel->SetRow(0, FString::Printf(TEXT("Type: %s"), *CatchTypeName(SessionType)), FColor(150, 200, 255));
 	VrPanel->HideRowsFrom(1);
 
 	// 푸터: 직전 결과(색 포함), 없으면 진행 상태 문구.
@@ -460,6 +472,15 @@ void ACatchBallPawn::RefreshVrPanel()
 		VrPanel->SetFooter(StatusLine, FColor(150, 156, 168));
 	}
 
-	// 힌트: 조작 안내.
-	VrPanel->SetHint(TEXT("글러브(컨트롤러)로 공을 잡으세요   ·   M: 나가기"), FColor(110, 116, 128));
+	// 힌트: 조작 안내. 글러브를 위로 드는 중이면 나가기 진행바를 보여준다.
+	if (ExitGesture.IsHolding())
+	{
+		VrPanel->SetHint(FString::Printf(TEXT("Raise glove to exit  %s"), *ExitGesture.ProgressBar()),
+			FColor(255, 190, 90));
+	}
+	else
+	{
+		VrPanel->SetHint(TEXT("Catch the ball with your glove (controller)   ·   raise glove = exit"),
+			FColor(110, 116, 128));
+	}
 }

@@ -19,10 +19,10 @@ namespace
 	{
 		switch (T)
 		{
-		case ECatchBallType::GroundBall: return TEXT("땅볼");
-		case ECatchBallType::FlyBall:    return TEXT("뜬공");
-		case ECatchBallType::LineDrive:  return TEXT("라인드라이브");
-		default:                         return TEXT("랜덤");
+		case ECatchBallType::GroundBall: return TEXT("Grounder");
+		case ECatchBallType::FlyBall:    return TEXT("Fly ball");
+		case ECatchBallType::LineDrive:  return TEXT("Line drive");
+		default:                         return TEXT("Random");
 		}
 	}
 }
@@ -76,11 +76,11 @@ void ACatchBallHUD::DrawHUD()
 	DrawPanel(PanelX, PanelY, PanelW, PanelH, PanelBg, PanelLine);
 
 	// 진행/성공 (패널 상단 줄)
-	const FString Progress = FString::Printf(TEXT("%d / %d 구"),
+	const FString Progress = FString::Printf(TEXT("%d / %d"),
 		Pawn->GetPitchNumber(), Pawn->GetTotalPitches());
 	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 16.0f * S, TextMain, 1.1f * S);
 
-	const FString SuccessStr = FString::Printf(TEXT("성공  %d"), Pawn->GetSuccessCount());
+	const FString SuccessStr = FString::Printf(TEXT("Caught  %d"), Pawn->GetSuccessCount());
 	DrawLabel(SuccessStr, PanelX + PanelW - 150.0f * S, PanelY + 16.0f * S, Good, 1.1f * S);
 
 	// ── 유형 선택 칩 4개 (패널 하단 줄) ──
@@ -112,7 +112,7 @@ void ACatchBallHUD::DrawHUD()
 	}
 
 	// ── 하단 조작 안내 ──
-	DrawCentered(TEXT("WASD 이동    Space 포구    1~4 유형 선택    M 나가기"),
+	DrawCentered(TEXT("WASD move   Space catch   1-4 type   M exit"),
 		W * 0.5f, PanelY + PanelH + 12.0f * S, TextDim, 0.8f * S);
 
 	// ── 마지막 판정 결과 (있으면 중앙에 크게) ──

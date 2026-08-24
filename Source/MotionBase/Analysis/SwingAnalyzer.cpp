@@ -1,6 +1,21 @@
 #include "Analysis/SwingAnalyzer.h"
 #include "MotionBase.h"
 
+namespace
+{
+	// 공까지의 거리(cm): 배트 끝 '한 점'이 아니라 **배럴 선분**과의 최단 거리로 잰다.
+	// 배트 끝(BatTip)만 검사하면 스위트스팟(배럴 중앙)으로 맞혀도 끝점이 공에서 멀어
+	// 빗나감 처리되던 문제를 없앤다 — 배럴 어디로 맞혀도 컨택이 잡힌다.
+	float BarrelToBallDistCm(const FSwingSample& S, const FVector& Ball, float BarrelLenCm)
+	{
+		const FVector Forward  = S.TipRotation.Vector();                 // 손→배트끝(+X) 방향
+		const FVector SegEnd   = S.TipLocation;                          // 배트 끝
+		const FVector SegStart = S.TipLocation - Forward * BarrelLenCm;  // 배럴 시작 쪽(손 방향)
+		const FVector Closest  = FMath::ClosestPointOnSegment(Ball, SegStart, SegEnd);
+		return static_cast<float>(FVector::Dist(Closest, Ball));
+	}
+}
+
 float USwingAnalyzer::ComputeSpeedMps(const FSwingSample& A, const FSwingSample& B)
 {
 	const double Dt = B.TimeSeconds - A.TimeSeconds;
@@ -59,10 +74,12 @@ FSwingMetrics USwingAnalyzer::AnalyzeSwing(
 		Out.PeakSpeedMps = ReportedPeakCmps / 100.0f;
 	}
 
-	// TODO(캘리브레이션): 아래 세 상수는 실측 스위트스팟/스윙 특성으로 조정 (하드코딩 금지).
-	constexpr float ContactRadiusCm     = 15.0f;   // 유효 컨택 반경
-	constexpr float MinSwingSpeedMps     = 8.0f;   // 이 속도 미만은 '스윙 아님'(정지·미세이동)
-	constexpr float ContactTimeWindowSec = 0.15f;  // 공이 플레이트에 있는 순간 부근만 컨택 가능
+	// TODO(캘리브레이션): 아래 상수는 실측 스위트스팟/스윙 특성으로 조정 (하드코딩 금지).
+	constexpr float ContactRadiusCm      = 20.0f;  // 유효 컨택 반경 (배럴 선분과의 수직 거리 기준)
+	constexpr float MinSwingSpeedMps     = 2.5f;   // 이 속도 미만은 '스윙 아님'(완전 정지·트래킹 노이즈)
+	constexpr float ContactTimeWindowSec = 0.22f;  // 공이 플레이트에 있는 순간 부근만 컨택 가능
+	// 배트 끝(BatTip = 손에서 +X 80cm)에서 손 쪽으로 이만큼을 유효 타격면(배럴 ≈46~84cm)으로 본다.
+	constexpr float BarrelLengthCm       = 34.0f;
 
 	// 2) 컨택 후보 탐색.
 	//    공에 가장 가까운 표본을 찾되, **두 관문**을 통과한 표본만 본다:
@@ -77,7 +94,7 @@ FSwingMetrics USwingAnalyzer::AnalyzeSwing(
 
 	for (int32 i = 0; i < Samples.Num(); ++i)
 	{
-		const float D = static_cast<float>(FVector::Dist(Samples[i].TipLocation, BallLocation));
+		const float D = BarrelToBallDistCm(Samples[i], BallLocation, BarrelLengthCm);
 		OverallMinCm = FMath::Min(OverallMinCm, D);
 
 		// (a) 시간 창

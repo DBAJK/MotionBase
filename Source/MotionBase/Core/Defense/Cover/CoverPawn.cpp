@@ -96,25 +96,25 @@ void ACoverPawn::BuildQuizPool()
 		FBackupQuiz Q;
 		Q.Situation = Sit;
 		Q.Role = InRole;
-		Q.Options = { TEXT("1루"), TEXT("2루"), TEXT("3루"), TEXT("홈") };
+		Q.Options = { TEXT("1B"), TEXT("2B"), TEXT("3B"), TEXT("Home") };
 		Q.Correct = Correct;
 		Q.Explain = Explain;
 		QuizPool.Add(Q);
 	};
 
-	// Correct: 0=1루, 1=2루, 2=3루, 3=홈. (야구 백업/커버 정석)
-	Add(TEXT("무사 주자 없음 · 내야 땅볼, 1루로 송구"), TEXT("포수"), 0,
-		TEXT("주자 없는 내야 땅볼의 1루 송구는 포수가 1루 뒤를 백업한다."));
-	Add(TEXT("우익수 앞 안타 · 주자 3루까지, 3루로 송구"), TEXT("투수"), 2,
-		TEXT("외야에서 3루로 오는 송구는 투수가 3루 뒤를 백업한다."));
-	Add(TEXT("중견수 뒤 장타 · 주자 홈 쇄도, 홈으로 송구"), TEXT("투수"), 3,
-		TEXT("외야에서 홈으로 오는 송구는 투수가 홈(포수) 뒤를 백업한다."));
-	Add(TEXT("기습 번트 · 1루수가 앞으로 나와 처리"), TEXT("2루수"), 0,
-		TEXT("1루수가 타구 처리로 베이스를 비우면 2루수가 1루를 커버한다."));
-	Add(TEXT("번트 · 3루수가 앞으로 나와 처리"), TEXT("유격수"), 2,
-		TEXT("3루수가 타구 처리로 비운 3루를 유격수가 커버한다."));
-	Add(TEXT("1루 주자 도루 · 포수가 2루로 송구"), TEXT("중견수"), 1,
-		TEXT("2루로 오는 송구는 중견수가 2루 뒤를 백업한다(악송구 대비)."));
+	// Correct: 0=1B, 1=2B, 2=3B, 3=Home. (standard baseball backup/cover rules)
+	Add(TEXT("No outs, bases empty - grounder to infield, throw to 1B"), TEXT("Catcher"), 0,
+		TEXT("With no runners on, the catcher backs up the throw to first base."));
+	Add(TEXT("Single to RF - runner heading to 3B, throw to 3B"), TEXT("Pitcher"), 2,
+		TEXT("On a throw from the outfield to third, the pitcher backs up 3B."));
+	Add(TEXT("Extra-base hit to CF - runner scoring, throw home"), TEXT("Pitcher"), 3,
+		TEXT("On a throw from the outfield to home, the pitcher backs up the plate."));
+	Add(TEXT("Surprise bunt - 1B charges in to field it"), TEXT("2nd baseman"), 0,
+		TEXT("When the first baseman fields the bunt, the second baseman covers first."));
+	Add(TEXT("Bunt - 3B charges in to field it"), TEXT("Shortstop"), 2,
+		TEXT("When the third baseman fields the bunt, the shortstop covers third."));
+	Add(TEXT("Runner steals - catcher throws to 2B"), TEXT("Center fielder"), 1,
+		TEXT("On a throw to second, the center fielder backs up the bag."));
 }
 
 // ── 세션 ──
@@ -231,6 +231,18 @@ void ACoverPawn::Tick(float DeltaSeconds)
 
 	if (bVR)
 	{
+		// 뒤로가기 — 컨트롤러를 위로 들고 유지하면 모드 선택으로 복귀.
+		if (PointerController)
+		{
+			bool bExit = false;
+			ExitGesture.Update(PointerController->GetForwardVector(), PointerController->IsTracked(), DeltaSeconds, bExit);
+			if (bExit)
+			{
+				ReturnToModeSelect();
+				return; // 폰이 곧 교체된다 — 이 프레임 종료.
+			}
+		}
+
 		UpdateVRMenu(DeltaSeconds);
 	}
 
@@ -327,10 +339,10 @@ void ACoverPawn::RefreshVRTexts()
 {
 	if (!bVR || !VrPanel) { return; }
 
-	// 제목 = 상황·역할 (또는 종료 집계).
+	// 제목 = 상황·역할 (또는 종료 집계). 3D 텍스트는 영어로 표기.
 	const FString Head = bSessionOver
-		? FString::Printf(TEXT("훈련 종료   성공 %d / %d"), SuccessCount, TotalTrials)
-		: FString::Printf(TEXT("[%s]  당신은 %s — 어디를 백업?"),
+		? FString::Printf(TEXT("Session over   %d / %d correct"), SuccessCount, TotalTrials)
+		: FString::Printf(TEXT("[%s]   You: %s  -  which base to back up?"),
 			*CurrentQuiz.Situation, *CurrentQuiz.Role);
 	VrPanel->SetTitle(Head, FColor(228, 233, 244));
 
@@ -352,8 +364,8 @@ void ACoverPawn::RefreshVRTexts()
 			if (bAnswered)
 			{
 				// 정답=초록, 내가 고른 오답=빨강.
-				if (i == CurrentQuiz.Correct) { Color = FColor(90, 220, 110); Label += TEXT("  (정답)"); }
-				else if (i == ChosenIndex)    { Color = FColor(230, 90, 90);  Label += TEXT("  (내 선택)"); }
+				if (i == CurrentQuiz.Correct) { Color = FColor(90, 220, 110); Label += TEXT("  (correct)"); }
+				else if (i == ChosenIndex)    { Color = FColor(230, 90, 90);  Label += TEXT("  (your pick)"); }
 				else                          { Color = FColor(120, 124, 134); }
 			}
 			else if (VrHoverIndex == i)
@@ -370,20 +382,31 @@ void ACoverPawn::RefreshVRTexts()
 		VrPanel->HideRowsFrom(N);
 	}
 
-	// 결과·해설·힌트 → 푸터.
+	// 결과·해설·힌트 → 푸터 (영어).
 	if (bSessionOver)
 	{
-		VrPanel->SetFooter(TEXT("M: 모드 선택으로"), FColor(150, 156, 168));
+		VrPanel->SetFooter(TEXT("Raise the controller up to return to menu"), FColor(150, 156, 168));
 	}
 	else if (bAnswered)
 	{
 		const bool bCorrect = (LastResult.Outcome == ECoverOutcome::Covered);
-		VrPanel->SetFooter((bCorrect ? TEXT("정답!  ") : TEXT("오답  ")) + CurrentQuiz.Explain,
+		VrPanel->SetFooter((bCorrect ? TEXT("Correct!  ") : TEXT("Wrong.  ")) + CurrentQuiz.Explain,
 			bCorrect ? FColor(90, 220, 110) : FColor(230, 130, 90));
 	}
 	else
 	{
-		VrPanel->SetFooter(TEXT("컨트롤러로 보기를 겨누고 잠시 유지"), FColor(150, 156, 168));
+		VrPanel->SetFooter(TEXT("Aim an option with the controller and hold to pick"), FColor(150, 156, 168));
+	}
+
+	// 힌트: 뒤로가기 안내 (컨트롤러를 위로 드는 중이면 진행바).
+	if (ExitGesture.IsHolding())
+	{
+		VrPanel->SetHint(FString::Printf(TEXT("Raise controller to exit  %s"), *ExitGesture.ProgressBar()),
+			FColor(255, 190, 90));
+	}
+	else
+	{
+		VrPanel->SetHint(TEXT("Raise the controller up to exit to menu"), FColor(110, 116, 128));
 	}
 }
 
@@ -398,7 +421,7 @@ bool ACoverPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) co
 {
 	if (bSessionOver)
 	{
-		OutText  = FString::Printf(TEXT("훈련 종료!  성공 %d / %d"), SuccessCount, TotalTrials);
+		OutText  = FString::Printf(TEXT("Session over!  %d / %d correct"), SuccessCount, TotalTrials);
 		OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f);
 		return true;
 	}
@@ -410,9 +433,9 @@ bool ACoverPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) co
 	switch (LastResult.Outcome)
 	{
 	case ECoverOutcome::Covered:
-		OutText = TEXT("정답!");   OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
+		OutText = TEXT("Correct!");  OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
 	case ECoverOutcome::WrongBase:
-		OutText = TEXT("오답");    OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
+		OutText = TEXT("Wrong");     OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
 	default:
 		return false;
 	}

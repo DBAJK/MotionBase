@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "Core/Defense/Cover/CoverTypes.h"
+#include "UI/VRExitGesture.h"
 #include "CoverPawn.generated.h"
 
 class UCameraComponent;
@@ -137,4 +138,7 @@ private:
 	int32 VrHoverIndex = INDEX_NONE;
 	float VrDwellTimer = 0.0f;
 	float VrCooldown = 0.0f;
+
+	/** VR '컨트롤러 위로 들어 나가기' 제스처 상태 (헤드셋만으로 모드 선택 복귀). */
+	FVRExitGesture ExitGesture;
 };

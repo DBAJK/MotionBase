@@ -186,7 +186,7 @@ void AVRBattingPawn::AnalyzeSwingNow()
 	{
 		// 스윙 동작이 감지되지 않음/헛스윙.
 		++MissedPitchCount;
-		LastCall = TEXT("지켜봄 (스윙 없음)");
+		LastCall = TEXT("No swing");
 		ShowResultText(TEXT("MISS"), FLinearColor(0.7f, 0.7f, 0.75f));
 		return;
 	}
@@ -201,15 +201,13 @@ void AVRBattingPawn::AnalyzeSwingNow()
 	if (LastHit.Class == EHitClass::HomeRun) { ++HomeRunCount; }
 	else if (LastHit.Class == EHitClass::Hit) { ++HitCount; }
 
-	LastCall = UHitModel::GetClassDisplayName(LastHit.Class).ToString();
-
-	// 헤드셋 안 3D 결과 표시 (영문/기호 — 폰트 의존 없음).
+	// 헤드셋 안 3D 결과 표시 + 푸터용 라벨 (영문 — 폰트 의존 없음).
 	switch (LastHit.Class)
 	{
-	case EHitClass::HomeRun: ShowResultText(TEXT("HOME RUN!"), FLinearColor(1.0f, 0.85f, 0.15f)); break;
-	case EHitClass::Hit:     ShowResultText(TEXT("HIT!"),      FLinearColor(0.35f, 0.9f, 0.4f));  break;
-	case EHitClass::Foul:    ShowResultText(TEXT("FOUL"),      FLinearColor(0.75f, 0.75f, 0.8f)); break;
-	default:                 ShowResultText(TEXT("OUT"),       FLinearColor(1.0f, 0.55f, 0.2f));  break;
+	case EHitClass::HomeRun: LastCall = TEXT("Home run"); ShowResultText(TEXT("HOME RUN!"), FLinearColor(1.0f, 0.85f, 0.15f)); break;
+	case EHitClass::Hit:     LastCall = TEXT("Hit");      ShowResultText(TEXT("HIT!"),      FLinearColor(0.35f, 0.9f, 0.4f));  break;
+	case EHitClass::Foul:    LastCall = TEXT("Foul");     ShowResultText(TEXT("FOUL"),      FLinearColor(0.75f, 0.75f, 0.8f)); break;
+	default:                 LastCall = TEXT("Out");      ShowResultText(TEXT("OUT"),       FLinearColor(1.0f, 0.55f, 0.2f));  break;
 	}
 
 	// 타구 연출 — 좌타는 당겨치는 좌우각을 반전.
@@ -285,6 +283,18 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 		}
 	}
 
+	// VR 뒤로가기 — 배트를 위(천장)로 들고 유지하면 모드 선택으로 복귀.
+	if (Bat)
+	{
+		bool bExit = false;
+		ExitGesture.Update(Bat->GetAimForwardVector(), Bat->IsTracking(), DeltaSeconds, bExit);
+		if (bExit)
+		{
+			ReturnToModeSelect();
+			return; // 폰이 곧 교체된다 — 이 프레임 종료.
+		}
+	}
+
 	// 상태·세션 정보는 월드 고정 3D 패널로 (헤드셋 안에서 보이게).
 	RefreshVrPanel();
 }
@@ -298,11 +308,21 @@ void AVRBattingPawn::RefreshVrPanel()
 
 	const bool bTracking = Bat && Bat->IsTracking();
 
-	// 제목: 모드·난이도·타석. 추적 끊기면 붉게.
+	// 3D 텍스트는 한글 폰트가 없어 영어로 표기.
+	auto DiffEn = [](EDifficultyLevel D) -> const TCHAR*
+	{
+		switch (D)
+		{
+		case EDifficultyLevel::Beginner: return TEXT("Beginner");
+		case EDifficultyLevel::Pro:      return TEXT("Pro");
+		default:                         return TEXT("Amateur");
+		}
+	};
+	const TCHAR* StanceEn = (SessionStance == EBattingStance::Left) ? TEXT("Lefty") : TEXT("Righty");
+
+	// 제목: 난이도·타석. 추적 끊기면 붉게.
 	VrPanel->SetTitle(
-		FString::Printf(TEXT("VR 타격   [%s · %s]"),
-			*UModeManager::GetDifficultyDisplayName(SessionDifficulty).ToString(),
-			*UModeManager::GetStanceDisplayName(SessionStance).ToString()),
+		FString::Printf(TEXT("VR Batting   [%s / %s]"), DiffEn(SessionDifficulty), StanceEn),
 		bTracking ? FColor(228, 233, 244) : FColor(235, 90, 90));
 
 	int32 Row = 0;
@@ -310,13 +330,13 @@ void AVRBattingPawn::RefreshVrPanel()
 	// 추적 경고 / 동적 난이도.
 	if (!bTracking)
 	{
-		VrPanel->SetRow(Row++, TEXT("⚠ 컨트롤러 추적 안됨 — SteamVR·베이스 스테이션 확인"),
+		VrPanel->SetRow(Row++, TEXT("! Controller not tracked - check SteamVR / base stations"),
 			FColor(235, 90, 90));
 	}
 	else if (PitchingZone)
 	{
 		VrPanel->SetRow(Row++,
-			FString::Printf(TEXT("동적 난이도 %.0f%%  (잘 치면 상승 · 놓치면 하강)"),
+			FString::Printf(TEXT("Dynamic difficulty %.0f%%  (up on good hits, down on misses)"),
 				PitchingZone->GetDynamicLevel() * 100.0f),
 			FColor(255, 180, 90));
 	}
@@ -326,8 +346,8 @@ void AVRBattingPawn::RefreshVrPanel()
 	{
 		const float Remain = PitchingZone->GetArrivalWorldTime() - (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
 		VrPanel->SetRow(Row++,
-			FString::Printf(TEXT("%s 투구 중 — 도달까지 %.2f초"),
-				CurrentPitchType == EPitchType::Breaking ? TEXT("변화구") : TEXT("직구"),
+			FString::Printf(TEXT("%s incoming - %.2fs to plate"),
+				CurrentPitchType == EPitchType::Breaking ? TEXT("Breaking ball") : TEXT("Fastball"),
 				FMath::Max(0.0f, Remain)),
 			FColor(240, 220, 90));
 	}
@@ -337,23 +357,32 @@ void AVRBattingPawn::RefreshVrPanel()
 	if (bHasResult)
 	{
 		VrPanel->SetFooter(
-			FString::Printf(TEXT("최근: %s | 배트 %.1f m/s | 타구 %.1f m/s · %.0f m | 총점 %.1f"),
+			FString::Printf(TEXT("Last: %s | bat %.1f m/s | ball %.1f m/s / %.0f m | score %.1f"),
 				*LastCall, LastMetrics.ContactSpeedMps, LastHit.ExitVelocityMps, LastHit.CarryDistanceM,
 				LastSwingScore.TotalScore),
 			FColor(120, 220, 130));
 	}
 	else if (!LastCall.IsEmpty())
 	{
-		VrPanel->SetFooter(FString::Printf(TEXT("최근: %s"), *LastCall), FColor(180, 184, 192));
+		VrPanel->SetFooter(FString::Printf(TEXT("Last: %s"), *LastCall), FColor(180, 184, 192));
 	}
 	else
 	{
-		VrPanel->SetFooter(TEXT("공을 지켜보다 타이밍에 맞춰 스윙하세요"), FColor(150, 156, 168));
+		VrPanel->SetFooter(TEXT("Watch the ball and swing on time"), FColor(150, 156, 168));
 	}
 
-	// 힌트: 세션 집계 + 조작.
-	VrPanel->SetHint(
-		FString::Printf(TEXT("세션 스윙 %d · 홈런 %d · 안타 %d · 지켜봄 %d | 평균 %.1f    ·    [M] 나가기  [R] 리셋"),
-			SwingCount, HomeRunCount, HitCount, MissedPitchCount, SessionScore.TotalScore),
-		FColor(110, 116, 128));
+	// 힌트: 세션 집계 + 조작. 배트를 위로 드는 중이면 나가기 진행바를 크게 보여준다.
+	if (ExitGesture.IsHolding())
+	{
+		VrPanel->SetHint(
+			FString::Printf(TEXT("Raise bat to exit  %s"), *ExitGesture.ProgressBar()),
+			FColor(255, 190, 90));
+	}
+	else
+	{
+		VrPanel->SetHint(
+			FString::Printf(TEXT("Session: swings %d · HR %d · hits %d · takes %d | avg %.1f    ·    raise bat = exit   [M/R] exit/reset"),
+				SwingCount, HomeRunCount, HitCount, MissedPitchCount, SessionScore.TotalScore),
+			FColor(110, 116, 128));
+	}
 }

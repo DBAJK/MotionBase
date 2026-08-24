@@ -33,6 +33,41 @@ namespace
 		const FLinearColor B(0.40f, 0.86f, 0.47f);
 		return FLinearColor::LerpUsingHSV(A, B, Progress).ToFColor(true);
 	}
+
+	// ── VR 3D 텍스트용 영어 라벨 (TextRender 는 한글 폰트가 없어 깨지므로 영어로 표기) ──
+	FString MsEnMode(EGameModeId M)
+	{
+		switch (M)
+		{
+		case EGameModeId::Batting: return TEXT("Batting");
+		case EGameModeId::Defense: return TEXT("Defense");
+		default:                   return TEXT("Mode");
+		}
+	}
+	FString MsEnDifficulty(EDifficultyLevel D)
+	{
+		switch (D)
+		{
+		case EDifficultyLevel::Beginner: return TEXT("Beginner");
+		case EDifficultyLevel::Amateur:  return TEXT("Amateur");
+		case EDifficultyLevel::Pro:      return TEXT("Pro");
+		default:                         return TEXT("Difficulty");
+		}
+	}
+	FString MsEnStance(EBattingStance S)
+	{
+		return (S == EBattingStance::Left) ? TEXT("Left (LHH)") : TEXT("Right (RHH)");
+	}
+	FString MsEnDrill(int32 Index)
+	{
+		switch (Index)
+		{
+		case 0:  return TEXT("Catch");
+		case 1:  return TEXT("Throw");
+		case 2:  return TEXT("Backup");
+		default: return TEXT("Drill");
+		}
+	}
 }
 
 AModeSelectPawn::AModeSelectPawn()
@@ -518,7 +553,22 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 {
 	if (!bVRMenu || !VrPanel) { return; }
 
-	VrPanel->SetTitle(GetHeaderSubtitle().ToString(), FColor(228, 233, 244));
+	// 제목 (단계별, 영어 — 3D 텍스트는 한글 폰트가 없어 영어로 표기).
+	FString Header;
+	switch (Stage)
+	{
+	case EStage::Mode:
+		Header = TEXT("SporTrack : Baseball    -    Select a mode"); break;
+	case EStage::Difficulty:
+		Header = MsEnMode(PendingMode) + TEXT("    -    Select difficulty"); break;
+	case EStage::Stance:
+		Header = MsEnMode(PendingMode) + TEXT(" / ") + MsEnDifficulty(PendingDifficulty)
+			+ TEXT("    -    Select batter box"); break;
+	case EStage::DefenseDrill:
+		Header = TEXT("Defense    -    Select a drill"); break;
+	default: break;
+	}
+	VrPanel->SetTitle(Header, FColor(228, 233, 244));
 
 	const int32 RowCount = GetRowCount();
 	const float Progress = (DwellTimeSec > 0.0f)
@@ -529,19 +579,27 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 		const bool bAvail   = IsRowAvailable(i);
 		const bool bHovered = (VrHoverIndex == i);
 
-		FString Label = GetRowLabel(i).ToString();
-		if (!bAvail)   { Label += TEXT("  (준비 중)"); }
-		if (bHovered)  { Label += MsDwellBar(Progress); }
+		FString Label;
+		switch (Stage)
+		{
+		case EStage::Mode:         Label = MsEnMode(ModeAt(i)); break;
+		case EStage::Difficulty:   Label = MsEnDifficulty(DifficultyAt(i)); break;
+		case EStage::Stance:       Label = MsEnStance(StanceAt(i)); break;
+		case EStage::DefenseDrill: Label = MsEnDrill(i); break;
+		default: break;
+		}
+		if (!bAvail)  { Label += TEXT("  (coming soon)"); }
+		if (bHovered) { Label += MsDwellBar(Progress); }
 
 		VrPanel->SetRow(i, Label, MsRowColor(bAvail, bHovered, Progress));
 	}
 	VrPanel->HideRowsFrom(RowCount);
 
-	// 뒤로 카드 (모드 단계 외에서만) — 행 바로 아래에 배치.
+	// 뒤로 카드 (모드 단계 외에서만).
 	if (Stage != EStage::Mode)
 	{
 		const bool bHovered = (VrHoverIndex == RowCount);
-		FString Label = TEXT("◀ 뒤로");
+		FString Label = TEXT("< Back");
 		if (bHovered) { Label += MsDwellBar(Progress); }
 		VrPanel->SetBackBelowRows(RowCount, Label, MsRowColor(true, bHovered, Progress), true);
 	}
@@ -550,12 +608,50 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 		VrPanel->SetBackBelowRows(RowCount, FString(), FColor::White, false);
 	}
 
-	// 설명 / 안내 문구 → 푸터.
-	const FString Desc = !NoticeText.IsEmpty() ? NoticeText : GetSelectedDescription().ToString();
+	// 설명 → 푸터 (영어).
+	FString Desc;
+	if (!NoticeText.IsEmpty())
+	{
+		Desc = TEXT("Coming soon");
+	}
+	else
+	{
+		switch (Stage)
+		{
+		case EStage::Mode:
+			Desc = (ModeAt(SelectedIndex) == EGameModeId::Batting)
+				? TEXT("Swing at pitches with the controller")
+				: TEXT("Fielding drills: catch / throw / backup");
+			break;
+		case EStage::Difficulty:
+			switch (DifficultyAt(SelectedIndex))
+			{
+			case EDifficultyLevel::Beginner: Desc = TEXT("Slow pitches, no breaking balls"); break;
+			case EDifficultyLevel::Amateur:  Desc = TEXT("Medium speed + some breaking balls"); break;
+			case EDifficultyLevel::Pro:      Desc = TEXT("Fast pitches + many breaking balls"); break;
+			default: break;
+			}
+			break;
+		case EStage::Stance:
+			Desc = (StanceAt(SelectedIndex) == EBattingStance::Left)
+				? TEXT("Left-handed batter box")
+				: TEXT("Right-handed batter box");
+			break;
+		case EStage::DefenseDrill:
+			switch (SelectedIndex)
+			{
+			case 0: Desc = TEXT("Catch batted balls with the glove (controller)"); break;
+			case 1: Desc = TEXT("Throw to the target (controller motion)"); break;
+			case 2: Desc = TEXT("Decide the backup base (quiz)"); break;
+			default: break;
+			}
+			break;
+		default: break;
+		}
+	}
 	VrPanel->SetFooter(Desc, !NoticeText.IsEmpty() ? FColor(255, 180, 90) : FColor(150, 156, 168));
 
-	// 힌트.
 	VrPanel->SetHint(
-		TEXT("컨트롤러로 카드를 겨누고 잠시 유지하면 선택  ·  (키보드 W/S · Enter 도 가능)"),
+		TEXT("Aim a card with the controller and hold to select  (or W/S / Enter)"),
 		FColor(110, 116, 128));
 }
