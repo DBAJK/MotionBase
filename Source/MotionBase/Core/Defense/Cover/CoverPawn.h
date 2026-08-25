@@ -114,7 +114,7 @@ protected:
 	float DwellAngleDeg = 8.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Cover|VR")
-	float MenuDistanceCm = 250.0f;
+	float MenuDistanceCm = 300.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Cover|VR")
 	float MenuHeightCm = 150.0f;

@@ -119,6 +119,16 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "VRBatting|AI", meta = (ClampMin = "0.1", ClampMax = "1.0"))
 	float TriggerPressThreshold = 0.6f;
 
+	/**
+	 * 정보 패널을 정면에서 좌우로 비켜 놓는 각도 (도).
+	 *
+	 * 타격은 **정면에서 공이 날아오므로** 패널이 정면에 있으면 투구를 가린다.
+	 * 타자가 선 반대쪽 타석 위로 옮겨, 고개만 돌리면 읽히되 스윙 시야는 비워 둔다.
+	 * (우타=+, 좌타=− 방향. 0 이면 정면 — 가림 문제가 돌아온다.)
+	 */
+	UPROPERTY(EditAnywhere, Category = "VRBatting|VR", meta = (ClampMin = "0.0", ClampMax = "80.0"))
+	float PanelSideYawDeg = 42.0f;
+
 private:
 	void AnalyzeSwingNow();
 

@@ -190,14 +190,14 @@ FWeaknessReport UWeaknessDetector::DetectSwing(const TArray<FSwingMetrics>& Hist
 
 	// TODO(캘리브레이션): 아래 기준값은 실측 데이터로 조정 (하드코딩 확정 금지).
 	constexpr float GoodContactRate    = 0.60f; // 이 이상이면 컨택률 약점 아님
-	constexpr float MinReportSeverity  = UWeaknessDetector::MinReportSeverity; // 모드 공통 문턱
+	constexpr float kMinReportSeverity = UWeaknessDetector::MinReportSeverity; // 모드 공통 문턱
 
 	// 한 축을 리포트에 추가 (심각도 문턱 통과 시).
 	auto AddAxis = [&Report](EWeaknessAxis Axis, float Score, const FString& Evidence)
 	{
 		const float ClampedScore = FMath::Clamp(Score, 0.0f, 1.0f);
 		const float Severity = 1.0f - ClampedScore;
-		if (Severity >= MinReportSeverity)
+		if (Severity >= kMinReportSeverity)
 		{
 			FWeakness W;
 			W.Axis = Axis;
@@ -325,12 +325,12 @@ void UWeaknessDetector::AppendBodyMechanicsWeaknesses(
 	const float ChainRate = static_cast<float>(ChainOrdered) / N;
 
 	// 심각도 문턱은 스윙 지표 판별과 동일하게 유지 (모드 공통 상수).
-	constexpr float MinReportSeverity = UWeaknessDetector::MinReportSeverity;
+	constexpr float kMinReportSeverity = UWeaknessDetector::MinReportSeverity;
 	auto AddAxis = [&Report](EWeaknessAxis Axis, float Score, const FString& Evidence)
 	{
 		const float ClampedScore = FMath::Clamp(Score, 0.0f, 1.0f);
 		const float Severity = 1.0f - ClampedScore;
-		if (Severity >= MinReportSeverity)
+		if (Severity >= kMinReportSeverity)
 		{
 			FWeakness W;
 			W.Axis = Axis;

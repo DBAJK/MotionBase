@@ -38,6 +38,21 @@ public:
 	/** 아직 날아가는 중인지. */
 	bool IsInFlight() const { return bInFlight; }
 
+	/**
+	 * 착지면 높이를 소유 폰의 바닥에 맞춘다. **Launch 전에 부를 것.**
+	 *
+	 * ⚠️ 기본값 0(월드 원점)을 그대로 쓰면 안 되는 이유: 폰이 Z=0 이 아닌 곳에 스폰되면
+	 *    (모드 전환은 직전 폰의 트랜스폼을 물려받는다) 공이 실제 바닥에 닿기도 전에
+	 *    "착지"로 판정돼 공중에서 멈췄다가 사라지거나, 반대로 바닥을 뚫고 계속 떨어진다.
+	 */
+	void SetGroundZ(float InGroundZ) { GroundZ = InGroundZ; }
+
+	/**
+	 * 날아가는 동안 궤적 선을 남긴다 (헤드셋에서 공이 어디로 가는지 보이게).
+	 * 작은 공(지름 7cm)은 VR 에서 눈에 잘 안 띄어, 선이 없으면 "안 날아온다"고 느낀다.
+	 */
+	void SetTrailVisible(bool bVisible) { bDrawTrail = bVisible; }
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -61,4 +76,11 @@ private:
 
 	float LandedTimer = 0.0f;
 	bool  bLanded     = false;
+
+	/** 궤적 선을 그릴지 (SetTrailVisible). VR 가독성용. */
+	bool  bDrawTrail  = false;
+
+	/** 직전 프레임 위치 — 궤적 선분을 잇는 기준. */
+	FVector PrevTrailLoc = FVector::ZeroVector;
+	bool    bHasPrevTrailLoc = false;
 };

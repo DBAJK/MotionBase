@@ -74,9 +74,59 @@ public:
 	 */
 	void SetBackBelowRows(int32 RowCount, const FString& Text, const FColor& Color, bool bShow);
 
+	// ── 게임 모드용 '뒤로' 카드 (드웰로 나가기) ─────────────────────────────
+	// 액션 모드(타격/포구/송구)는 나가는 길이 '컨트롤러 위로 들기' 제스처뿐이라
+	// 발견이 어렵다. 그래서 패널에 상시 '뒤로' 카드를 두고, 조준 광선으로 겨눠
+	// 잠시 유지(드웰)하면 나가게 한다 — 제스처와 병행하는 두 번째 출구.
+
+	/** 상태 패널(행이 적은 모드)용으로 요소들을 눈높이 근처로 모은다. BuildPanel 뒤 한 번 호출. */
+	void SetStatusCompact();
+
+	/** '뒤로' 카드를 패널 하단(눈높이 근처)에 상시 표시한다. */
+	void ShowBackCard(const FString& Label, const FColor& Color);
+
+	/** '뒤로' 카드를 숨긴다. */
+	void HideBackCard();
+
+	/**
+	 * 매 틱: 조준 광선이 '뒤로' 카드를 겨누는지 판정해 드웰을 누적하고,
+	 * 카드 프레임(채움)·조준 광선·드웰 링을 그린다.
+	 * @param bTracked  조준 컨트롤러 추적 여부(끊기면 진행 리셋).
+	 * @param DwellSec  이 시간(초) 유지하면 발동.
+	 * @param AngleDeg  이 각도(도) 안이면 호버.
+	 * @return 이번 프레임에 드웰이 차서 발동했으면 true (한 번만).
+	 */
+	bool UpdateBackDwell(const FVector& AimOrigin, const FVector& AimDir, bool bTracked,
+		float DwellSec, float AngleDeg, float DeltaSeconds);
+
 	// ── 드웰 겨눔 판정용 접근자 ──
 	UTextRenderComponent* GetRowText(int32 Index) const;
 	UTextRenderComponent* GetBackText() const { return BackText; }
+
+	// ══ 편안한 배치(VR 멀미 방지) ═════════════════════════════════════
+	/**
+	 * 패널을 **플레이어 정면(HMD 방위)** 에 놓되, 평소엔 제자리에 고정한다.
+	 *
+	 * 왜: 폰 고정 +X 에 두면 플레이어가 그쪽을 안 보면 패널이 옆으로 치우쳐 보이고(이질감),
+	 * 매 프레임 머리를 좇으면 패널이 헤엄치듯 따라와(swimming) 멀미를 유발한다. 그래서
+	 *   ① 처음엔 지금 보는 방향 정면에 배치하고
+	 *   ② 작은 머리 움직임은 무시(제자리 고정 — 흔들림 없음)
+	 *   ③ 머리가 RecenterDeg 이상 크게 돌아가면(=패널을 안 보는 상태) 그때만 정면으로 스냅
+	 * → 볼 땐 안 흔들리고, 크게 돌아봐도 다시 앞에 나타난다. 소유 폰이 매 틱 호출.
+	 *
+	 * @param Head        소유 폰의 HMD 카메라(패널과 같은 부모 기준). null 이면 아무 것도 안 함.
+	 * @param DistanceCm  플레이어 앞 거리.
+	 * @param HeightCm    패널 중심 높이(부모 기준).
+	 * @param RecenterDeg 이 각도 이상 벗어나면 정면으로 다시 스냅.
+	 * @param YawOffsetDeg 정면에서 좌(-)/우(+)로 이만큼 비켜 놓는다.
+	 *                     타격처럼 **정면에 공이 날아오는** 종목에서 패널이 시야를 가리지 않게
+	 *                     비워둘 때 쓴다. 재정렬 판정은 오프셋 이전의 정면 기준으로 한다.
+	 */
+	void UpdateComfortAnchor(const USceneComponent* Head, float DistanceCm, float HeightCm, float RecenterDeg,
+		float YawOffsetDeg = 0.0f);
+
+	/** 다음 UpdateComfortAnchor 호출에서 정면으로 다시 잡도록 강제(모드 진입/재정렬 시). */
+	void RequestRecenter() { bAnchorInit = false; }
 
 	// ══ 공간감(VR) 연출 ══════════════════════════════════════════════
 	// 평평한 텍스트 목록은 헤드셋 안에서 "화면을 붙여놨다"처럼 보인다. 아래 셋으로
@@ -133,6 +183,18 @@ private:
 	UPROPERTY() TObjectPtr<UTextRenderComponent> HintText;
 
 	bool bBuilt = false;
+
+	/** '뒤로' 카드 드웰 누적 시간(초). UpdateBackDwell 이 관리. */
+	float BackDwellTimer = 0.0f;
+
+	/** '뒤로' 카드의 패널 로컬 Z (SetStatusCompact 이 조정). */
+	float BackCardZ = -72.0f;
+
+	/** 편안한 배치 상태 (UpdateComfortAnchor). 재정렬 순간의 머리 방위·수평위치를 캡처해
+	    그 사이엔 고정한다 — 머리 흔들림(sway)이 패널로 옮겨오지 않게. */
+	float   AnchorYaw   = 0.0f;
+	FVector AnchorPos   = FVector::ZeroVector;
+	bool    bAnchorInit = false;
 
 	/** BuildPanel 이전에 SetPlacement 로 받은 값 — 생성 시 반영. */
 	float PendingDistanceCm = DefaultDistanceCm;

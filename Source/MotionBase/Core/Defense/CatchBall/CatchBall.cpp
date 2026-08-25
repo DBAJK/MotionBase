@@ -3,6 +3,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "UObject/ConstructorHelpers.h"
+#include "DrawDebugHelpers.h"
+#include "Engine/World.h"
 
 ACatchBall::ACatchBall()
 {
@@ -44,6 +46,7 @@ void ACatchBall::Launch(const FVector& InVelocity)
 	bInFlight   = true;
 	bLanded     = false;
 	LandedTimer = 0.0f;
+	bHasPrevTrailLoc = false;
 
 	// ProjectileMovement 에 초기 속도를 실어 활성화.
 	Movement->Velocity = InVelocity;
@@ -60,6 +63,23 @@ void ACatchBall::Tick(float DeltaSeconds)
 	if (!bInFlight)
 	{
 		return;
+	}
+
+	// 궤적 선 — 공이 지나간 자리를 짧게 남긴다. 지름 7cm 공은 헤드셋에서 눈에 잘 띄지
+	// 않아, 선이 없으면 "공이 안 온다/어디로 갔는지 모르겠다"가 된다.
+	if (bDrawTrail)
+	{
+		const FVector Now = GetActorLocation();
+		if (bHasPrevTrailLoc)
+		{
+			if (UWorld* W = GetWorld())
+			{
+				// LifeTime 0.6초 — 꼬리가 짧게 남았다 사라져 화면이 지저분해지지 않는다.
+				DrawDebugLine(W, PrevTrailLoc, Now, FColor(255, 240, 150), false, 0.6f, 0, 2.5f);
+			}
+		}
+		PrevTrailLoc = Now;
+		bHasPrevTrailLoc = true;
 	}
 
 	if (!bLanded)

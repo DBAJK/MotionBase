@@ -14,6 +14,7 @@
 #include "Core/Defense/CatchBall/CatchBallPawn.h"
 #include "Core/Defense/Throw/ThrowPawn.h"
 #include "Core/Defense/Cover/CoverPawn.h"
+#include "AI/AICoachingPawn.h"
 
 AMotionBaseGameMode::AMotionBaseGameMode()
 {
@@ -91,6 +92,13 @@ bool AMotionBaseGameMode::StartMode(EGameModeId Mode, EDifficultyLevel Difficult
 		*UModeManager::GetDifficultyDisplayName(Difficulty).ToString(),
 		*UModeManager::GetStanceDisplayName(Stance).ToString());
 	return true;
+}
+
+void AMotionBaseGameMode::StartAICoaching()
+{
+	// 읽기 전용 리뷰 — 세션 상태(SetActiveMode)를 건드리지 않고 폰만 교체한다.
+	UE_LOG(LogMotionBase, Log, TEXT("GameMode: AI 코칭(운동 추천) 화면 진입"));
+	RequestPawnSwap(AAICoachingPawn::StaticClass());
 }
 
 void AMotionBaseGameMode::ReturnToModeSelect()

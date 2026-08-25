@@ -87,8 +87,14 @@ void AVRBattingPawn::BeginPlay()
 	ExitGesture.UpThreshold = 0.95f;
 	ExitGesture.HoldSec     = 3.0f;
 
-	// VR 상태 패널 자식 텍스트 생성 (한 번).
-	if (VrPanel) { VrPanel->BuildPanel(); }
+	// VR 상태 패널 자식 텍스트 생성 (한 번). 액션 모드라 요소를 눈높이로 모으고,
+	// 나가기용 '뒤로' 카드를 상시 띄운다 (배트를 겨눠 잠시 유지 = 나가기).
+	if (VrPanel)
+	{
+		VrPanel->BuildPanel();
+		VrPanel->SetStatusCompact();
+		VrPanel->ShowBackCard(TEXT("EXIT - aim bat here & hold"), FColor(255, 190, 90));
+	}
 
 	// 세션 파라미터 (모드 선택에서 고른 난이도·타석).
 	if (UGameInstance* GI = GetGameInstance())
@@ -496,6 +502,23 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 		bTriggerHeldPrev = bHeld;
 	}
 
+	// 패널 배치 — 정면 고정(swimming 제거) + **반대 타석 쪽으로 비켜 놓기**.
+	//
+	// 타격은 정면에서 공이 날아오는 종목이라, 패널을 정면에 두면 투구 궤적을 그대로 가린다.
+	// 그래서 타자가 서지 않은 **반대 타석 위**로 옮긴다:
+	//   우타는 3루 쪽 타석(-Y)에 서므로 패널은 1루 쪽(+Y),  좌타는 그 반대.
+	// 고개만 살짝 돌리면 읽히고, 스윙 시야(정면)는 비어 있다.
+	// (겨눔 판정이 카드 위치를 쓰므로 UpdateBackDwell 보다 먼저 자리를 잡는다.)
+	if (VrPanel && Camera)
+	{
+		const float SideYaw = (SessionStance == EBattingStance::Left)
+			? -PanelSideYawDeg   // 좌타(1루 쪽 타석) → 패널은 3루 쪽
+			: +PanelSideYawDeg;  // 우타(3루 쪽 타석) → 패널은 1루 쪽
+
+		VrPanel->UpdateComfortAnchor(Camera, UVRInfoPanel::DefaultDistanceCm,
+			UVRInfoPanel::DefaultHeightCm, /*RecenterDeg=*/55.0f, SideYaw);
+	}
+
 	// VR 뒤로가기 — 배트를 위(천장)로 들고 유지하면 모드 선택으로 복귀.
 	// ⚠️ 타격은 이 제스처의 오발동 위험이 가장 크다 — **타자의 준비 자세가 배트를 거의
 	//    수직으로 세운 채 다음 투구를 기다리는 것**이라 기본 임계(37°/1.5s)와 그대로 겹친다.
@@ -510,6 +533,19 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 		{
 			ReturnToModeSelect();
 			return; // 폰이 곧 교체된다 — 이 프레임 종료.
+		}
+
+		// 두 번째 출구 — '뒤로' 카드를 배트로 겨눠 유지하면 나간다 (제스처와 병행).
+		// 공이 날아오는 동안엔 스윙 궤적이 카드를 스쳐 오발동하지 않게 겨눔을 막는다.
+		if (VrPanel)
+		{
+			const bool bAim = Bat->IsTracking() && !bPitchActive;
+			if (VrPanel->UpdateBackDwell(Bat->GetBatTipWorldLocation(), Bat->GetAimForwardVector(),
+				bAim, /*DwellSec=*/1.6f, /*AngleDeg=*/8.0f, DeltaSeconds))
+			{
+				ReturnToModeSelect();
+				return;
+			}
 		}
 	}
 
@@ -539,8 +575,12 @@ void AVRBattingPawn::RefreshVrPanel()
 			FString::Printf(TEXT("Session result    score %.1f"), SessionScore.TotalScore),
 			FColor(150, 210, 255));
 
+		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
+		//    핵심만 압축: 요약 1줄 + 코칭 2줄 + 드릴 1개. 전체 리포트는 데스크톱 결과 화면이 담당.
+		constexpr int32 MaxContentRows = 4;
+
 		int32 Row = 0;
-		if (Row < UVRInfoPanel::MaxRows)
+		if (Row < MaxContentRows)
 		{
 			const float ContactRate = (SwingCount > 0)
 				? (100.0f * ContactCount / SwingCount) : 0.0f;
@@ -550,14 +590,14 @@ void AVRBattingPawn::RefreshVrPanel()
 				FColor(150, 200, 255));
 		}
 
-		for (const FString& L : WrapForPanel(CoachingText, 30, 3))
+		for (const FString& L : WrapForPanel(CoachingText, 30, 2))
 		{
-			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			if (Row >= MaxContentRows) { break; }
 			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
 		}
 		for (const FTrainingDrill& D : LastDrills)
 		{
-			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			if (Row >= MaxContentRows) { break; }
 			VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
 		}
 		VrPanel->HideRowsFrom(Row);

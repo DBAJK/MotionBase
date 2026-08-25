@@ -78,10 +78,10 @@ FSwingMetrics USwingAnalyzer::AnalyzeSwing(
 	// 타구 모델(UHitModel)이 같은 값에 맞춰야 하기 때문. 여기서 지역 복사만 만든다.
 	// 히트 판정 완화(2026-08): 실기에서 컨택이 너무 빡빡해 반경(20→32)·시간창(0.22→0.32)을
 	// 넓히고 스윙 게이트(2.5→1.5)를 낮췄다.
-	constexpr float ContactRadiusCm      = USwingAnalyzer::ContactRadiusCm;
-	constexpr float MinSwingSpeedMps     = USwingAnalyzer::MinSwingSpeedMps;
-	constexpr float ContactTimeWindowSec = USwingAnalyzer::ContactTimeWindowSec;
-	constexpr float BarrelLengthCm       = USwingAnalyzer::BarrelLengthCm;
+	constexpr float kContactRadiusCm      = USwingAnalyzer::ContactRadiusCm;
+	constexpr float kMinSwingSpeedMps     = USwingAnalyzer::MinSwingSpeedMps;
+	constexpr float kContactTimeWindowSec = USwingAnalyzer::ContactTimeWindowSec;
+	constexpr float kBarrelLengthCm       = USwingAnalyzer::BarrelLengthCm;
 
 	// 2) 컨택 후보 탐색.
 	//    공에 가장 가까운 표본을 찾되, **두 관문**을 통과한 표본만 본다:
@@ -96,12 +96,12 @@ FSwingMetrics USwingAnalyzer::AnalyzeSwing(
 
 	for (int32 i = 0; i < Samples.Num(); ++i)
 	{
-		const float D = BarrelToBallDistCm(Samples[i], BallLocation, BarrelLengthCm);
+		const float D = BarrelToBallDistCm(Samples[i], BallLocation, kBarrelLengthCm);
 		OverallMinCm = FMath::Min(OverallMinCm, D);
 
 		// (a) 시간 창
 		const double TimeGap = FMath::Abs(Samples[i].TimeSeconds - IdealContactTime);
-		if (TimeGap > ContactTimeWindowSec)
+		if (TimeGap > kContactTimeWindowSec)
 		{
 			continue;
 		}
@@ -109,7 +109,7 @@ FSwingMetrics USwingAnalyzer::AnalyzeSwing(
 		// (b) 동작 게이트 (중앙차분 속도)
 		const int32 P = FMath::Max(0, i - 1);
 		const int32 Nx = FMath::Min(Samples.Num() - 1, i + 1);
-		if (ComputeSpeedMps(Samples[P], Samples[Nx]) < MinSwingSpeedMps)
+		if (ComputeSpeedMps(Samples[P], Samples[Nx]) < kMinSwingSpeedMps)
 		{
 			continue;
 		}
@@ -127,7 +127,7 @@ FSwingMetrics USwingAnalyzer::AnalyzeSwing(
 		// 후보가 잡혔다 = 시간 창 + 동작 게이트를 통과했다 = **실제로 휘둘렀다.**
 		// 반경 안이면 컨택, 밖이면 헛스윙 — 둘 다 '시도'다 (호출부가 이 플래그로 구분한다).
 		Out.bSwingDetected = true;
-		Out.bContacted = (ContactDistCm <= ContactRadiusCm);
+		Out.bContacted = (ContactDistCm <= kContactRadiusCm);
 
 		// 3) 컨택 순간 속도 (peak 아님)
 		const int32 Prev = FMath::Max(0, ContactIdx - 1);

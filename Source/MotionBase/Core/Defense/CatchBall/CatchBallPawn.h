@@ -131,6 +131,17 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "CatchBall")
 	float SideSpread = 500.0f;
 
+	/**
+	 * VR 에서 공이 도착하는 높이 (cm, **트래킹 바닥 기준**).
+	 *
+	 * ⚠️ VR 은 SetTrackingOrigin(Stage) 라 **바닥이 폰 루트(캡슐 원점) Z** 다.
+	 *    (PC 처럼 루트가 몸 중심이 아니다.) 예전엔 도착 높이를 루트 Z 그대로 썼는데,
+	 *    그러면 공이 **플레이어 발밑**으로 날아와 글러브(가슴~머리 높이)에 영영 닿지 않았다 —
+	 *    "공이 안 날아온다"의 실제 원인. 가슴 높이로 올려 글러브가 닿는 곳에 보낸다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "CatchBall|VR", meta = (ClampMin = "40.0"))
+	float VRCatchHeightCm = 130.0f;
+
 	// ── 유형별 포구 허용 반경 (cm) — 작을수록 정밀하게 잡아야 한다 ──
 	// ⚠️ 실측 캘리브레이션 대상 (CLAUDE §규칙). 에디터에서 바로 튜닝.
 	/** 땅볼: 낮고 빠름, 그나마 관대. */
@@ -223,6 +234,16 @@ private:
 
 	/** 유형에 맞는 발사 파라미터(속도) + 예측(낙구지점·도달시간)을 채운다. */
 	FCatchTrial BuildTrial(ECatchBallType Type) const;
+
+	/**
+	 * 플레이어가 서 있는 **바닥면 Z** (월드).
+	 * VR: 트래킹 원점이 Stage 라 바닥 = 폰 루트 Z. PC: 루트가 몸 중심이라 바닥 = 루트 - 캡슐 반높이.
+	 * 낙구 마커·공의 착지면을 이 값으로 맞춘다 (예전엔 두 경로가 어긋나 마커가 땅에 묻혔다).
+	 */
+	float FloorZ() const;
+
+	/** 공이 도착해야 할 높이 (월드 Z) — 글러브가 닿는 가슴 높이. */
+	float CatchHeightZ() const;
 
 	/** Mixed → 실제 셋 중 하나로 확정. */
 	ECatchBallType ResolveType(ECatchBallType Type) const;

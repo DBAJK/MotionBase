@@ -106,7 +106,17 @@ void AThrowPawn::BeginPlay()
 	if (VrPanel)
 	{
 		VrPanel->BuildPanel();
-		if (!bVR) { VrPanel->HideAll(); }
+		if (!bVR)
+		{
+			VrPanel->HideAll();
+		}
+		else
+		{
+			// 액션 모드 — 요소를 눈높이로 모으고, 나가기용 '뒤로' 카드를 상시 띄운다
+			// (컨트롤러를 겨눠 잠시 유지 = 나가기. '위로 들기' 제스처와 병행).
+			VrPanel->SetStatusCompact();
+			VrPanel->ShowBackCard(TEXT("EXIT - aim here & hold"), FColor(255, 190, 90));
+		}
 	}
 
 	// AI 운동 추천 서비스 (키가 없으면 요청 시 조용히 생략됨).
@@ -166,8 +176,9 @@ FVector AThrowPawn::BaseLocation(EBaseType Base) const
 	case EBaseType::Third:  Off = ThirdBaseOffset;  break;
 	default: break;
 	}
-	// 베이스는 바닥에 있다 — 캡슐 중심(HomeLocation)에서 반높이만큼 아래.
-	return HomeLocation + FVector(Off.X, Off.Y, -88.0f);
+	// 베이스는 바닥에 있다. 바닥면 계산은 VR/PC 가 다르므로 FloorZ() 로 통일한다
+	// (VR 에서 -88 을 쓰면 베이스 마커가 땅속에 묻혀 안 보였다).
+	return FVector(HomeLocation.X + Off.X, HomeLocation.Y + Off.Y, FloorZ());
 }
 
 // ── 세션 진행 ──
@@ -200,7 +211,7 @@ void AThrowPawn::SpawnNextTrial()
 
 	// ① 목표 베이스 지정 — 네 베이스 중 랜덤. 던지기 전에 미리 표시된다.
 	CurrentTrial.TargetBase     = static_cast<EBaseType>(FMath::RandRange(0, NumBases - 1));
-	CurrentTrial.ThrowOrigin    = HomeLocation + FVector(0, 0, 60.0f); // 손 높이
+	CurrentTrial.ThrowOrigin    = FVector(HomeLocation.X, HomeLocation.Y, ThrowHandZ()); // 손 높이
 	CurrentTrial.TargetLocation = BaseLocation(CurrentTrial.TargetBase);
 	CurrentTrial.TargetDistance = FVector::Dist2D(CurrentTrial.TargetLocation, CurrentTrial.ThrowOrigin);
 	CurrentTrial.IdealPower     = DistanceToIdealPower(CurrentTrial.TargetDistance);
@@ -209,10 +220,12 @@ void AThrowPawn::SpawnNextTrial()
 	// ② 급구(feed) — 잡아야 시계가 돈다. 정면에서 가슴 높이로 날아온다.
 	const float G = FMath::Abs(World->GetGravityZ());
 	const float SideY = FMath::RandRange(-150.0f, 150.0f); // 살짝 좌우로 흔들어 매번 같은 자리로 오지 않게.
-	CurrentTrial.FeedLaunchLocation = HomeLocation + FVector(FeedDistance, SideY, 150.0f);
+	// 높이는 **바닥 기준** — VR(Stage 원점)은 루트가 바닥, PC 는 루트가 몸 중심이라
+	// 루트에 그냥 더하면 VR 에서 공이 발밑으로 날아와 글러브에 닿지 않는다.
+	CurrentTrial.FeedLaunchLocation = FVector(HomeLocation.X + FeedDistance, HomeLocation.Y + SideY, FloorZ() + 150.0f);
 	CurrentTrial.FeedFlightSec      = FMath::Max(FeedFlightSec, 0.3f);
 
-	const FVector Arrival = HomeLocation + FVector(0.0f, 0.0f, 20.0f); // 가슴 높이
+	const FVector Arrival(HomeLocation.X, HomeLocation.Y, CatchHeightZ()); // 가슴 높이
 	const FVector ToTarget = Arrival - CurrentTrial.FeedLaunchLocation;
 	const FVector Horiz(ToTarget.X, ToTarget.Y, 0.0f);
 	const float VHoriz = Horiz.Size() / CurrentTrial.FeedFlightSec;
@@ -228,6 +241,8 @@ void AThrowPawn::SpawnNextTrial()
 	ActiveBall = World->SpawnActor<ACatchBall>(Cls, CurrentTrial.FeedLaunchLocation, FRotator::ZeroRotator, Params);
 	if (ActiveBall)
 	{
+		ActiveBall->SetGroundZ(FloorZ());
+		ActiveBall->SetTrailVisible(bVR); // 헤드셋에서 공이 오는 게 보이도록.
 		ActiveBall->Launch(CurrentTrial.FeedVelocity);
 	}
 
@@ -314,6 +329,10 @@ void AThrowPawn::ThrowBall(float Power)
 	{
 		return;
 	}
+	// 착지면을 폰 바닥에 맞추고, 궤적 선을 켠다 — "공이 어디로 나갔는지" 가 보여야
+	// 다음 번에 파워를 조절할 수 있다 (VR 에선 작은 공만으론 안 보인다).
+	ActiveBall->SetGroundZ(FloorZ());
+	ActiveBall->SetTrailVisible(true);
 	ActiveBall->Launch(Velocity);
 	LastBallLoc = CurrentTrial.ThrowOrigin;
 
@@ -592,6 +611,58 @@ void AThrowPawn::HandleCoachingReady(bool bSuccess, const FString& Text)
 
 // ── 파워 ↔ 거리 ──
 
+float AThrowPawn::FloorZ() const
+{
+	// VR: SetTrackingOrigin(Stage) → 바닥이 곧 폰 루트 Z. PC: 루트가 캡슐 중심이라 반높이 아래.
+	return bVR ? HomeLocation.Z : (HomeLocation.Z - 88.0f);
+}
+
+float AThrowPawn::CatchHeightZ() const
+{
+	// 급구가 도착해야 할 높이 = 글러브가 닿는 가슴 높이 (바닥 기준 130cm).
+	return FloorZ() + 130.0f;
+}
+
+float AThrowPawn::ThrowHandZ() const
+{
+	// 송구 출발 = 손 높이 (바닥 기준 140cm). 어깨보다 조금 아래.
+	return FloorZ() + 140.0f;
+}
+
+void AThrowPawn::DrawPredictedArc(float Power) const
+{
+	UWorld* World = GetWorld();
+	if (!World || Power <= KINDA_SMALL_NUMBER) { return; }
+
+	// 지금 파워로 던지면 그리는 포물선을 미리 보여준다 —
+	// "얼마나 세게 휘둘러야 저기까지 가는지"를 던지기 전에 눈으로 맞출 수 있게.
+	const FVector V0 = PowerToVelocity(Power);
+	const FVector P0 = FVector(HomeLocation.X, HomeLocation.Y, ThrowHandZ());
+	const float G  = FMath::Abs(World->GetGravityZ());
+	const float Ground = FloorZ();
+
+	constexpr int32 Steps = 24;
+	constexpr float StepSec = 0.12f;
+
+	FVector Prev = P0;
+	for (int32 i = 1; i <= Steps; ++i)
+	{
+		const float T = i * StepSec;
+		const FVector P = P0 + V0 * T - FVector(0, 0, 0.5f * G * T * T);
+		if (P.Z <= Ground)
+		{
+			// 착지 예상 지점에 원을 찍고 끝낸다.
+			const FVector Land(P.X, P.Y, Ground + 2.0f);
+			DrawDebugLine(World, Prev, Land, FColor(120, 200, 255), false, -1.0f, 0, 1.5f);
+			DrawDebugCircle(World, Land, 60.0f, 20, FColor(120, 200, 255), false, -1.0f, 0, 2.0f,
+				FVector(1, 0, 0), FVector(0, 1, 0), false);
+			return;
+		}
+		DrawDebugLine(World, Prev, P, FColor(120, 200, 255), false, -1.0f, 0, 1.5f);
+		Prev = P;
+	}
+}
+
 FVector AThrowPawn::PowerToVelocity(float Power) const
 {
 	Power = FMath::Clamp(Power, 0.0f, 1.0f);
@@ -632,6 +703,12 @@ void AThrowPawn::Tick(float DeltaSeconds)
 	// VR: 컨트롤러 던지기/포구 동작 인식.
 	if (bVR)
 	{
+		// 패널을 플레이어 정면에 고정 배치(swimming 제거·이질감 제거).
+		if (VrPanel && Camera)
+		{
+			VrPanel->UpdateComfortAnchor(Camera, UVRInfoPanel::DefaultDistanceCm, 70.0f, /*RecenterDeg=*/55.0f);
+		}
+
 		// 뒤로가기 — 컨트롤러를 위로 들고 유지하면 모드 선택으로 복귀.
 		if (ThrowController)
 		{
@@ -645,6 +722,19 @@ void AThrowPawn::Tick(float DeltaSeconds)
 			{
 				ReturnToModeSelect();
 				return; // 폰이 곧 교체된다 — 이 프레임 종료.
+			}
+
+			// 두 번째 출구 — '뒤로' 카드를 컨트롤러로 겨눠 유지하면 나간다.
+			// 와인드업/던지기 도중엔 겨눔을 막아(팔 동작으로 오발동 방지) 준다.
+			if (VrPanel)
+			{
+				const bool bAim = ThrowController->IsTracked() && bGestureAllowed;
+				if (VrPanel->UpdateBackDwell(ThrowController->GetComponentLocation(),
+					ThrowController->GetForwardVector(), bAim, /*DwellSec=*/1.6f, /*AngleDeg=*/8.0f, DeltaSeconds))
+				{
+					ReturnToModeSelect();
+					return;
+				}
 			}
 		}
 
@@ -674,9 +764,9 @@ void AThrowPawn::Tick(float DeltaSeconds)
 	// 송구한 공이 착지했는지 확인 → 판정.
 	if (Phase == EThrowPhase::InFlight)
 	{
-		// 공의 착지면은 폰 발밑과 ACatchBall 자체 바닥(기본 Z=0) 중 **높은 쪽**이다.
-		// 낮은 쪽을 기준으로 잡으면 공이 이미 멈춘 뒤에도 계속 기다리게 된다.
-		const float GroundZ = FMath::Max(HomeLocation.Z - 88.0f, 0.0f) + 5.0f;
+		// 공의 착지면 — 공에도 같은 값을 SetGroundZ 로 넘겼으므로 기준이 일치한다.
+		// (예전엔 공은 Z=0, 판정은 발밑을 봐서 폰이 Z=0 이 아니면 서로 어긋났다.)
+		const float GroundZ = FloorZ() + 5.0f;
 
 		if (IsValid(ActiveBall))
 		{
@@ -705,6 +795,17 @@ void AThrowPawn::Tick(float DeltaSeconds)
 		{
 			bWaitingNext = false;
 			SpawnNextTrial();
+		}
+	}
+
+	// 공을 들고 있는 동안 예상 궤적을 보여준다 (지금 파워로 던지면 어디에 떨어지는지).
+	// 정답 파워(IdealPower)의 궤적도 함께 그려 "얼마나 더 세게" 를 눈으로 비교하게 한다.
+	if (Phase == EThrowPhase::Ready && !bSessionOver)
+	{
+		DrawPredictedArc(CurrentTrial.IdealPower);   // 목표(연한 파랑)
+		if (CurrentPower > 0.01f)
+		{
+			DrawPredictedArc(CurrentPower);          // 지금 파워
 		}
 	}
 
@@ -752,6 +853,9 @@ void AThrowPawn::RefreshVrPanel()
 			FString::Printf(TEXT("AI exercise tips    (On-target %d / %d)"), SuccessCount, TotalThrows),
 			FColor(150, 210, 255));
 
+		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
+		//    요약 1줄 + 코칭 2줄 + 드릴 1개로 압축. 전체 리포트는 데스크톱 결과 화면이 담당.
+		constexpr int32 MaxContentRows = 4;
 		int32 Row = 0;
 		const float AvgT = GetAverageTransferSec();
 		VrPanel->SetRow(Row++, FString::Printf(TEXT("avg %.0f km/h    transfer %s"),
@@ -759,14 +863,14 @@ void AThrowPawn::RefreshVrPanel()
 			(AvgT >= 0.0f) ? *FString::Printf(TEXT("%.2fs"), AvgT) : TEXT("--")),
 			FColor(150, 200, 255));
 
-		for (const FString& L : ThrowWrap(CoachingText, 30, 3))
+		for (const FString& L : ThrowWrap(CoachingText, 30, 2))
 		{
-			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			if (Row >= MaxContentRows) { break; }
 			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
 		}
 		for (const FTrainingDrill& D : LastDrills)
 		{
-			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			if (Row >= MaxContentRows) { break; }
 			VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
 		}
 		VrPanel->HideRowsFrom(Row);
@@ -869,22 +973,62 @@ void AThrowPawn::TickVRThrow(float DeltaSeconds)
 	PrevControllerLoc = Loc;
 	bHasPrevControllerLoc = true;
 
-	// 손 속도 → 파워(0~1). 게이지에 실시간으로 보여준다.
-	const float SpeedPower = FMath::Clamp(
-		(Speed - MinThrowSpeedCms) / FMath::Max(MaxThrowSpeedCms - MinThrowSpeedCms, 1.0f),
-		0.0f, 1.0f);
+	// 손 속도 → 파워(0~1).
+	auto ToPower = [this](float S)
+	{
+		return FMath::Clamp((S - MinThrowSpeedCms) / FMath::Max(MaxThrowSpeedCms - MinThrowSpeedCms, 1.0f),
+			0.0f, 1.0f);
+	};
 
 	// 공을 들고 있을 때(Ready)만 송구로 인식한다 — 급구를 잡기 전 손 흔들림은 무시.
 	const bool bReady = (Phase == EThrowPhase::Ready) && !bSessionOver && !bWaitingNext;
-	if (bReady)
+	if (!bReady || ThrowCooldown > 0.0f)
 	{
-		CurrentPower = SpeedPower;
+		bThrowMotionActive = false;
+		ThrowPeakSpeedCms  = 0.0f;
+		ThrowMotionSec     = 0.0f;
+		return;
 	}
 
-	if (bReady && ThrowCooldown <= 0.0f && Speed >= ThrowTriggerSpeedCms)
+	// ── 던지기 동작 추적 ──
+	// 릴리스는 "손이 가장 빨랐던 순간"이다. 트리거를 넘자마자 발사하면 그 지점은 팔을 막
+	// 뻗기 시작한 곳이라 파워가 0 에 가까워 공이 안 나간다(예전 동작). 그래서
+	//   ① 트리거를 넘으면 동작 시작으로 보고 피크 속도를 기록하다가
+	//   ② 피크의 ReleaseDecelRatio 아래로 감속하면 = 손을 놓은 순간 → **피크값**으로 발사한다.
+	if (!bThrowMotionActive)
 	{
-		ThrowBall(SpeedPower);
+		if (Speed >= ThrowTriggerSpeedCms)
+		{
+			bThrowMotionActive = true;
+			ThrowPeakSpeedCms  = Speed;
+			ThrowMotionSec     = 0.0f;
+		}
+		// 동작 전에는 게이지에 현재 손 속도를 미리보기로 보여준다.
+		CurrentPower = ToPower(Speed);
+		return;
+	}
+
+	ThrowMotionSec += DeltaSeconds;
+	ThrowPeakSpeedCms = FMath::Max(ThrowPeakSpeedCms, Speed);
+
+	// 게이지는 지금까지의 피크(=실제 발사될 파워)를 보여준다.
+	CurrentPower = ToPower(ThrowPeakSpeedCms);
+
+	const bool bDecelerated = (Speed <= ThrowPeakSpeedCms * ReleaseDecelRatio);
+	const bool bTimedOut    = (ThrowMotionSec >= MaxThrowMotionSec);
+
+	if (bDecelerated || bTimedOut)
+	{
+		const float Power = ToPower(ThrowPeakSpeedCms);
+		UE_LOG(LogMotionBase, Log, TEXT("[Throw] 릴리스: peak %.0f cm/s → power %.2f (%s)"),
+			ThrowPeakSpeedCms, Power, bDecelerated ? TEXT("감속") : TEXT("시간초과"));
+
+		ThrowBall(Power);
 		ThrowCooldown = 0.6f;
+
+		bThrowMotionActive = false;
+		ThrowPeakSpeedCms  = 0.0f;
+		ThrowMotionSec     = 0.0f;
 	}
 }
 

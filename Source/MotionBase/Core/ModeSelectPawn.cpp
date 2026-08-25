@@ -31,9 +31,10 @@ namespace
 	{
 		switch (M)
 		{
-		case EGameModeId::Batting: return TEXT("Batting");
-		case EGameModeId::Defense: return TEXT("Defense");
-		default:                   return TEXT("Mode");
+		case EGameModeId::Batting:    return TEXT("Batting");
+		case EGameModeId::Defense:    return TEXT("Defense");
+		case EGameModeId::AICoaching: return TEXT("AI Coaching");
+		default:                      return TEXT("Mode");
 		}
 	}
 	FString MsEnDifficulty(EDifficultyLevel D)
@@ -317,6 +318,16 @@ void AModeSelectPawn::Confirm()
 
 		PendingMode = Mode;
 
+		// AI 코칭은 난이도·타석이 없는 읽기 전용 리뷰 화면 — 바로 진입한다.
+		if (Mode == EGameModeId::AICoaching)
+		{
+			if (AMotionBaseGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMotionBaseGameMode>() : nullptr)
+			{
+				GM->StartAICoaching();
+			}
+			return;
+		}
+
 		// 수비는 세부 종목 선택 단계로, 그 외는 난이도 단계로 진입한다.
 		if (Mode == EGameModeId::Defense)
 		{
@@ -496,44 +507,19 @@ int32 AModeSelectPawn::PickHoveredCard() const
 	return Best;
 }
 
-void AModeSelectPawn::UpdateMenuAnchor(float DeltaSeconds)
+void AModeSelectPawn::UpdateMenuAnchor(float /*DeltaSeconds*/)
 {
 	if (!VrPanel || !Camera) { return; }
 
-	// 머리(HMD)의 폰 기준 위치·방위. 스테이지 트래킹이라 플레이어가 걸어 다니면 둘 다 변한다.
-	const FVector HeadRel = Camera->GetRelativeLocation();
-	const float   HeadYaw = Camera->GetRelativeRotation().Yaw;
-
-	if (!bMenuYawInit)
-	{
-		MenuYawDeg = HeadYaw;   // 첫 프레임엔 눈앞에 바로 띄운다.
-		bMenuYawInit = true;
-	}
-
-	// 데드존: 시야 중심에서 벗어난 각도가 임계를 넘을 때만, 경계까지만 끌어온다.
-	// (정면에 딱 붙이면 "메뉴가 나를 따라다닌다"는 느낌이 강해져 오히려 불쾌하다.)
-	const float Delta = FMath::FindDeltaAngleDegrees(MenuYawDeg, HeadYaw);
-	if (FMath::Abs(Delta) > MenuFollowDeadzoneDeg)
-	{
-		const float TargetYaw = HeadYaw - FMath::Sign(Delta) * MenuFollowDeadzoneDeg;
-		const float ToTarget  = FMath::FindDeltaAngleDegrees(MenuYawDeg, TargetYaw);
-		MenuYawDeg = FRotator::NormalizeAxis(
-			MenuYawDeg + FMath::FInterpTo(0.0f, ToTarget, DeltaSeconds, MenuFollowSpeed));
-	}
-
-	// 패널을 머리 주위 반지름 MenuDistanceCm 원 위, 고정 높이에 놓는다.
-	// 높이를 머리에 맞춰 따라 올리면 앉았다 일어설 때 UI 가 출렁여서 고정으로 둔다.
-	const float Rad = FMath::DegreesToRadians(MenuYawDeg);
-	VrPanel->SetRelativeLocation(FVector(
-		HeadRel.X + FMath::Cos(Rad) * MenuDistanceCm,
-		HeadRel.Y + FMath::Sin(Rad) * MenuDistanceCm,
-		MenuHeightCm));
-	VrPanel->SetRelativeRotation(FRotator(0.0f, MenuYawDeg, 0.0f));
+	// 편안한 배치: 정면 고정 + 크게 돌아볼 때만 재정렬(swimming 제거, 이질감 제거).
+	// (예전의 데드존 lazy-follow 는 패널이 계속 헤엄쳐 멀미를 유발했다.)
+	VrPanel->UpdateComfortAnchor(Camera, MenuDistanceCm, MenuHeightCm, /*RecenterDeg=*/55.0f);
 
 	// 곡면 배치 — 눈높이 대비 위/아래 카드를 눈 쪽으로 감아 기울인다.
 	if (bCurvedMenu)
 	{
-		VrPanel->ApplyCurvedLayout(HeadRel.Z - MenuHeightCm, MenuDistanceCm);
+		const float HeadZ = Camera->GetRelativeLocation().Z;
+		VrPanel->ApplyCurvedLayout(HeadZ - MenuHeightCm, MenuDistanceCm);
 	}
 }
 

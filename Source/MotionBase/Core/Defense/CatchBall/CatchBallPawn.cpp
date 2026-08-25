@@ -39,7 +39,7 @@ namespace
 	}
 
 	// TextRender 는 자동 줄바꿈이 없다 → 글자수로 하드 랩(한글 한 글자=한 글리프라 안전).
-	TArray<FString> WrapForPanel(const FString& In, int32 MaxCharsPerLine, int32 MaxLines)
+	TArray<FString> WrapCatchPanel(const FString& In, int32 MaxCharsPerLine, int32 MaxLines)
 	{
 		TArray<FString> Lines;
 		int32 i = 0;
@@ -120,7 +120,17 @@ void ACatchBallPawn::BeginPlay()
 	if (VrPanel)
 	{
 		VrPanel->BuildPanel();
-		if (!bVR) { VrPanel->HideAll(); }
+		if (!bVR)
+		{
+			VrPanel->HideAll();
+		}
+		else
+		{
+			// 액션 모드 — 요소를 눈높이로 모으고, 나가기용 '뒤로' 카드를 상시 띄운다
+			// (글러브를 겨눠 잠시 유지 = 나가기. '위로 들기' 제스처와 병행).
+			VrPanel->SetStatusCompact();
+			VrPanel->ShowBackCard(TEXT("EXIT - aim glove here & hold"), FColor(255, 190, 90));
+		}
 	}
 
 	// AI 운동 추천 서비스 (키가 없으면 요청 시 조용히 생략됨).
@@ -221,6 +231,10 @@ void ACatchBallPawn::SpawnNextPitch()
 	ActiveBall = World->SpawnActor<ACatchBall>(Cls, CurrentTrial.LaunchLocation, FRotator::ZeroRotator, Params);
 	if (ActiveBall)
 	{
+		// 착지면을 이 폰의 바닥에 맞춘다 (기본값 0 이면 폰이 Z=0 이 아닐 때 공중에서 멈추거나
+		// 바닥을 뚫는다). 궤적 선은 헤드셋에서 공이 보이도록 VR 에서만 켠다.
+		ActiveBall->SetGroundZ(FloorZ());
+		ActiveBall->SetTrailVisible(bVR);
 		ActiveBall->Launch(CurrentTrial.LaunchVelocity);
 		bPitchActive = true;
 
@@ -497,6 +511,20 @@ ECatchBallType ACatchBallPawn::ResolveType(ECatchBallType Type) const
 	}
 }
 
+float ACatchBallPawn::FloorZ() const
+{
+	// VR: SetTrackingOrigin(Stage) → 바닥이 곧 폰 루트 Z (HMD·컨트롤러가 바닥 기준으로 추적된다).
+	// PC: 루트는 캡슐 중심이라 바닥은 반높이(88cm)만큼 아래.
+	return bVR ? HomeLocation.Z : (HomeLocation.Z - 88.0f);
+}
+
+float ACatchBallPawn::CatchHeightZ() const
+{
+	// 글러브가 실제로 닿는 높이. VR 은 바닥에서 가슴 높이만큼 올린다.
+	// PC 는 캡슐 중심(=몸 중심)이 그대로 포구 높이 역할을 한다 (기존 동작 유지).
+	return bVR ? (FloorZ() + VRCatchHeightCm) : HomeLocation.Z;
+}
+
 FCatchTrial ACatchBallPawn::BuildTrial(ECatchBallType Type) const
 {
 	FCatchTrial Trial;
@@ -505,11 +533,12 @@ FCatchTrial ACatchBallPawn::BuildTrial(ECatchBallType Type) const
 	const float G = FMath::Abs(GetWorld()->GetGravityZ()); // 보통 980
 
 	// 발사 지점: 홈 기준 정면(+X) 먼 곳, 위쪽. (항상 플레이어 시야 정면에서 출발)
-	Trial.LaunchLocation = HomeLocation + FVector(PitchDistance, 0.0f, PitchHeight);
+	// 높이는 **바닥 기준** — VR/PC 의 루트 의미가 달라 루트에 그냥 더하면 VR 에서 땅에 박힌다.
+	Trial.LaunchLocation = FVector(HomeLocation.X + PitchDistance, HomeLocation.Y, FloorZ() + PitchHeight);
 
-	// 도착 지점: 홈 근처에서 좌우(Y)로만 랜덤. 높이는 플레이어 몸 중심(=포구 위치).
+	// 도착 지점: 홈 근처에서 좌우(Y)로만 랜덤. 높이는 글러브가 닿는 가슴 높이.
 	const float TargetY = HomeLocation.Y + FMath::RandRange(-SideSpread, SideSpread);
-	const FVector Arrival(HomeLocation.X, TargetY, HomeLocation.Z);
+	const FVector Arrival(HomeLocation.X, TargetY, CatchHeightZ());
 
 	// 유형별 체공시간·캐치 반경. (시작값 — 플레이하며 조절)
 	float Flight = 1.6f;
@@ -535,7 +564,8 @@ FCatchTrial ACatchBallPawn::BuildTrial(ECatchBallType Type) const
 	Trial.TimeToLanding  = Flight;
 
 	// 바닥 마커는 도착 지점 바로 아래(발밑)에 그린다 — "여기 서라" 표시.
-	Trial.PredictedLanding = FVector(Arrival.X, Arrival.Y, HomeLocation.Z - 88.0f);
+	// 바닥면을 FloorZ() 로 통일한다 (VR 에서 -88 을 쓰면 마커가 땅속에 묻혀 안 보였다).
+	Trial.PredictedLanding = FVector(Arrival.X, Arrival.Y, FloorZ());
 
 	return Trial;
 }
@@ -565,6 +595,12 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 	// VR: 글러브(컨트롤러)를 공에 가져가면 자동 포구.
 	if (bVR)
 	{
+		// 패널을 플레이어 정면에 고정 배치(swimming 제거·이질감 제거).
+		if (VrPanel && Camera)
+		{
+			VrPanel->UpdateComfortAnchor(Camera, UVRInfoPanel::DefaultDistanceCm, 70.0f, /*RecenterDeg=*/55.0f);
+		}
+
 		// 뒤로가기 — 글러브(컨트롤러)를 위로 들고 유지하면 모드 선택으로 복귀.
 		if (GloveController)
 		{
@@ -578,6 +614,19 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 			{
 				ReturnToModeSelect();
 				return; // 폰이 곧 교체된다 — 이 프레임 종료.
+			}
+
+			// 두 번째 출구 — '뒤로' 카드를 글러브로 겨눠 유지하면 나간다.
+			// 공이 날아오는 동안엔 겨눔을 막아(포구 동작으로 오발동 방지) 준다.
+			if (VrPanel)
+			{
+				const bool bAim = GloveController->IsTracked() && !bPitchActive;
+				if (VrPanel->UpdateBackDwell(GloveController->GetComponentLocation(),
+					GloveController->GetForwardVector(), bAim, /*DwellSec=*/1.6f, /*AngleDeg=*/8.0f, DeltaSeconds))
+				{
+					ReturnToModeSelect();
+					return;
+				}
 			}
 		}
 
@@ -609,10 +658,22 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 		// 내 캐치 반경 표시 — VR 은 글러브 위치, 키보드는 발밑 기준.
 		const FVector CatchCenter = (bVR && GloveController)
 			? GloveController->GetComponentLocation()
-			: GetActorLocation() - FVector(0, 0, 86.0f);
+			: FVector(GetActorLocation().X, GetActorLocation().Y, FloorZ());
 		DrawDebugCircle(GetWorld(), CatchCenter,
 			CurrentTrial.CatchRadius, 32, FColor::Cyan, false, -1.0f, 0, 2.0f,
 			FVector(1, 0, 0), FVector(0, 1, 0), false);
+
+		// VR: 공이 도착할 지점을 공중에 표시 + 발밑 마커와 세로선으로 잇는다.
+		// 낙구 마커만 바닥에 있으면 "어느 높이로 오는지"를 알 수 없어 글러브를 못 맞춘다.
+		if (bVR)
+		{
+			const FVector AirTarget(CurrentTrial.PredictedLanding.X, CurrentTrial.PredictedLanding.Y, CatchHeightZ());
+			DrawDebugCircle(GetWorld(), AirTarget, CurrentTrial.CatchRadius, 24,
+				FColor(120, 235, 140), false, -1.0f, 0, 2.0f,
+				FVector(1, 0, 0), FVector(0, 0, 1), false); // 세로 원 = 잡는 면
+			DrawDebugLine(GetWorld(), CurrentTrial.PredictedLanding, AirTarget,
+				FColor(120, 235, 140), false, -1.0f, 0, 1.5f);
+		}
 	}
 }
 
@@ -686,12 +747,22 @@ void ACatchBallPawn::TickVRLocomotion(float DeltaSeconds)
 		return;
 	}
 
-	// 시점은 정면(+X) 고정이므로 월드축으로 바로 이동. (X=앞뒤, Y=좌우)
 	FVector Move(AxisY, AxisX, 0.0f);
 	if (Move.SizeSquared() > 1.0f)
 	{
 		Move.Normalize(); // 대각선 가속 방지.
 	}
+
+	// **머리가 보는 방향** 기준으로 옮긴다.
+	// 예전엔 월드 +X 를 '앞'으로 고정했는데, VR 은 플레이어가 몸을 자유롭게 돌린다 —
+	// 옆을 본 채 패드를 밀면 엉뚱한 방향으로 미끄러져 "이동이 이상하다"가 된다.
+	// (수평 성분만 쓴다. 고개를 숙였다고 땅으로 파고들면 안 되므로.)
+	if (Camera)
+	{
+		const float HeadYaw = Camera->GetComponentRotation().Yaw;
+		Move = FRotator(0.0f, HeadYaw, 0.0f).RotateVector(Move);
+	}
+
 	AddActorWorldOffset(Move * VRMoveSpeed * DeltaSeconds, false);
 }
 
@@ -795,6 +866,9 @@ void ACatchBallPawn::RefreshVrPanel()
 			FString::Printf(TEXT("AI exercise tips    (Caught %d / %d)"), SuccessCount, TotalPitches),
 			FColor(150, 210, 255));
 
+		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
+		//    타입 성공률 1줄 + 코칭 2줄 + 드릴 1개로 압축. 전체 리포트는 데스크톱 결과 화면이 담당.
+		constexpr int32 MaxContentRows = 4;
 		int32 Row = 0;
 
 		// 타구 타입별 성공률 — AI 문장보다 먼저, 근거 숫자를 눈으로 확인할 수 있게.
@@ -811,20 +885,20 @@ void ACatchBallPawn::RefreshVrPanel()
 				if (!Line.IsEmpty()) { Line += TEXT("   "); }
 				Line += FString::Printf(TEXT("%s %d/%d"), Short[i], S, A);
 			}
-			if (!Line.IsEmpty() && Row < UVRInfoPanel::MaxRows)
+			if (!Line.IsEmpty() && Row < MaxContentRows)
 			{
 				VrPanel->SetRow(Row++, Line, FColor(150, 200, 255));
 			}
 		}
 
-		for (const FString& L : WrapForPanel(CoachingText, 30, 3))
+		for (const FString& L : WrapCatchPanel(CoachingText, 30, 2))
 		{
-			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			if (Row >= MaxContentRows) { break; }
 			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
 		}
 		for (const FTrainingDrill& D : LastDrills)
 		{
-			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			if (Row >= MaxContentRows) { break; }
 			VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
 		}
 		VrPanel->HideRowsFrom(Row);

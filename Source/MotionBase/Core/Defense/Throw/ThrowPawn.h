@@ -116,7 +116,7 @@ protected:
 	TObjectPtr<UVRInfoPanel> VrPanel;
 
 	// ── VR 송구 튜닝 ──
-	/** 이 속도(cm/s) 이상으로 컨트롤러를 휘두르면 송구로 인식. */
+	/** 이 속도(cm/s) 이상으로 컨트롤러를 휘두르면 **송구 동작 시작**으로 본다(발사 아님). */
 	UPROPERTY(EditAnywhere, Category = "Throw|VR")
 	float ThrowTriggerSpeedCms = 250.0f;
 
@@ -124,9 +124,28 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Throw|VR")
 	float MinThrowSpeedCms = 250.0f;
 
-	/** 파워 1 에 대응하는 손 속도 (cm/s). 이 이상은 최대 파워. */
+	/**
+	 * 파워 1 에 대응하는 손 속도 (cm/s). 이 이상은 최대 파워.
+	 * 실측 기준: VR 컨트롤러를 힘껏 휘두르면 대략 800~1100 cm/s 가 나온다.
+	 * (예전 1500 은 사람이 도달하기 어려운 값이라 항상 저파워로 눌렸다.)
+	 */
 	UPROPERTY(EditAnywhere, Category = "Throw|VR")
-	float MaxThrowSpeedCms = 1500.0f;
+	float MaxThrowSpeedCms = 900.0f;
+
+	/**
+	 * 손이 최고 속도의 이 비율 아래로 **감속하면 릴리스**로 본다 (0~1).
+	 *
+	 * ⚠️ 이게 없으면 던지기가 성립하지 않는다: 손 속도가 트리거를 넘는 순간 곧바로 발사하면
+	 *    그 시점은 **팔을 막 뻗기 시작한 지점**이라 속도가 트리거값과 같고 → 파워 ≈ 0 →
+	 *    공이 발밑에 툭 떨어진다. 실제 릴리스는 "가장 빠른 순간 직후"이므로,
+	 *    피크 속도를 기억했다가 감속이 시작될 때 그 **피크값**으로 발사한다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Throw|VR", meta = (ClampMin = "0.1", ClampMax = "0.95"))
+	float ReleaseDecelRatio = 0.65f;
+
+	/** 던지기 동작이 이 시간(초)을 넘기면 피크값으로 강제 발사 (감속을 못 잡는 경우 대비). */
+	UPROPERTY(EditAnywhere, Category = "Throw|VR", meta = (ClampMin = "0.1"))
+	float MaxThrowMotionSec = 0.6f;
 
 	/** VR 포구 인정 반경 (cm) — 글러브(컨트롤러)와 급구 사이 거리. */
 	UPROPERTY(EditAnywhere, Category = "Throw|VR")
@@ -225,6 +244,21 @@ private:
 	/** 베이스 → 월드 위치 (폰 기준 오프셋 적용). */
 	FVector BaseLocation(EBaseType Base) const;
 
+	/**
+	 * 플레이어가 서 있는 **바닥면 Z** (월드).
+	 * VR: 트래킹 원점이 Stage 라 바닥 = 폰 루트 Z. PC: 루트가 몸 중심이라 바닥 = 루트 - 캡슐 반높이.
+	 */
+	float FloorZ() const;
+
+	/** 급구가 도착하는 높이(=글러브가 닿는 가슴 높이, 월드 Z). */
+	float CatchHeightZ() const;
+
+	/** 송구가 출발하는 손 높이 (월드 Z). */
+	float ThrowHandZ() const;
+
+	/** 송구 궤적 예측선을 그린다 (지금 파워로 던지면 어디로 가는지). */
+	void DrawPredictedArc(float Power) const;
+
 	/** EBaseType → 집계 배열 인덱스. */
 	static int32 BaseIndexOf(EBaseType Base);
 
@@ -298,6 +332,11 @@ private:
 	FVector PrevControllerLoc = FVector::ZeroVector;
 	bool    bHasPrevControllerLoc = false;
 	float   ThrowCooldown = 0.0f;   // 던진 직후 재던짐 방지
+
+	// 던지기 동작 추적 — 피크 속도에서 릴리스를 잡기 위한 상태 (TickVRThrow).
+	bool  bThrowMotionActive = false;  // 트리거 속도를 넘어 동작이 시작됨
+	float ThrowPeakSpeedCms  = 0.0f;   // 동작 중 관측한 최고 손 속도
+	float ThrowMotionSec     = 0.0f;   // 동작이 시작된 뒤 흐른 시간
 
 	/** VR: 컨트롤러 속도로 송구 인식 + 파워 산출. */
 	void TickVRThrow(float DeltaSeconds);

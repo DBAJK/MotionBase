@@ -587,6 +587,13 @@ void ACoverPawn::UpdateVRMenu(float DeltaSeconds)
 {
 	if (VrCooldown > 0.0f) { VrCooldown = FMath::Max(0.0f, VrCooldown - DeltaSeconds); }
 
+	// 패널을 플레이어 정면에 고정 배치(swimming 제거·이질감 제거). 겨눔 판정이 카드
+	// 위치를 쓰므로 PickHoveredCard 보다 먼저 자리를 잡는다.
+	if (VrPanel && Camera)
+	{
+		VrPanel->UpdateComfortAnchor(Camera, MenuDistanceCm, 60.0f, /*RecenterDeg=*/55.0f);
+	}
+
 	// 답을 냈거나 대기 중이면 겨눔 비활성.
 	const bool bCanPick = !bAnswered && !bSessionOver && !bWaitingNext && VrCooldown <= 0.0f;
 	const int32 Hover = bCanPick ? PickHoveredCard() : INDEX_NONE;

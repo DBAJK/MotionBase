@@ -234,7 +234,8 @@ TArray<EGameModeId> UModeManager::GetMenuModes()
 	// 기능성피트니스)는 구현되면 여기에 다시 추가한다 (열거형·표시명·설명은 그대로 유지).
 	return {
 		EGameModeId::Defense,
-		EGameModeId::Batting
+		EGameModeId::Batting,
+		EGameModeId::AICoaching   // 기록 기반 AI 운동 추천 (읽기 전용 리뷰 화면)
 	};
 }
 
@@ -248,6 +249,7 @@ FText UModeManager::GetModeDisplayName(EGameModeId Mode)
 	case EGameModeId::BaseRunning:       return FText::FromString(TEXT("베이스 러닝"));
 	case EGameModeId::Batting:           return FText::FromString(TEXT("타격 훈련"));
 	case EGameModeId::FunctionalFitness: return FText::FromString(TEXT("기능성 피트니스"));
+	case EGameModeId::AICoaching:        return FText::FromString(TEXT("AI 코칭 (운동 추천)"));
 	default:                             return FText::FromString(TEXT("알 수 없는 모드"));
 	}
 }
@@ -262,6 +264,7 @@ FName UModeManager::GetModeIdName(EGameModeId Mode)
 	case EGameModeId::BaseRunning:       return TEXT("BaseRunning");
 	case EGameModeId::Batting:           return TEXT("Batting");
 	case EGameModeId::FunctionalFitness: return TEXT("FunctionalFitness");
+	case EGameModeId::AICoaching:        return TEXT("AICoaching");
 	default:                             return NAME_None;
 	}
 }
@@ -282,6 +285,8 @@ FText UModeManager::GetModeDescription(EGameModeId Mode)
 		return FText::FromString(TEXT("날아오는 공에 타이밍을 맞춰 스윙합니다. 정확도·효율·일관성 3축 채점."));
 	case EGameModeId::FunctionalFitness:
 		return FText::FromString(TEXT("관절각과 반복 횟수를 측정하는 야구 특화 피트니스. (LiDAR)"));
+	case EGameModeId::AICoaching:
+		return FText::FromString(TEXT("그동안의 기록을 분석해 약점과 추천 운동, AI 코칭을 보여줍니다. (읽기 전용)"));
 	default:
 		return FText::GetEmpty();
 	}
@@ -292,7 +297,8 @@ bool UModeManager::IsModeImplemented(EGameModeId Mode)
 	// ROADMAP Phase 1 기준: 타격만 플레이 가능. 나머지는 Phase 3~4 에서 열린다.
 	// 모드를 구현하면 여기에 추가하고 AMotionBaseGameMode::GetPawnClassForMode 에도 폰을 등록할 것.
 	return Mode == EGameModeId::Batting
-		|| Mode == EGameModeId::Defense;
+		|| Mode == EGameModeId::Defense
+		|| Mode == EGameModeId::AICoaching;   // 읽기 전용 리뷰 화면 (StartAICoaching 로 진입)
 }
 
 TArray<EDifficultyLevel> UModeManager::GetMenuDifficulties()

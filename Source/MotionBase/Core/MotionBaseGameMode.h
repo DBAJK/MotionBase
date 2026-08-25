@@ -32,6 +32,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")
 	bool StartDefenseDrill(int32 DrillIndex);
 	
+	/**
+	 * AI 코칭(운동 추천) 리뷰 화면으로 진입. 게임 세션이 아니라 저장 이력을 읽는
+	 * 읽기 전용 화면이라, SetActiveMode(새 세션 개시)를 거치지 않고 폰만 교체한다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")
+	void StartAICoaching();
+
 	/** 시작 화면(모드 선택)으로 복귀. */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")
 	void ReturnToModeSelect();

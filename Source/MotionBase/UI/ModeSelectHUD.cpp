@@ -7,6 +7,7 @@
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "HeadMountedDisplayFunctionLibrary.h"
 
 namespace ModeSelectStyle
 {
@@ -159,6 +160,15 @@ void AModeSelectHUD::DrawHUD()
 	Super::DrawHUD();
 
 	if (!Canvas)
+	{
+		return;
+	}
+
+	// ⚠️ VR(HMD)에서는 이 평면 Canvas HUD 를 그리지 않는다.
+	// Canvas 는 스테레오에서 눈마다 다른 위치로 찍혀 좌/우 화면이 어긋나 보이고,
+	// 3D 월드 패널(UVRInfoPanel)과 겹쳐 어지럽다. 헤드셋 안 UI 는 각 폰의 VrPanel 이 전담한다.
+	// (평면 HUD 는 HMD 가 없는 PC 개발/시연 화면 전용.)
+	if (UHeadMountedDisplayFunctionLibrary::IsHeadMountedDisplayEnabled())
 	{
 		return;
 	}

@@ -111,9 +111,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")
 	float DwellAngleDeg = 8.0f;
 
-	/** 메뉴를 플레이어 앞 몇 cm 에 띄울지. */
+	/** 메뉴를 플레이어 앞 몇 cm 에 띄울지. (너무 가까우면 카드가 커 보여 부담 → 3.2m) */
 	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")
-	float MenuDistanceCm = 250.0f;
+	float MenuDistanceCm = 320.0f;
 
 	/** 메뉴 중심 높이 (cm, 바닥 기준). 눈높이쯤에 두면 자연스럽다. */
 	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")
