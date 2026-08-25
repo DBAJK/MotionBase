@@ -56,3 +56,18 @@ enum class EBattingStance : uint8
 	Right  UMETA(DisplayName = "우타"),
 	Left   UMETA(DisplayName = "좌타")
 };
+
+/**
+ * 베이스 종류. 수비 계열 훈련의 공통 어휘 —
+ * 송구(목표 베이스 지정)·백업(커버 대상)이 같은 열거형을 쓴다.
+ * (원래 Cover/CoverTypes.h 에 있던 것을 계약 계층으로 올렸다. UENUM 경로는
+ *  모듈 기준(/Script/MotionBase.EBaseType)이라 헤더를 옮겨도 에셋 참조는 유지된다.)
+ */
+UENUM(BlueprintType)
+enum class EBaseType : uint8
+{
+	First   UMETA(DisplayName = "1루"),
+	Second  UMETA(DisplayName = "2루"),
+	Third   UMETA(DisplayName = "3루"),
+	Home    UMETA(DisplayName = "홈")
+};

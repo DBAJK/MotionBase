@@ -3,8 +3,12 @@
 #include "Actors/Bat.h"
 #include "Actors/PitchingZone.h"
 #include "Analysis/HitModel.h"
+#include "Analysis/WeaknessDetector.h"
+#include "AI/DrillCatalog.h"
+#include "AI/AIFeedbackService.h"
 #include "Core/ModeManager.h"
 #include "Core/MotionBaseGameMode.h"
+#include "GameFramework/PlayerController.h"
 #include "Camera/CameraComponent.h"
 #include "Components/InputComponent.h"
 #include "Components/SceneComponent.h"
@@ -13,6 +17,28 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
+
+namespace
+{
+	// TextRender 는 자동 줄바꿈이 없다 → 글자수로 하드 랩(한글은 한 글자=한 글리프라 안전).
+	// MaxLines 를 넘으면 마지막 줄에 '…' 로 잘렸음을 표시한다.
+	TArray<FString> WrapForPanel(const FString& In, int32 MaxCharsPerLine, int32 MaxLines)
+	{
+		TArray<FString> Lines;
+		int32 i = 0;
+		const int32 Len = In.Len();
+		while (i < Len && Lines.Num() < MaxLines)
+		{
+			Lines.Add(In.Mid(i, MaxCharsPerLine));
+			i += MaxCharsPerLine;
+		}
+		if (i < Len && Lines.Num() > 0)
+		{
+			Lines.Last().Append(TEXT(" …"));
+		}
+		return Lines;
+	}
+}
 
 AVRBattingPawn::AVRBattingPawn()
 {
@@ -55,6 +81,11 @@ void AVRBattingPawn::BeginPlay()
 
 	// 룸스케일 기준(바닥) — 서 있는 타자의 실제 키가 반영되도록.
 	UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
+
+	// 나가기 제스처: 타격 준비 자세(배트를 세움)와 겹치므로 가장 빡빡하게 잡는다.
+	// 수직에서 ±18° 이내로 3초 — 스탠스에서 배트를 이 정도로 곧게 세워 3초를 버티긴 어렵다.
+	ExitGesture.UpThreshold = 0.95f;
+	ExitGesture.HoldSec     = 3.0f;
 
 	// VR 상태 패널 자식 텍스트 생성 (한 번).
 	if (VrPanel) { VrPanel->BuildPanel(); }
@@ -123,10 +154,18 @@ void AVRBattingPawn::BeginPlay()
 		PitchingZone->OnPitchThrown.AddDynamic(this, &AVRBattingPawn::HandlePitchThrown);
 		PitchingZone->OnPitchArrived.AddDynamic(this, &AVRBattingPawn::HandlePitchArrived);
 	}
+
+	// AI 운동 추천 서비스 (키가 없으면 요청 시 조용히 생략됨).
+	FeedbackService = NewObject<UAIFeedbackService>(this);
+	FeedbackService->OnFeedbackReady.AddDynamic(this, &AVRBattingPawn::HandleCoachingReady);
 }
 
 void AVRBattingPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// 모드 복귀([M]·배트 들기)·앱 종료로 폰이 사라지기 전에 진행 중이던 세션을 저장한다.
+	// 다음 모드 진입 시 SetActiveMode 가 누적을 비우므로, 여기서 flush 하지 않으면 기록이 사라진다.
+	FlushSessionToSave();
+
 	if (PitchingZone)
 	{
 		PitchingZone->Destroy();
@@ -182,21 +221,57 @@ void AVRBattingPawn::AnalyzeSwingNow()
 	LastHit = UHitModel::Simulate(LastMetrics, ScoringConfig);
 	LastSwingScore = UScoringService::ScoreSwing(LastMetrics, ScoringConfig);
 
-	if (!LastMetrics.bContacted)
+	// ── ① 지켜본 공 (스윙 동작 없음) — 시도가 아니다 ──
+	// 세션 통계에도, 동적 난이도에도 넣지 않는다. 안 휘두른 것은 실력 신호가 아니라
+	// 선구(選球)이거나 그냥 서 있었던 것이라, 어느 쪽으로도 해석하면 안 된다.
+	if (!LastMetrics.bSwingDetected)
 	{
-		// 스윙 동작이 감지되지 않음/헛스윙.
-		++MissedPitchCount;
-		LastCall = TEXT("No swing");
-		ShowResultText(TEXT("MISS"), FLinearColor(0.7f, 0.7f, 0.75f));
+		++TakeCount;
+		LastCall = TEXT("Take");
+		ShowResultText(TEXT("TAKE"), FLinearColor(0.7f, 0.7f, 0.75f));
 		return;
 	}
 
-	// 실제 스윙 → 집계·연출.
+	// ── ② 여기부터는 실제로 휘두른 스윙 (컨택 / 헛스윙 모두) = 시도 1건 ──
+	// 헛스윙도 반드시 여기 들어와야 한다. 빠지면 컨택률 분모가 사라져
+	// UWeaknessDetector 가 컨택률 약점을 영원히 못 잡는다.
 	SessionHistory.Add(LastMetrics);
 	SessionScore = UScoringService::ScoreSession(SessionHistory, ScoringConfig);
 	++SwingCount;
-	++ContactCount;
 	bHasResult = true;
+
+	// 시도 1건 = 기록 1건. 세션 종료 시 FinalizeSession 이 이것들을 한 판으로 저장한다.
+	if (UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
+	{
+		MM->RecordResult(LastSwingScore);
+	}
+
+	// 동적 난이도는 **휘두른 스윙에서만** 양방향으로 움직인다.
+	// (컨택 여부를 그대로 넘기므로 헛스윙이면 난이도가 내려간다 — 예전엔 컨택만 도달해
+	//  난이도가 올라가기만 했다.)
+	if (PitchingZone)
+	{
+		PitchingZone->RegisterSwingOutcome(LastMetrics.bContacted, LastSwingScore.TotalScore / 100.0f);
+	}
+
+	// ── ③ 헛스윙 — 집계는 했으니 연출만 하고 끝 ──
+	if (!LastMetrics.bContacted)
+	{
+		++WhiffCount;
+		LastCall = TEXT("Whiff");
+		ShowResultText(TEXT("MISS"), FLinearColor(0.85f, 0.55f, 0.35f));
+
+		UE_LOG(LogMotionBase, Log, TEXT("[VRBatting] #%d Whiff (closest %.1f cm) peak=%.1f m/s"),
+			SwingCount, LastMetrics.ContactDistanceCm, LastMetrics.PeakSpeedMps);
+		return;
+	}
+
+	// ── ④ 컨택 ──
+	++ContactCount;
+
+	// 비거리 집계 (결과 화면용) — 컨택한 타구만.
+	MaxCarryDistanceM = FMath::Max(MaxCarryDistanceM, LastHit.CarryDistanceM);
+	SumCarryDistanceM += LastHit.CarryDistanceM;
 
 	if (LastHit.Class == EHitClass::HomeRun) { ++HomeRunCount; }
 	else if (LastHit.Class == EHitClass::Hit) { ++HitCount; }
@@ -217,10 +292,7 @@ void AVRBattingPawn::AnalyzeSwingNow()
 		const FVector LocalDir = FRotator(LastHit.LaunchAngleDeg, LastHit.SprayAngleDeg * SpraySign, 0.0f).Vector();
 		const FVector HitDir = GetActorTransform().TransformVectorNoScale(LocalDir).GetSafeNormal();
 		PitchingZone->LaunchHitBall(HitDir, LastHit.ExitVelocityMps);
-
-		// 동적 난이도 반영 — 이번 스윙 성적으로 다음 투구의 구속·변화구를 조정한다.
-		// (여기는 컨택한 스윙만 도달한다. 지켜본 공은 위에서 조기 반환.)
-		PitchingZone->RegisterSwingOutcome(true, LastSwingScore.TotalScore / 100.0f);
+		// (동적 난이도는 위 ② 에서 컨택/헛스윙 공통으로 이미 반영했다.)
 	}
 
 	UE_LOG(LogMotionBase, Log, TEXT("[VRBatting] #%d %s EV=%.1f m/s peak=%.1f total=%.1f"),
@@ -249,14 +321,140 @@ void AVRBattingPawn::ShowResultText(const FString& Text, const FLinearColor& Col
 
 void AVRBattingPawn::ResetSession()
 {
+	// 리셋 = 지금 세션 종료 + 새 세션 시작. 버리기 전에 저장한다 (SwingTestPawn 과 동일).
+	FlushSessionToSave();
+
 	SessionHistory.Reset();
 	SessionScore = FScoreResult();
 	LastSwingScore = FScoreResult();
 	LastMetrics = FSwingMetrics();
 	LastHit = FBattedBallResult();
 	LastCall.Reset();
-	SwingCount = ContactCount = HomeRunCount = HitCount = MissedPitchCount = 0;
+	SwingCount = ContactCount = HomeRunCount = HitCount = WhiffCount = TakeCount = 0;
+	MaxCarryDistanceM = SumCarryDistanceM = 0.0f;
+	LastReport = FWeaknessReport();
+	LastChronic = FChronicWeaknessReport();
+	LastDrills.Reset();
 	bHasResult = false;
+}
+
+bool AVRBattingPawn::GetSessionSummary(FSessionSummary& OutSummary) const
+{
+	// 결과 화면은 트리거로 리포트를 요청한 동안만 뜬다 — 타격은 끝이 정해진 종목이 아니라
+	// (연속 투구) "세션 종료" 시점이 따로 없기 때문. 요청 = 지금까지의 판을 보겠다는 뜻.
+	if (CoachingShowTimer <= 0.0f || SessionHistory.Num() == 0)
+	{
+		return false;
+	}
+
+	OutSummary = FSessionSummary();
+	OutSummary.Mode = EGameModeId::Batting;
+	OutSummary.Difficulty = SessionDifficulty;
+	OutSummary.Score = SessionScore;
+
+	OutSummary.SwingCount   = SwingCount;
+	OutSummary.ContactCount = ContactCount;
+	OutSummary.HomeRunCount = HomeRunCount;
+	OutSummary.HitCount     = HitCount;
+	// 삼진·볼넷은 이 폰이 볼카운트를 돌리지 않아 집계하지 않는다 (0 유지).
+
+	OutSummary.MaxCarryDistanceM = MaxCarryDistanceM;
+	OutSummary.AvgCarryDistanceM = (ContactCount > 0) ? (SumCarryDistanceM / ContactCount) : 0.0f;
+
+	OutSummary.Report  = LastReport;
+	OutSummary.Chronic = LastChronic;
+	OutSummary.Drills  = LastDrills;
+	OutSummary.CoachingText = CoachingText;
+	OutSummary.bAwaitingCoaching = bAwaitingCoaching;
+
+	// 신체역학은 VR 경로에 카메라 입력이 없어 비워 둔다 (BodyMechanics.bValid=false).
+	OutSummary.bMockBodyMechanics = false;
+
+	// 과거 기록 비교 — 이번 세션은 아직 저장 전이라 GetModeStats 에 섞이지 않는다.
+	if (const UGameInstance* GI = GetGameInstance())
+	{
+		if (const UModeManager* MM = GI->GetSubsystem<UModeManager>())
+		{
+			OutSummary.PriorStats = MM->GetModeStats(EGameModeId::Batting);
+			OutSummary.BestTotalScore = MM->GetBestTotalScore(EGameModeId::Batting);
+			OutSummary.bNewRecord = (SessionScore.bValid)
+				&& (OutSummary.BestTotalScore < 0.0f || SessionScore.TotalScore > OutSummary.BestTotalScore);
+		}
+	}
+
+	return true;
+}
+
+FWeaknessReport AVRBattingPawn::BuildSessionReport() const
+{
+	// VR 경로엔 카메라(MediaPipe) 포즈 입력이 없어 신체역학 축은 비어 있다.
+	// (SwingTestPawn 은 Mock 포즈로 AppendBodyMechanicsWeaknesses 까지 붙인다.)
+	return UWeaknessDetector::DetectSwing(SessionHistory, ScoringConfig);
+}
+
+void AVRBattingPawn::FlushSessionToSave()
+{
+	UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr;
+	if (!MM)
+	{
+		return;
+	}
+
+	// 세션 집계 점수 + 약점 리포트를 함께 확정 저장한다. 리포트는 저장 시점의 SessionHistory 로
+	// 새로 계산한다 — 트리거(코칭 요청)를 한 번도 안 눌렀어도 만성 약점 추적이 이어지도록.
+	MM->FinalizeSession(SessionScore, BuildSessionReport());
+}
+
+void AVRBattingPawn::RequestCoaching()
+{
+	if (bAwaitingCoaching)
+	{
+		return; // 이미 대기 중 — 중복 호출/과금 방지.
+	}
+	if (SessionHistory.Num() == 0)
+	{
+		CoachingText = TEXT("Take a few swings first.");
+		return;
+	}
+
+	// 1) 결정론적 약점 판별 + 드릴 추천 (네트워크 불필요 — 항상 나온다).
+	//    저장(FlushSessionToSave)과 같은 함수를 쓴다 — 화면에 보인 리포트와 저장된 리포트가
+	//    달라지면 다음 세션의 만성 약점 계산이 화면과 어긋난다.
+	LastReport = BuildSessionReport();
+
+	// 과거 저장 이력에서 만성 약점·추세를 반영 (SwingTestPawn 과 동일).
+	LastChronic = FChronicWeaknessReport();
+	if (UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
+	{
+		LastChronic = UWeaknessDetector::AnalyzeTrend(MM->GetHistory(), EGameModeId::Batting, 5, NAME_None);
+	}
+	LastDrills = UDrillCatalog::RecommendWithHistory(LastReport, LastChronic, 3);
+
+	// 2) AI 코칭 요청 (키가 있으면 표현 문장을 얹는다).
+	CoachingShowTimer = 14.0f; // 요청 순간부터 패널에 코칭 오버레이를 띄운다.
+	if (FeedbackService && FeedbackService->IsConfigured())
+	{
+		CoachingText = TEXT("Requesting AI coaching...");
+		bAwaitingCoaching = true;
+		FeedbackService->RequestSwingCoaching(LastReport, LastDrills, LastChronic);
+	}
+	else
+	{
+		bAwaitingCoaching = false;
+		CoachingText = TEXT("AI coaching not configured (Config/Secrets.ini)");
+	}
+
+	UE_LOG(LogMotionBase, Log, TEXT("[VRBatting] 코칭 요청: 약점 %d개, 드릴 %d개"),
+		LastReport.Weaknesses.Num(), LastDrills.Num());
+}
+
+void AVRBattingPawn::HandleCoachingReady(bool bSuccess, const FString& Text)
+{
+	bAwaitingCoaching = false;
+	CoachingText = Text; // 성공=코칭 문장, 실패=사유. 둘 다 그대로 보여준다.
+	CoachingShowTimer = FMath::Max(CoachingShowTimer, 14.0f); // 응답 도착 시점부터 충분히 읽을 시간.
+	UE_LOG(LogMotionBase, Log, TEXT("[VRBatting] AI 코칭 %s: %s"),
+		bSuccess ? TEXT("수신") : TEXT("실패"), *Text);
 }
 
 void AVRBattingPawn::Tick(float DeltaSeconds)
@@ -283,16 +481,41 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 		}
 	}
 
+	// 컨트롤러 트리거(아래 검지 버튼)를 당기면 지금까지의 스윙으로 AI 운동 추천을 요청한다.
+	// (스윙은 배트 궤적으로 자동 판정되므로 트리거는 비어 있다 — 코칭 버튼으로 재활용.)
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		const TCHAR* Side = (SessionStance == EBattingStance::Left) ? TEXT("Left") : TEXT("Right");
+		const float Generic = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("MotionController_%s_Trigger"), Side)));
+		const float Vive    = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("Vive_%s_Trigger"), Side)));
+		const bool bHeld = FMath::Max(Generic, Vive) >= TriggerPressThreshold;
+		if (bHeld && !bTriggerHeldPrev)
+		{
+			RequestCoaching();
+		}
+		bTriggerHeldPrev = bHeld;
+	}
+
 	// VR 뒤로가기 — 배트를 위(천장)로 들고 유지하면 모드 선택으로 복귀.
+	// ⚠️ 타격은 이 제스처의 오발동 위험이 가장 크다 — **타자의 준비 자세가 배트를 거의
+	//    수직으로 세운 채 다음 투구를 기다리는 것**이라 기본 임계(37°/1.5s)와 그대로 겹친다.
+	//    그래서 ① 임계를 수직 ±18° 로 좁히고 ② 공이 날아오는 동안엔 진행을 동결한다.
+	//    (동결이라 투구 사이 틈에 배트를 세워 두면 정상적으로 나갈 수 있다.)
 	if (Bat)
 	{
 		bool bExit = false;
-		ExitGesture.Update(Bat->GetAimForwardVector(), Bat->IsTracking(), DeltaSeconds, bExit);
+		ExitGesture.Update(Bat->GetAimForwardVector(), Bat->IsTracking(),
+			/*bAllowed=*/!bPitchActive, DeltaSeconds, bExit);
 		if (bExit)
 		{
 			ReturnToModeSelect();
 			return; // 폰이 곧 교체된다 — 이 프레임 종료.
 		}
+	}
+
+	if (CoachingShowTimer > 0.0f)
+	{
+		CoachingShowTimer -= DeltaSeconds;
 	}
 
 	// 상태·세션 정보는 월드 고정 3D 패널로 (헤드셋 안에서 보이게).
@@ -303,6 +526,46 @@ void AVRBattingPawn::RefreshVrPanel()
 {
 	if (!VrPanel)
 	{
+		return;
+	}
+
+	// AI 운동 추천 오버레이 — 트리거로 요청한 뒤 잠시 코칭+드릴을 패널에 띄운다.
+	// (한글 코칭은 KRFont 가 있으면 렌더된다. 없으면 데스크톱 로그로 확인.)
+	if (CoachingShowTimer > 0.0f)
+	{
+		// 헤드셋 안 결과 요약 — 데스크톱 미러는 ISessionResultView 로 전체 패널을 그리지만,
+		// 헤드셋에서는 3D 텍스트라 줄 수가 한정돼 핵심 숫자만 압축해 보여준다.
+		VrPanel->SetTitle(
+			FString::Printf(TEXT("Session result    score %.1f"), SessionScore.TotalScore),
+			FColor(150, 210, 255));
+
+		int32 Row = 0;
+		if (Row < UVRInfoPanel::MaxRows)
+		{
+			const float ContactRate = (SwingCount > 0)
+				? (100.0f * ContactCount / SwingCount) : 0.0f;
+			VrPanel->SetRow(Row++,
+				FString::Printf(TEXT("swings %d  contact %.0f%%  HR %d  hits %d  takes %d"),
+					SwingCount, ContactRate, HomeRunCount, HitCount, TakeCount),
+				FColor(150, 200, 255));
+		}
+
+		for (const FString& L : WrapForPanel(CoachingText, 30, 3))
+		{
+			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
+		}
+		for (const FTrainingDrill& D : LastDrills)
+		{
+			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
+		}
+		VrPanel->HideRowsFrom(Row);
+
+		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended exercises"),
+			FColor(150, 156, 168));
+		VrPanel->SetHint(TEXT("trigger = request again · raise bat = exit · [M/R]"),
+			FColor(110, 116, 128));
 		return;
 	}
 
@@ -381,8 +644,8 @@ void AVRBattingPawn::RefreshVrPanel()
 	else
 	{
 		VrPanel->SetHint(
-			FString::Printf(TEXT("Session: swings %d · HR %d · hits %d · takes %d | avg %.1f    ·    raise bat = exit   [M/R] exit/reset"),
-				SwingCount, HomeRunCount, HitCount, MissedPitchCount, SessionScore.TotalScore),
+			FString::Printf(TEXT("Session: swings %d (contact %d · whiff %d) · HR %d · hits %d · takes %d | avg %.1f    ·    trigger = AI coaching · raise bat = exit   [M/R]"),
+				SwingCount, ContactCount, WhiffCount, HomeRunCount, HitCount, TakeCount, SessionScore.TotalScore),
 			FColor(110, 116, 128));
 	}
 }

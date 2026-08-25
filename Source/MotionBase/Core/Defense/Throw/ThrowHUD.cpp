@@ -53,8 +53,8 @@ void AThrowHUD::DrawHUD()
 	const float S = FMath::Clamp(W / 1920.0f, 0.7f, 1.4f);
 
 	// ── 상단 진행/성공 패널 ──
-	const float PanelW = 420.0f * S;
-	const float PanelH = 56.0f * S;
+	const float PanelW = 560.0f * S;
+	const float PanelH = 92.0f * S;
 	const float PanelX = (W - PanelW) * 0.5f;
 	const float PanelY = 28.0f * S;
 	DrawPanel(PanelX, PanelY, PanelW, PanelH, TwPanelBg, TwPanelLine);
@@ -65,6 +65,65 @@ void AThrowHUD::DrawHUD()
 
 	const FString SuccessStr = FString::Printf(TEXT("On-target  %d"), Pawn->GetSuccessCount());
 	DrawLabel(SuccessStr, PanelX + PanelW - 140.0f * S, PanelY + 14.0f * S, TwGood, 1.1f * S);
+
+	// ── 지정된 목표 베이스 (측정 지표 ①의 전제 — 어디로 던지는지가 항상 보여야 한다) ──
+	const FString CallLine = FString::Printf(TEXT("THROW TO  %s"),
+		*AThrowPawn::BaseName(Pawn->GetTargetBase()));
+	DrawCentered(CallLine, PanelX + PanelW * 0.5f, PanelY + 42.0f * S,
+		FLinearColor(1.0f, 0.75f, 0.35f, 1.0f), 1.3f * S);
+
+	// ── 단계 안내 + 전환 시계 (측정 지표 ③) ──
+	{
+		FString StageLine;
+		FLinearColor StageColor = TwTextDim;
+		switch (Pawn->GetPhase())
+		{
+		case EThrowPhase::Feed:
+			StageLine = TEXT("Catch the feed  (Space at the right time)");
+			StageColor = FLinearColor(1.0f, 0.75f, 0.35f, 1.0f);
+			break;
+		case EThrowPhase::Ready:
+		{
+			const float Live = Pawn->GetLiveTransferTime();
+			StageLine = (Live >= 0.0f)
+				? FString::Printf(TEXT("Ball in hand - transfer %.2fs"), Live)
+				: FString(TEXT("Ball in hand"));
+			StageColor = TwGood;
+			break;
+		}
+		case EThrowPhase::InFlight:
+			StageLine = TEXT("Ball away...");
+			break;
+		default:
+			StageLine = Pawn->GetLastMetricsLine();
+			break;
+		}
+		if (!StageLine.IsEmpty())
+		{
+			DrawCentered(StageLine, PanelX + PanelW * 0.5f, PanelY + 68.0f * S, StageColor, 0.82f * S);
+		}
+	}
+
+	// ── 세션 누적 측정값 (베이스별 정확도 · 평균 구속 · 평균 전환) ──
+	{
+		FString ByBase;
+		const EBaseType Bases[4] = { EBaseType::First, EBaseType::Second, EBaseType::Third, EBaseType::Home };
+		for (int32 i = 0; i < 4; ++i)
+		{
+			int32 A = 0, Su = 0;
+			Pawn->GetBaseStats(Bases[i], A, Su);
+			if (A <= 0) { continue; }
+			if (!ByBase.IsEmpty()) { ByBase += TEXT("  "); }
+			ByBase += FString::Printf(TEXT("%s %d/%d"), *AThrowPawn::BaseName(Bases[i]), Su, A);
+		}
+
+		const float AvgT = Pawn->GetAverageTransferSec();
+		FString Summary = FString::Printf(TEXT("avg %.0f km/h"), Pawn->GetAverageReleaseKmh());
+		if (AvgT >= 0.0f) { Summary += FString::Printf(TEXT("   transfer %.2fs"), AvgT); }
+		if (!ByBase.IsEmpty()) { Summary = ByBase + TEXT("      ") + Summary; }
+
+		DrawCentered(Summary, W * 0.5f, PanelY + PanelH + 10.0f * S, TwTextDim, 0.78f * S);
+	}
 
 	// ── 하단 파워 게이지 ──
 	const float GaugeW = 560.0f * S;
@@ -79,10 +138,13 @@ void AThrowHUD::DrawHUD()
 	const float Power = FMath::Clamp(Pawn->GetCurrentPower(), 0.0f, 1.0f);
 	DrawRect(GaugeFill, GaugeX + 2.0f, GaugeY + 2.0f, (GaugeW - 4.0f) * Power, GaugeH - 4.0f);
 
-	// 정답 파워 표시선 (초록 세로선) — "여기서 떼라"
-	// 주: 정답 파워는 폰 내부값이라, 게이지 위에 표식만 그린다. Pawn 에 getter 가
-	//     없으므로 여기선 현재 파워만 보여주고, 정답선은 아래 라벨로 안내한다.
-	// (정답선을 그리려면 Pawn 에 GetIdealPower() 를 추가하면 된다 — 아래 참고)
+	// 정답 파워 표시선 (초록 세로선) — "여기서 떼라".
+	// 목표 베이스마다 거리가 달라 정답 파워도 매번 바뀐다 → 매 시행 다시 그린다.
+	{
+		const float Ideal = FMath::Clamp(Pawn->GetIdealPower(), 0.0f, 1.0f);
+		const float MarkX = GaugeX + 2.0f + (GaugeW - 4.0f) * Ideal;
+		DrawRect(IdealMark, MarkX - 1.5f, GaugeY - 4.0f, 3.0f, GaugeH + 8.0f);
+	}
 
 	// 게이지 라벨
 	DrawCentered(TEXT("Hold Space to charge power, release to throw"),
@@ -93,7 +155,8 @@ void AThrowHUD::DrawHUD()
 		Pawn->IsCharging() ? GaugeFill : TwTextDim, 0.85f * S);
 
 	// ── 조작 안내 ──
-	DrawCentered(TEXT("M to exit"), W * 0.5f, H - 40.0f * S, TwTextDim, 0.75f * S);
+	DrawCentered(TEXT("Space: catch the feed, then hold/release to throw    -    M to exit"),
+		W * 0.5f, H - 40.0f * S, TwTextDim, 0.75f * S);
 
 	// ── 판정 결과 (중앙) ──
 	FString ResultLine;
@@ -101,5 +164,36 @@ void AThrowHUD::DrawHUD()
 	if (Pawn->GetLastOutcomeText(ResultLine, ResultColor))
 	{
 		DrawCentered(ResultLine, W * 0.5f, H * 0.4f, ResultColor, 1.6f * S);
+
+		const FString Metrics = Pawn->GetLastMetricsLine();
+		if (!Metrics.IsEmpty())
+		{
+			DrawCentered(Metrics, W * 0.5f, H * 0.4f + 40.0f * S, TwTextDim, 0.9f * S);
+		}
+	}
+
+	// ── 세션 종료 시 AI 운동 추천 ──
+	const FString& Coaching = Pawn->GetCoachingText();
+	if (!Coaching.IsEmpty())
+	{
+		float PY = H * 0.52f;
+		DrawCentered(TEXT("AI exercise tips"), W * 0.5f, PY, FLinearColor(0.6f, 0.82f, 1.0f, 1.0f), 1.1f * S);
+		PY += 34.0f * S;
+
+		constexpr int32 MaxChars = 60;
+		int32 i = 0;
+		while (i < Coaching.Len())
+		{
+			DrawCentered(Coaching.Mid(i, MaxChars), W * 0.5f, PY, TwTextMain, 0.85f * S);
+			PY += 26.0f * S;
+			i += MaxChars;
+		}
+
+		for (const FTrainingDrill& D : Pawn->GetRecommendedDrills())
+		{
+			DrawCentered(FString::Printf(TEXT("- %s : %s"), *D.Name, *D.FocusCue),
+				W * 0.5f, PY, FLinearColor(1.0f, 0.78f, 0.47f, 1.0f), 0.8f * S);
+			PY += 24.0f * S;
+		}
 	}
 }

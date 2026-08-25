@@ -7,6 +7,8 @@
 #include "Data/ScoreResult.h"
 #include "Data/BattedBall.h"
 #include "Scoring/ScoringService.h"
+#include "Data/TrainingFeedback.h"
+#include "UI/SessionResultView.h"
 #include "UI/VRExitGesture.h"
 #include "VRBattingPawn.generated.h"
 
@@ -16,6 +18,7 @@ class UTextRenderComponent;
 class UVRInfoPanel;
 class ABat;
 class APitchingZone;
+class UAIFeedbackService;
 
 /**
  * VR 타격 폰 — HMD + Vive 컨트롤러(=배트)로 실제 스윙하는 타격 모드.
@@ -33,7 +36,7 @@ class APitchingZone;
  * ⚠️ 위치 추적(베이스 스테이션)이 없으면 회전만 되고 스윙 측정 불가 — HUD 에 경고 표시.
  */
 UCLASS()
-class MOTIONBASE_API AVRBattingPawn : public APawn
+class MOTIONBASE_API AVRBattingPawn : public APawn, public ISessionResultView
 {
 	GENERATED_BODY()
 
@@ -41,6 +44,15 @@ public:
 	AVRBattingPawn();
 
 	virtual void Tick(float DeltaSeconds) override;
+
+	/**
+	 * ISessionResultView — 트리거로 세션 리포트를 요청한 동안 결과 요약을 채운다.
+	 *
+	 * 헤드셋 안에는 VrPanel 이 압축본을 그리고, 이 인터페이스는 **데스크톱 미러**(AModeSelectHUD)
+	 * 가 전체 결과 패널을 그리는 데 쓴다. 전시 부스에서 운영자가 모니터로 참가자 성적을
+	 * 보는 경로라서, VR 폰에도 이게 있어야 한다 (예전엔 PC 폰에만 있었다).
+	 */
+	virtual bool GetSessionSummary(FSessionSummary& OutSummary) const override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -99,8 +111,29 @@ protected:
 	void ReturnToModeSelect();
 	void ResetSession();
 
+	/** OnFeedbackReady 수신 — AI 코칭 문장(성공) 또는 사유(실패)를 패널에 띄운다. */
+	UFUNCTION()
+	void HandleCoachingReady(bool bSuccess, const FString& Text);
+
+	/** 컨트롤러 트리거(아래 검지 버튼) 이상을 이 값으로 본다. */
+	UPROPERTY(EditAnywhere, Category = "VRBatting|AI", meta = (ClampMin = "0.1", ClampMax = "1.0"))
+	float TriggerPressThreshold = 0.6f;
+
 private:
 	void AnalyzeSwingNow();
+
+	/** 세션 스윙들 → 약점 판별 + 드릴 추천 + AI 코칭 요청 (SwingTestPawn 과 동일 파이프라인). */
+	void RequestCoaching();
+
+	/** 이번 세션의 약점 리포트. 코칭 요청과 저장이 같은 값을 쓰도록 한 곳에서 만든다. */
+	FWeaknessReport BuildSessionReport() const;
+
+	/**
+	 * 진행 중인 세션을 저장 슬롯에 확정한다 ([M] 복귀·[R] 리셋·앱 종료 시).
+	 * 이걸 부르지 않으면 다음 모드 진입의 SetActiveMode 가 누적을 지워 **기록이 통째로 사라진다.**
+	 * (시도가 0건이면 ModeManager 가 빈 세션으로 스스로 무시하므로 무조건 불러도 안전하다.)
+	 */
+	void FlushSessionToSave();
 
 	/** 타격 결과를 3D 텍스트로 띄운다 (헤드셋 안에서 보이게). 영문/기호라 폰트 의존 없음. */
 	void ShowResultText(const FString& Text, const FLinearColor& Color);
@@ -130,12 +163,41 @@ private:
 	TArray<FSwingMetrics> SessionHistory;
 	FString LastCall;
 
+	/** 실제로 휘두른 횟수 (컨택 + 헛스윙). 지켜본 공은 포함하지 않는다. */
 	int32 SwingCount = 0;
 	int32 ContactCount = 0;
 	int32 HomeRunCount = 0;
 	int32 HitCount = 0;
-	int32 MissedPitchCount = 0;
+
+	/** 휘둘렀는데 못 맞힌 횟수. 컨택률 약점의 분모를 만드는 값이라 따로 센다. */
+	int32 WhiffCount = 0;
+
+	/** 스윙 자체를 하지 않고 지켜본 공. 시도가 아니므로 세션 통계·난이도에 넣지 않는다. */
+	int32 TakeCount = 0;
+
+	// 비거리 집계 (결과 화면용) — 컨택한 타구만.
+	float MaxCarryDistanceM = 0.0f;
+	float SumCarryDistanceM = 0.0f;
+
 	bool bHasResult = false;
+
+	// ── AI 운동 추천 ──
+	UPROPERTY(Transient)
+	TObjectPtr<UAIFeedbackService> FeedbackService;
+
+	/** 이번 요청으로 뽑힌 추천 드릴 (패널 표시용). */
+	TArray<FTrainingDrill> LastDrills;
+
+	/** 마지막 요청 시점의 약점 리포트·만성 추세 (결과 화면이 그대로 그린다). */
+	FWeaknessReport LastReport;
+	FChronicWeaknessReport LastChronic;
+
+	/** 마지막 코칭 문장(성공) 또는 사유(실패). */
+	FString CoachingText;
+
+	bool bAwaitingCoaching = false;   // 요청 후 응답 대기 중
+	bool bTriggerHeldPrev = false;    // 트리거 눌림 에지 검출용
+	float CoachingShowTimer = 0.0f;   // 코칭 오버레이를 패널에 띄워두는 잔여 시간(초)
 
 	/** VR '배트 위로 들어 나가기' 제스처 상태 (헤드셋만으로 모드 선택 복귀). */
 	FVRExitGesture ExitGesture;

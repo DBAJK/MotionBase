@@ -58,6 +58,15 @@ class MOTIONBASE_API UWeaknessDetector : public UObject
 
 public:
 	/**
+	 * 리포트에 약점으로 남길 최소 심각도. 이 미만은 "그럭저럭 됐다"로 보고 버린다.
+	 *
+	 * ⚠️ **모든 모드가 이 값을 공유해야 한다.** 타격 0.15 / 수비 0.20 처럼 갈라지면
+	 *    같은 수행도(0.82)가 모드에 따라 약점이 됐다 안 됐다 하고, AnalyzeTrend 의
+	 *    '약점 미등장 = 0.9' 대체값 전제(= 문턱 하나)도 무너진다.
+	 */
+	static constexpr float MinReportSeverity = 0.15f;
+
+	/**
 	 * 타격 세션(여러 스윙) → 약점 리포트.
 	 * @param History 한 세션의 스윙 지표들 (UScoringService::ScoreSession 과 같은 입력).
 	 */
@@ -85,9 +94,15 @@ public:
 	 * @param History 저장된 전체 세션 (UModeManager::GetHistory — 이번 미저장 세션 제외).
 	 * @param Mode    분석할 모드.
 	 * @param Window  뒤에서부터 볼 최대 세션 수.
+	 * @param DrillId 모드 안의 세부 종목 필터 (수비: "Catch"/"Throw"/"Backup").
+	 *                NAME_None 이면 필터 없음(타격 등 세부 종목이 없는 모드).
+	 *                ⚠️ 수비에서 이걸 비워두면 포구·송구·백업의 약점 축이 한 통에 섞여
+	 *                   "송구만 했는데 백업 판단이 만성" 같은 엉터리 추세가 나온다.
+	 *                   기본값을 두지 않은 건 의도적이다 — 호출부가 필터를 한 번은 고민하도록.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Feedback")
-	static FChronicWeaknessReport AnalyzeTrend(const TArray<FSessionResult>& History, EGameModeId Mode, int32 Window = 5);
+	static FChronicWeaknessReport AnalyzeTrend(const TArray<FSessionResult>& History, EGameModeId Mode,
+		int32 Window, FName DrillId);
 
 	/** 추세 표시 이름 (UMETA 는 패키징 빌드에서 사라지므로 직접 반환). */
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Feedback")

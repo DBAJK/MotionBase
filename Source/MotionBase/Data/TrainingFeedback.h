@@ -30,7 +30,21 @@ enum class EWeaknessAxis : uint8
 	HipShoulderSeparation UMETA(DisplayName = "상하체 분리(X-factor)"), // 비틀림=파워 저장 부족
 	HeadStability         UMETA(DisplayName = "머리 안정"),             // 스윙 중 머리 흔들림
 	KineticChain          UMETA(DisplayName = "운동 사슬"),             // 힙→어깨→손 순서 흐트러짐
-	WeightShift           UMETA(DisplayName = "체중 이동")              // 뒷발→앞발 이동 부족
+	WeightShift           UMETA(DisplayName = "체중 이동"),             // 뒷발→앞발 이동 부족
+
+	// ── 수비(포구) 기반 ──
+	CatchReaction   UMETA(DisplayName = "반응속도"),      // 타이밍 늦음·놓침 → 반응이 느림
+	UpperBodyFlex   UMETA(DisplayName = "상체 유연성"),   // 글러브가 공에 못 닿음 → 뻗는 가동범위 부족
+	FootSpeed       UMETA(DisplayName = "발 스피드"),     // 위치 선점 실패 (이동이 컨트롤러라 비중은 낮음)
+
+	// ── 수비(송구) 기반 ── ⚠️ 값을 새로 끼워넣지 말 것 (저장된 세이브의 축이 밀린다). 항상 끝에 추가.
+	ThrowAccuracy   UMETA(DisplayName = "송구 정확도"),   // 목표 zone 을 벗어남 (짧음/넘김/좌우)
+	ArmStrength     UMETA(DisplayName = "송구 구속"),     // 릴리스 구속 부족 → 주자를 못 잡음
+	TransferQuick   UMETA(DisplayName = "포구→송구 전환"), // 글러브에서 손으로 옮기는 시간이 김
+
+	// ── 수비(백업 위치 판단) 기반 ──
+	BackupJudgment  UMETA(DisplayName = "백업 판단"),     // 정답 백업 zone 을 못 고름
+	DecisionSpeed   UMETA(DisplayName = "판단 속도")      // 답은 맞지만 결정이 느림 (실전이면 늦음)
 };
 
 /** 한 축의 약점. */
@@ -73,6 +87,17 @@ struct FWeaknessReport
 	/** 심각도 내림차순 정렬. 앞쪽이 가장 시급한 약점. */
 	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
 	TArray<FWeakness> Weaknesses;
+
+	/**
+	 * 약점 축으로는 표현되지 않지만 코칭에 필요한 부가 근거(실측 문자열).
+	 * 예: "타구 타입별 성공률 GB 3/4, FB 1/3, LD 0/3", "베이스별 정확도 1B 3/3, Home 0/2".
+	 *
+	 * 왜 축이 아니라 노트인가: "뜬공만 못 잡는다"는 **처방(드릴)을 바꾸지 않는다** —
+	 * 약점 축은 드릴 매핑의 키라서 늘리면 카탈로그가 같이 커진다. 반면 코칭 문장에는
+	 * 반드시 들어가야 할 정보라서, 드릴 선택엔 영향 없이 프롬프트에만 실리는 자리를 둔다.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	TArray<FString> Notes;
 
 	/** 표본이 있어 분석이 유효한지. */
 	UPROPERTY(BlueprintReadWrite, Category = "Feedback")

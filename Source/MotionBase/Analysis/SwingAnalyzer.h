@@ -23,6 +23,26 @@ class MOTIONBASE_API USwingAnalyzer : public UObject
 	GENERATED_BODY()
 
 public:
+	// ── 판정 상수 (헤더에 노출: 다른 계층이 이 값에 맞춰야 하기 때문) ──
+	// ⚠️ 실측 캘리브레이션 대상 (CLAUDE §규칙). 히트 판정 완화(2026-08) 이후 값.
+
+	/** 유효 컨택 반경 (cm, 배럴 선분 ↔ 공 최단거리 기준). */
+	static constexpr float ContactRadiusCm = 32.0f;
+
+	/** 이 속도 미만은 '스윙 아님' (정지·트래킹 노이즈). m/s. */
+	static constexpr float MinSwingSpeedMps = 1.5f;
+
+	/**
+	 * 컨택 가능 시간 창 (±초). 공이 플레이트 부근에 있는 동안만 컨택으로 인정.
+	 * ⚠️ 두 곳이 이 값에 묶여 있다 — 넓힐 땐 같이 확인할 것:
+	 *    · ABat::RingBufferSize — 창보다 짧으면 이른 컨택 표본이 버퍼에서 이미 밀려나 있다
+	 *    · UHitModel 의 SprayTimingGainDeg — 창이 넓어지면 파울 밴드도 같이 넓어진다
+	 */
+	static constexpr float ContactTimeWindowSec = 0.32f;
+
+	/** 배트 끝에서 손 쪽으로 이만큼을 유효 타격면(배럴)으로 본다. cm. */
+	static constexpr float BarrelLengthCm = 44.0f;
+
 	/**
 	 * 궤적 표본 배열에서 스윙 지표를 계산한다.
 	 * @param Samples        시간순 정렬된 BatTip 궤적 (cm, 초).

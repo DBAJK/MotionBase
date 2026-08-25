@@ -18,6 +18,17 @@ struct FSessionResult
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Session")
 	EGameModeId Mode = EGameModeId::Batting;
 
+	/**
+	 * 모드 안의 세부 종목 식별자 (수비 전용: "Catch" / "Throw" / "Backup"). 없으면 NAME_None.
+	 *
+	 * 왜 필요한가: 수비 세 종목은 모두 Mode=Defense 로 저장되는데, 약점 축은 서로 완전히 다르다
+	 * (포구=반응·유연성, 송구=구속·전환, 백업=판단). 이걸 구분하지 않으면
+	 * UWeaknessDetector::AnalyzeTrend 가 세 종목의 축을 한 통에 섞어
+	 * "송구를 5세션 했는데 백업 판단이 만성 약점" 같은 엉터리 추세를 만든다.
+	 */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Session")
+	FName DrillId = NAME_None;
+
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Session")
 	FDateTime StartedAt = FDateTime();
 

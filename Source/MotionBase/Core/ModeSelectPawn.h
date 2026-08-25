@@ -99,9 +99,13 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "ModeSelect|VR")
 	TObjectPtr<UVRInfoPanel> VrPanel;
 
-	/** 카드를 이 시간(초)만큼 계속 겨누고 있으면 선택 확정. */
+	/** 카드를 이 시간(초)만큼 계속 겨누고 있으면 선택 확정 (트리거를 안 쓸 때의 폴백). */
 	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")
 	float DwellTimeSec = 1.5f;
+
+	/** 컨트롤러 트리거(아래쪽 검지 버튼)를 이 값 이상 당기면 눌림으로 본다. */
+	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR", meta = (ClampMin = "0.1", ClampMax = "1.0"))
+	float TriggerPressThreshold = 0.6f;
 
 	/** 이 각도(도) 안쪽으로 겨누면 그 카드에 호버된 것으로 본다. */
 	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")
@@ -114,6 +118,25 @@ protected:
 	/** 메뉴 중심 높이 (cm, 바닥 기준). 눈높이쯤에 두면 자연스럽다. */
 	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")
 	float MenuHeightCm = 150.0f;
+
+	/**
+	 * 메뉴가 시야 중심에서 이 각도(도) 밖으로 벗어나면 천천히 따라온다 (body-locked + 데드존).
+	 *
+	 * 완전 월드 고정은 스테이지 트래킹에서 플레이어가 몸을 틀면 메뉴가 등 뒤로 사라진다.
+	 * 반대로 머리에 붙이면(헤드락) 고개를 돌려도 안 움직여 멀미가 난다.
+	 * 그래서 **데드존 안에서는 고정, 밖으로 나가면 경계까지만 느리게 끌려온다** — VR UI 의 표준 절충.
+	 * 0 이면 항상 정면 추종, 180 이면 완전 고정.
+	 */
+	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR", meta = (ClampMin = "0.0", ClampMax = "180.0"))
+	float MenuFollowDeadzoneDeg = 35.0f;
+
+	/** 따라오는 속도 (1/초). 낮을수록 느긋하다 — 급히 따라오면 그 자체로 멀미를 유발한다. */
+	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR", meta = (ClampMin = "0.1"))
+	float MenuFollowSpeed = 1.6f;
+
+	/** 곡면(원통) 배치 사용 — 위/아래 카드가 눈을 바라보게 기울어진다. */
+	UPROPERTY(EditAnywhere, Category = "ModeSelect|VR")
+	bool bCurvedMenu = true;
 
 	// 입력 핸들러 (BindKey 는 인자 없는 멤버 함수만 받는다)
 	void SelectPrev();
@@ -162,10 +185,18 @@ private:
 	/** 컨트롤러가 겨누는 카드 인덱스 (0..RowCount-1, 뒤로=RowCount, 없음=INDEX_NONE). */
 	int32 PickHoveredCard() const;
 
+	/** 머리 방향을 보고 패널을 게으르게 재정렬한다 (데드존 밖일 때만 끌어온다). */
+	void UpdateMenuAnchor(float DeltaSeconds);
+
+	/** 현재 패널 방위각 (폰 기준, 도). UpdateMenuAnchor 가 관리한다. */
+	float MenuYawDeg = 0.0f;
+	bool  bMenuYawInit = false;
+
 	bool  bVRMenu = false;
 	int32 VrHoverIndex = INDEX_NONE;
 	float VrDwellTimer = 0.0f;
 	float VrCooldown = 0.0f;   // 확정 직후 오선택 방지용 짧은 잠금
+	bool  bTriggerHeldPrev = false;   // 트리거 눌림 에지 검출용 (직전 프레임 상태)
 
 	EStage Stage = EStage::Mode;
 

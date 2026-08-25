@@ -34,6 +34,28 @@ public:
 	void RequestSwingCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
 		const FChronicWeaknessReport& Chronic);
 
+	/**
+	 * 포구(수비) 코칭 async 요청. 타격과 달리 만성 추세(이력 분석)는 아직 없으므로 리포트+드릴만 받는다.
+	 * 완료 시 같은 OnFeedbackReady 로 통지된다. 시스템 프롬프트가 '수비 코치'로 바뀐다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|AI")
+	void RequestCatchCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills);
+
+	/**
+	 * 송구(수비) 코칭 async 요청. 코치 역할이 '송구 코치'로 바뀐다 —
+	 * 정확도·구속·전환 시간(transfer)은 포구와 처방이 다르므로 프롬프트를 분리한다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|AI")
+	void RequestThrowCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills);
+
+	/**
+	 * 백업 위치 판단 코칭 async 요청.
+	 * ⚠️ 다른 종목과 달리 **체력 훈련이 아니라 판단 훈련**이다 — 시스템 프롬프트가
+	 *    "몸을 더 쓰라"가 아니라 "무엇을 보고 결정하라"를 말하도록 역할을 따로 준다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|AI")
+	void RequestBackupCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills);
+
 	/** API 키가 설정돼 있는지 (호출 전 UI 에서 확인용). */
 	UFUNCTION(BlueprintPure, Category = "MotionBase|AI")
 	bool IsConfigured() const;
@@ -54,17 +76,28 @@ public:
 	int32 MaxTokens = 512;
 
 private:
+	/**
+	 * 코치 도메인 — 시스템 프롬프트의 역할을 가른다.
+	 * 수비를 한 덩어리로 묶지 않는 이유: 포구는 체력(반응·유연성), 송구는 역학(구속·전환),
+	 * 백업은 판단이라 처방이 서로 다르다. 역할을 섞으면 "더 빠르게 반응하세요" 같은
+	 * 엉뚱한 조언이 백업 판단 결과에 붙는다.
+	 */
+	enum class ECoachDomain : uint8 { Batting, Fielding, Throwing, Backup };
+
 	/** Config/Secrets.ini 의 [AI] ApiKey 를 읽는다 (없으면 빈 문자열). */
 	FString LoadApiKey() const;
 
-	/** 코치 역할·규칙을 정하는 시스템 프롬프트. */
-	FString BuildSystemPrompt() const;
+	/** 코치 역할·규칙을 정하는 시스템 프롬프트 (도메인별). */
+	FString BuildSystemPrompt(ECoachDomain Domain) const;
 
 	/** 리포트+드릴+추세를 근거로 한 사용자 프롬프트 (숫자 포함). */
 	FString BuildUserPrompt(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
 		const FChronicWeaknessReport& Chronic) const;
 
 	/** 요청 JSON 본문 직렬화. */
-	FString BuildRequestBody(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
+	FString BuildRequestBody(ECoachDomain Domain, const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
 		const FChronicWeaknessReport& Chronic) const;
+
+	/** 본문을 Anthropic API 로 async 전송하고 OnFeedbackReady 로 통지 (공통 HTTP 경로). */
+	void DispatchCoachingRequest(const FString& Body);
 };

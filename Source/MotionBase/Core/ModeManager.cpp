@@ -46,6 +46,7 @@ void UModeManager::SetActiveMode(EGameModeId NewMode, EDifficultyLevel NewDiffic
 	// 모드 진입 = 새 세션. 같은 모드를 다시 고른 경우에도 반드시 비운다.
 	SessionResults.Reset();
 	SessionStartedAt = FDateTime::Now();
+	ActiveDrill = NAME_None; // 세부 종목은 진입 직후 SetActiveDrill 로 다시 지정된다.
 
 	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 모드 진입 → %s / 난이도 %s / 타석 %s (세션 초기화)"),
 		*GetModeDisplayName(NewMode).ToString(), *GetDifficultyDisplayName(NewDifficulty).ToString(),
@@ -60,6 +61,24 @@ void UModeManager::SetActiveMode(EGameModeId NewMode, EDifficultyLevel NewDiffic
 void UModeManager::ClearSessionResults()
 {
 	SessionResults.Reset();
+}
+
+void UModeManager::SetActiveDrill(FName DrillId)
+{
+	ActiveDrill = DrillId;
+	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 세부 종목 → %s"), *DrillId.ToString());
+}
+
+FName UModeManager::GetDefenseDrillIdName(int32 DrillIndex)
+{
+	// ⚠️ 저장에 남는 값이라 바꾸면 과거 기록과 매칭이 끊긴다 (표시 이름과 분리한 이유).
+	switch (DrillIndex)
+	{
+	case 0:  return TEXT("Catch");
+	case 1:  return TEXT("Throw");
+	case 2:  return TEXT("Backup");
+	default: return NAME_None;
+	}
 }
 
 bool UModeManager::FinalizeSession(const FScoreResult& SessionAverage, const FWeaknessReport& Report)
@@ -80,6 +99,7 @@ bool UModeManager::FinalizeSession(const FScoreResult& SessionAverage, const FWe
 
 	FSessionResult Session;
 	Session.Mode = ActiveMode;
+	Session.DrillId = ActiveDrill;   // 수비 세부 종목 — 추세 분석이 종목별로 갈라지는 근거.
 	Session.StartedAt = SessionStartedAt;
 	Session.AttemptCount = SessionResults.Num();
 	Session.Attempts = SessionResults;
@@ -90,8 +110,10 @@ bool UModeManager::FinalizeSession(const FScoreResult& SessionAverage, const FWe
 	SaveData->History.Add(MoveTemp(Session));
 	PersistSaveData();
 
-	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 세션 저장 (mode=%s 시도 %d 평균 %.1f) — 누적 %d건"),
-		*GetModeIdName(ActiveMode).ToString(), SaveData->History.Last().AttemptCount,
+	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 세션 저장 (mode=%s%s 시도 %d 평균 %.1f) — 누적 %d건"),
+		*GetModeIdName(ActiveMode).ToString(),
+		ActiveDrill.IsNone() ? TEXT("") : *FString::Printf(TEXT("/%s"), *ActiveDrill.ToString()),
+		SaveData->History.Last().AttemptCount,
 		SessionAverage.TotalScore, SaveData->History.Num());
 
 	// 저장했으면 반드시 비운다 — 다음 flush 에서 같은 세션이 두 번 기록되지 않게.

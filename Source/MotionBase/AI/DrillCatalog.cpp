@@ -19,92 +19,175 @@ TArray<FTrainingDrill> UDrillCatalog::DrillsForAxis(EWeaknessAxis Axis)
 	{
 	case EWeaknessAxis::ContactRate:
 		return {
-			MakeDrill(EWeaknessAxis::ContactRate, TEXT("트래킹 드릴"),
-				TEXT("공을 릴리스부터 임팩트까지 눈으로 끝까지 좇으며 10구 지켜보기(스윙 없이)."),
-				TEXT("공을 오래 본다")),
-			MakeDrill(EWeaknessAxis::ContactRate, TEXT("소프트 토스 컨택"),
-				TEXT("가까운 거리에서 느리게 토스된 공을 맞히는 데만 집중, 20구."),
-				TEXT("맞히기 우선")),
+			MakeDrill(EWeaknessAxis::ContactRate, TEXT("Tracking drill"),
+				TEXT("Follow the ball with your eyes from release to impact, watch 10 pitches (no swing)."),
+				TEXT("Watch the ball longer")),
+			MakeDrill(EWeaknessAxis::ContactRate, TEXT("Soft-toss contact"),
+				TEXT("Focus only on making contact with slow, close soft tosses, 20 balls."),
+				TEXT("Contact first")),
 		};
 
 	case EWeaknessAxis::Timing:
 		return {
-			MakeDrill(EWeaknessAxis::Timing, TEXT("리듬 스텝 드릴"),
-				TEXT("투수 릴리스에 맞춰 앞발 스텝 타이밍을 일정하게 반복, 15스윙."),
-				TEXT("릴리스=스텝")),
-			MakeDrill(EWeaknessAxis::Timing, TEXT("구속 변화 소프트토스"),
-				TEXT("느린 공과 빠른 공을 섞어 토스, 타이밍을 공에 맞춰 조절."),
-				TEXT("공에 맞춰 기다린다")),
+			MakeDrill(EWeaknessAxis::Timing, TEXT("Rhythm step drill"),
+				TEXT("Repeat a consistent front-foot step timed to the pitcher's release, 15 swings."),
+				TEXT("Release = step")),
+			MakeDrill(EWeaknessAxis::Timing, TEXT("Variable-speed soft toss"),
+				TEXT("Mix slow and fast tosses, adjust your timing to the ball."),
+				TEXT("Wait for the ball")),
 		};
 
 	case EWeaknessAxis::ContactAccuracy:
 		return {
-			MakeDrill(EWeaknessAxis::ContactAccuracy, TEXT("티 배팅 정밀 컨택"),
-				TEXT("고정 티의 공 중심을 배트 스위트스팟으로 정확히 맞히기, 20스윙."),
-				TEXT("배트 중심")),
-			MakeDrill(EWeaknessAxis::ContactAccuracy, TEXT("존 구분 소프트토스"),
-				TEXT("높낮이·좌우 코스를 나눠 토스, 각 코스에서 정확히 컨택."),
-				TEXT("코스별 조준")),
+			MakeDrill(EWeaknessAxis::ContactAccuracy, TEXT("Tee precision contact"),
+				TEXT("Hit the center of a stationary tee ball on the bat's sweet spot, 20 swings."),
+				TEXT("Barrel center")),
+			MakeDrill(EWeaknessAxis::ContactAccuracy, TEXT("Zone soft toss"),
+				TEXT("Toss to split high/low and inside/outside zones, make clean contact in each."),
+				TEXT("Aim per zone")),
 		};
 
 	case EWeaknessAxis::BatSpeed:
 		return {
-			MakeDrill(EWeaknessAxis::BatSpeed, TEXT("회전 파워 스로우"),
-				TEXT("메디신볼을 타격 방향으로 힘껏 던져 하체·코어 회전력 강화, 10회 3세트."),
-				TEXT("하체부터 회전")),
-			MakeDrill(EWeaknessAxis::BatSpeed, TEXT("저항밴드 스윙"),
-				TEXT("밴드 저항을 걸고 스윙 궤도를 유지하며 가속, 12스윙 3세트."),
-				TEXT("임팩트에서 가속")),
+			MakeDrill(EWeaknessAxis::BatSpeed, TEXT("Rotational power throw"),
+				TEXT("Throw a medicine ball hard in the hitting direction to build lower-body/core rotation, 10 reps x3."),
+				TEXT("Rotate from the legs")),
+			MakeDrill(EWeaknessAxis::BatSpeed, TEXT("Resistance-band swing"),
+				TEXT("Swing against band resistance while keeping your path, accelerate through, 12 swings x3."),
+				TEXT("Accelerate at impact")),
 		};
 
 	case EWeaknessAxis::Consistency:
 		return {
-			MakeDrill(EWeaknessAxis::Consistency, TEXT("루틴 고정 반복"),
-				TEXT("셋업→스텝→스윙 루틴을 동일하게 10스윙 반복, 매 스윙 감각 체크."),
-				TEXT("같은 동작 반복")),
-			MakeDrill(EWeaknessAxis::Consistency, TEXT("체크포인트 스윙"),
-				TEXT("느린 스윙으로 자세 체크포인트(그립·팔꿈치·회전)를 매번 확인."),
-				TEXT("자세 점검")),
+			MakeDrill(EWeaknessAxis::Consistency, TEXT("Fixed-routine reps"),
+				TEXT("Repeat the same setup-step-swing routine for 10 swings, check the feel each time."),
+				TEXT("Repeat the same move")),
+			MakeDrill(EWeaknessAxis::Consistency, TEXT("Checkpoint swing"),
+				TEXT("Slow swings checking posture checkpoints (grip, elbow, rotation) every time."),
+				TEXT("Check your posture")),
 		};
 
 	case EWeaknessAxis::HipShoulderSeparation:
 		return {
-			MakeDrill(EWeaknessAxis::HipShoulderSeparation, TEXT("힙 리드 분리 드릴"),
-				TEXT("상체는 뒤에 남긴 채 골반을 먼저 여는 느낌으로 천천히 10스윙, 비틀림 축적."),
-				TEXT("골반 먼저, 어깨는 뒤에")),
-			MakeDrill(EWeaknessAxis::HipShoulderSeparation, TEXT("밴드 코일 홀드"),
-				TEXT("밴드로 상체를 고정하고 하체만 회전해 상하체 분리 감각을 익힌다, 8회 3세트."),
-				TEXT("상하체 따로")),
+			MakeDrill(EWeaknessAxis::HipShoulderSeparation, TEXT("Hip-lead separation drill"),
+				TEXT("Keep the upper body back and open the hips first, 10 slow swings to store the coil."),
+				TEXT("Hips first, shoulders back")),
+			MakeDrill(EWeaknessAxis::HipShoulderSeparation, TEXT("Band coil hold"),
+				TEXT("Fix the upper body with a band and rotate only the lower body to feel the separation, 8 reps x3."),
+				TEXT("Upper and lower apart")),
 		};
 
 	case EWeaknessAxis::HeadStability:
 		return {
-			MakeDrill(EWeaknessAxis::HeadStability, TEXT("시선 고정 티 배팅"),
-				TEXT("티 위 공의 한 점을 임팩트까지 응시하며 머리를 고정, 15스윙."),
-				TEXT("공에서 눈 떼지 않기")),
-			MakeDrill(EWeaknessAxis::HeadStability, TEXT("헤드 스틸 미러 드릴"),
-				TEXT("거울/영상 앞에서 스윙하며 머리 높이·좌우가 흔들리지 않는지 확인, 10스윙."),
-				TEXT("머리 높이 유지")),
+			MakeDrill(EWeaknessAxis::HeadStability, TEXT("Eyes-fixed tee batting"),
+				TEXT("Stare at one point on the tee ball until impact and keep the head still, 15 swings."),
+				TEXT("Never leave the ball")),
+			MakeDrill(EWeaknessAxis::HeadStability, TEXT("Head-still mirror drill"),
+				TEXT("Swing in front of a mirror/video and check the head does not sway in height or sideways, 10 swings."),
+				TEXT("Keep head height")),
 		};
 
 	case EWeaknessAxis::KineticChain:
 		return {
-			MakeDrill(EWeaknessAxis::KineticChain, TEXT("스텝-히프-핸드 순서 드릴"),
-				TEXT("앞발 착지→골반 회전→손 순서를 과장해 느리게 반복, 순서 체득 12스윙."),
-				TEXT("아래에서 위로 전달")),
-			MakeDrill(EWeaknessAxis::KineticChain, TEXT("메디신볼 로테이션 스로우"),
-				TEXT("하체부터 감아 던지며 힙→몸통→팔로 힘이 전달되는 순서를 몸에 새긴다, 10회 3세트."),
-				TEXT("하체부터 시작")),
+			MakeDrill(EWeaknessAxis::KineticChain, TEXT("Step-hip-hand sequence drill"),
+				TEXT("Exaggerate the front-foot land -> hip turn -> hands order slowly, 12 swings to learn the sequence."),
+				TEXT("Transfer bottom-up")),
+			MakeDrill(EWeaknessAxis::KineticChain, TEXT("Med-ball rotation throw"),
+				TEXT("Wind up from the legs and throw, ingraining hip -> torso -> arm order, 10 reps x3."),
+				TEXT("Start from the legs")),
 		};
 
 	case EWeaknessAxis::WeightShift:
 		return {
-			MakeDrill(EWeaknessAxis::WeightShift, TEXT("뒷발→앞발 로드 드릴"),
-				TEXT("체중을 뒷발에 실었다가 스윙과 함께 앞발로 옮기는 동작을 분리 반복, 12스윙."),
-				TEXT("뒤에서 앞으로")),
-			MakeDrill(EWeaknessAxis::WeightShift, TEXT("스텝 스루 배팅"),
-				TEXT("가벼운 스텝으로 체중을 앞으로 밀며 타격, 이동 후 균형 유지 확인, 10스윙."),
-				TEXT("앞발로 눌러 딛기")),
+			MakeDrill(EWeaknessAxis::WeightShift, TEXT("Back-to-front load drill"),
+				TEXT("Load onto the back foot then shift to the front foot with the swing, isolate and repeat, 12 swings."),
+				TEXT("Back to front")),
+			MakeDrill(EWeaknessAxis::WeightShift, TEXT("Step-through batting"),
+				TEXT("Push weight forward with a light step while hitting, keep balance after moving, 10 swings."),
+				TEXT("Plant the front foot")),
+		};
+
+	// ── Fielding (catch) fitness drills ──
+	case EWeaknessAxis::CatchReaction:
+		return {
+			MakeDrill(EWeaknessAxis::CatchReaction, TEXT("Reaction catch drill"),
+				TEXT("Catch balls thrown without warning or bounced off a wall immediately, 20 reps."),
+				TEXT("Hands before you think")),
+			MakeDrill(EWeaknessAxis::CatchReaction, TEXT("Light reaction touch"),
+				TEXT("Reach and touch a randomly firing cue (light / partner's hand), 30s x3."),
+				TEXT("React on the cue")),
+		};
+
+	case EWeaknessAxis::UpperBodyFlex:
+		return {
+			MakeDrill(EWeaknessAxis::UpperBodyFlex, TEXT("Thoracic-shoulder rotation stretch"),
+				TEXT("Twist the upper body far side to side, hold 10s each, 5 per side - build reaching range."),
+				TEXT("Extend your reach range")),
+			MakeDrill(EWeaknessAxis::UpperBodyFlex, TEXT("Band overhead reach"),
+				TEXT("Hold a band and sweep the arms in a big overhead circle, 12 reps x2."),
+				TEXT("Widen the range")),
+		};
+
+	case EWeaknessAxis::FootSpeed:
+		return {
+			MakeDrill(EWeaknessAxis::FootSpeed, TEXT("Ladder quick steps"),
+				TEXT("Step through a ladder/line raising your foot turnover, 30s x3."),
+				TEXT("Short, fast steps")),
+			MakeDrill(EWeaknessAxis::FootSpeed, TEXT("Side shuffle"),
+				TEXT("Shuffle side to side fast in a low stance, 10m x4 - positioning quickness."),
+				TEXT("Low and fast")),
+		};
+
+	// ── Fielding (throw) drills ──
+	case EWeaknessAxis::ThrowAccuracy:
+		return {
+			MakeDrill(EWeaknessAxis::ThrowAccuracy, TEXT("Target line throws"),
+				TEXT("Throw to a chest-high target from 20m, 20 reps - step straight at the target every time."),
+				TEXT("Front foot points at the base")),
+			MakeDrill(EWeaknessAxis::ThrowAccuracy, TEXT("One-hop to the bag"),
+				TEXT("From long range, aim a deliberate one-hop into the receiver's glove, 15 reps."),
+				TEXT("Low miss, never high")),
+		};
+
+	case EWeaknessAxis::ArmStrength:
+		return {
+			MakeDrill(EWeaknessAxis::ArmStrength, TEXT("Long toss ladder"),
+				TEXT("Build distance 15m -> 25m -> 35m and come back down, 5 throws per step."),
+				TEXT("Carry, do not aim")),
+			MakeDrill(EWeaknessAxis::ArmStrength, TEXT("Med-ball crow hop throw"),
+				TEXT("Crow-hop and throw a 2kg med ball with the whole body, 8 reps x3."),
+				TEXT("Legs and trunk, not the arm")),
+		};
+
+	case EWeaknessAxis::TransferQuick:
+		return {
+			MakeDrill(EWeaknessAxis::TransferQuick, TEXT("Glove-to-hand transfer reps"),
+				TEXT("Catch and move the ball to the throwing hand at the chest, 30 reps - no throw, transfer only."),
+				TEXT("Bring it to the chest, not the ear")),
+			MakeDrill(EWeaknessAxis::TransferQuick, TEXT("Quick-release footwork"),
+				TEXT("Catch - right/left step - release as one motion, 20 reps at short range."),
+				TEXT("Feet start with the catch")),
+		};
+
+	// ── Fielding (backup judgment) drills ──
+	case EWeaknessAxis::BackupJudgment:
+		return {
+			MakeDrill(EWeaknessAxis::BackupJudgment, TEXT("Position backup walkthrough"),
+				TEXT("For your position, walk the backup path for each batted-ball direction, 10 cases."),
+				TEXT("Ball direction decides the base")),
+			MakeDrill(EWeaknessAxis::BackupJudgment, TEXT("Runner-situation card review"),
+				TEXT("Fix the runners (none / 1st / 2nd) and say your backup base out loud for each, 15 cases."),
+				TEXT("Runners decide the throw")),
+		};
+
+	case EWeaknessAxis::DecisionSpeed:
+		return {
+			MakeDrill(EWeaknessAxis::DecisionSpeed, TEXT("Call-it-out reaction"),
+				TEXT("A partner calls a situation, you name the backup base within 2 seconds, 20 reps."),
+				TEXT("Decide before you move")),
+			MakeDrill(EWeaknessAxis::DecisionSpeed, TEXT("Pre-pitch routine"),
+				TEXT("Before every pitch, say your job for each batted-ball direction, one full inning."),
+				TEXT("Decide it before the pitch")),
 		};
 
 	default:
@@ -123,11 +206,22 @@ TArray<FTrainingDrill> UDrillCatalog::Recommend(const FWeaknessReport& Report, i
 	}
 
 	// 약점이 없으면 유지용 기본 드릴.
+	// ⚠️ 모드에 맞는 것을 줘야 한다 — 수비 세션 끝에 "라이브 배팅을 계속하세요"가 나오면
+	//    추천 전체의 신뢰가 무너진다 (약점 0개는 잘한 세션이라 오히려 자주 나온다).
 	if (Report.Weaknesses.Num() == 0)
 	{
-		Out.Add(MakeDrill(EWeaknessAxis::Consistency, TEXT("경기 감각 유지"),
-			TEXT("실전 페이스로 라이브 배팅을 이어가며 현재 밸런스를 유지."),
-			TEXT("현재 감각 유지")));
+		if (Report.Mode == EGameModeId::Defense)
+		{
+			Out.Add(MakeDrill(EWeaknessAxis::CatchReaction, TEXT("Keep the fielding routine"),
+				TEXT("Nothing stands out - keep taking game-speed reps and hold this feel."),
+				TEXT("Hold current feel")));
+		}
+		else
+		{
+			Out.Add(MakeDrill(EWeaknessAxis::Consistency, TEXT("Keep game feel"),
+				TEXT("Keep taking live batting at game pace to maintain your current balance."),
+				TEXT("Hold current feel")));
+		}
 		return Out;
 	}
 

@@ -121,7 +121,9 @@ protected:
 	TObjectPtr<UMotionInputProvider> InputProvider;
 
 private:
-	bool bCapturing = false;
+	// 주: '캡처 중' 플래그는 두지 않는다. provider 가 항상 링버퍼를 채우고 분석기는 그 뒤쪽
+	//     N 샘플만 보므로, 켜고 끌 대상이 없다 (예전 bCapturing 은 세팅만 되고 아무것도
+	//     게이팅하지 않는 죽은 플래그였다). 캡처 구간은 IdealContactProviderTime 이 정한다.
 	FVector BallLocation = FVector::ZeroVector;
 
 	/** 이상적 컨택 시각을 provider 시간축으로 변환해둔 값. */

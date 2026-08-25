@@ -10,21 +10,13 @@
 #include "HeadMountedDisplayFunctionLibrary.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
 #include "UI/VRInfoPanel.h"
 
 namespace
 {
-	// 드웰 진행바 (ASCII — 폰트 글리프 걱정 없음). 예: "   [===...]"
-	FString MsDwellBar(float Progress)
-	{
-		const int32 Cells = 6;
-		const int32 Filled = FMath::Clamp(FMath::RoundToInt(Progress * Cells), 0, Cells);
-		return FString::Printf(TEXT("   [%s%s]"),
-			*FString::ChrN(Filled, TEXT('=')),
-			*FString::ChrN(Cells - Filled, TEXT('.')));
-	}
-
 	// 행 색: 준비중=회색, 일반=흰색, 호버중=앰버→초록(진행도).
+	// (드웰 진행은 ASCII 막대가 아니라 카드 채움 + 조준점 링으로 보여준다 — UVRInfoPanel.)
 	FColor MsRowColor(bool bAvail, bool bHovered, float Progress)
 	{
 		if (!bAvail)   { return FColor(110, 110, 122); }
@@ -146,9 +138,9 @@ FText AModeSelectPawn::DefenseDrillNameAt(int32 Index) const
 FText AModeSelectPawn::DefenseDrillDescAt(int32 Index) const
 {
 	static const TArray<FText> Descs = {
-		FText::FromString(TEXT("타구를 받아내는 포구 동작 훈련 (컨트롤러로 글러브)")),
-		FText::FromString(TEXT("포구 후 정확한 송구 동작 훈련 (컨트롤러 스윙)")),
-		FText::FromString(TEXT("랜덤 타구 상황에서 백업 위치를 고르는 판단 훈련"))
+		FText::FromString(TEXT("땅볼·뜬공·라인드라이브를 받아내는 포구 훈련 (타입별 성공률 측정)")),
+		FText::FromString(TEXT("포구 → 지정된 베이스로 송구 (정확도·구속·전환시간 측정)")),
+		FText::FromString(TEXT("타구 방향 + 주자 상황으로 백업 위치를 고르는 판단 훈련"))
 	};
 	return Descs.IsValidIndex(Index) ? Descs[Index] : FText::GetEmpty();
 }
@@ -504,17 +496,53 @@ int32 AModeSelectPawn::PickHoveredCard() const
 	return Best;
 }
 
+void AModeSelectPawn::UpdateMenuAnchor(float DeltaSeconds)
+{
+	if (!VrPanel || !Camera) { return; }
+
+	// 머리(HMD)의 폰 기준 위치·방위. 스테이지 트래킹이라 플레이어가 걸어 다니면 둘 다 변한다.
+	const FVector HeadRel = Camera->GetRelativeLocation();
+	const float   HeadYaw = Camera->GetRelativeRotation().Yaw;
+
+	if (!bMenuYawInit)
+	{
+		MenuYawDeg = HeadYaw;   // 첫 프레임엔 눈앞에 바로 띄운다.
+		bMenuYawInit = true;
+	}
+
+	// 데드존: 시야 중심에서 벗어난 각도가 임계를 넘을 때만, 경계까지만 끌어온다.
+	// (정면에 딱 붙이면 "메뉴가 나를 따라다닌다"는 느낌이 강해져 오히려 불쾌하다.)
+	const float Delta = FMath::FindDeltaAngleDegrees(MenuYawDeg, HeadYaw);
+	if (FMath::Abs(Delta) > MenuFollowDeadzoneDeg)
+	{
+		const float TargetYaw = HeadYaw - FMath::Sign(Delta) * MenuFollowDeadzoneDeg;
+		const float ToTarget  = FMath::FindDeltaAngleDegrees(MenuYawDeg, TargetYaw);
+		MenuYawDeg = FRotator::NormalizeAxis(
+			MenuYawDeg + FMath::FInterpTo(0.0f, ToTarget, DeltaSeconds, MenuFollowSpeed));
+	}
+
+	// 패널을 머리 주위 반지름 MenuDistanceCm 원 위, 고정 높이에 놓는다.
+	// 높이를 머리에 맞춰 따라 올리면 앉았다 일어설 때 UI 가 출렁여서 고정으로 둔다.
+	const float Rad = FMath::DegreesToRadians(MenuYawDeg);
+	VrPanel->SetRelativeLocation(FVector(
+		HeadRel.X + FMath::Cos(Rad) * MenuDistanceCm,
+		HeadRel.Y + FMath::Sin(Rad) * MenuDistanceCm,
+		MenuHeightCm));
+	VrPanel->SetRelativeRotation(FRotator(0.0f, MenuYawDeg, 0.0f));
+
+	// 곡면 배치 — 눈높이 대비 위/아래 카드를 눈 쪽으로 감아 기울인다.
+	if (bCurvedMenu)
+	{
+		VrPanel->ApplyCurvedLayout(HeadRel.Z - MenuHeightCm, MenuDistanceCm);
+	}
+}
+
 void AModeSelectPawn::UpdateVRMenu(float DeltaSeconds)
 {
 	if (VrCooldown > 0.0f) { VrCooldown = FMath::Max(0.0f, VrCooldown - DeltaSeconds); }
 
-	// 포인터 광선 표시 (컨트롤러 → 정면).
-	if (PointerController && PointerController->IsTracked() && GetWorld())
-	{
-		const FVector Origin = PointerController->GetComponentLocation();
-		const FVector End = Origin + PointerController->GetForwardVector() * (MenuDistanceCm + 60.0f);
-		DrawDebugLine(GetWorld(), Origin, End, FColor(80, 200, 255), false, -1.0f, 0, 0.4f);
-	}
+	// 겨눔 판정보다 먼저 패널을 제자리에 놓는다 (카드 위치가 판정 기준이므로 순서가 중요).
+	UpdateMenuAnchor(DeltaSeconds);
 
 	const int32 Hover = (VrCooldown > 0.0f) ? INDEX_NONE : PickHoveredCard();
 
@@ -524,12 +552,30 @@ void AModeSelectPawn::UpdateVRMenu(float DeltaSeconds)
 		VrDwellTimer = 0.0f;
 	}
 
+	// 컨트롤러 트리거(아래쪽 검지 버튼) 눌림 에지 검출.
+	// 카드를 겨눈 상태에서 트리거를 당기면 즉시 확정한다 (드웰을 기다릴 필요 없음).
+	bool bTriggerPressedEdge = false;
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		const FName Hand = (PointerController ? PointerController->MotionSource : FName(TEXT("Right")));
+		const TCHAR* Side = (Hand == FName(TEXT("Left"))) ? TEXT("Left") : TEXT("Right");
+		// 트리거(아래 검지 버튼)를 제네릭/Vive 두 이름으로 읽어 매핑에 관계없이 동작하게 한다.
+		const float Generic = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("MotionController_%s_Trigger"), Side)));
+		const float Vive    = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("Vive_%s_Trigger"), Side)));
+		const bool bHeld = FMath::Max(Generic, Vive) >= TriggerPressThreshold;
+		bTriggerPressedEdge = (bHeld && !bTriggerHeldPrev);
+		bTriggerHeldPrev = bHeld;
+	}
+
 	if (Hover != INDEX_NONE)
 	{
 		if (Hover < GetRowCount()) { SelectedIndex = Hover; } // 설명 표시를 커서와 동기화.
 
 		VrDwellTimer += DeltaSeconds;
-		if (VrDwellTimer >= DwellTimeSec)
+
+		// 확정 조건: 트리거를 눌렀거나(즉시), 드웰 시간이 찼거나(폴백).
+		const bool bCommit = (VrCooldown <= 0.0f) && (bTriggerPressedEdge || VrDwellTimer >= DwellTimeSec);
+		if (bCommit)
 		{
 			const int32 RowCount = GetRowCount();
 			VrHoverIndex = INDEX_NONE;
@@ -547,25 +593,51 @@ void AModeSelectPawn::UpdateVRMenu(float DeltaSeconds)
 	}
 
 	RefreshVRMenuTexts();
+
+	// ── 공간 연출 (텍스트 갱신 뒤에 그려야 이번 프레임 상태와 어긋나지 않는다) ──
+	const float Progress = (DwellTimeSec > 0.0f)
+		? FMath::Clamp(VrDwellTimer / DwellTimeSec, 0.0f, 1.0f) : 0.0f;
+	const int32 RowCount = GetRowCount();
+
+	if (bCurvedMenu && VrPanel && Camera)
+	{
+		// 뒤로 카드는 RefreshVRMenuTexts 에서 위치가 다시 잡히므로 곡면을 한 번 더 적용한다.
+		VrPanel->ApplyCurvedLayout(Camera->GetRelativeLocation().Z - MenuHeightCm, MenuDistanceCm);
+	}
+
+	if (VrPanel)
+	{
+		VrPanel->TickHoverAnim(DeltaSeconds, Hover, RowCount);
+		VrPanel->DrawChrome(RowCount, Hover, Progress, Stage != EStage::Mode);
+
+		if (PointerController && PointerController->IsTracked())
+		{
+			VrPanel->DrawPointerRay(
+				PointerController->GetComponentLocation(),
+				PointerController->GetForwardVector(),
+				Progress, Hover != INDEX_NONE);
+		}
+	}
 }
 
 void AModeSelectPawn::RefreshVRMenuTexts()
 {
 	if (!bVRMenu || !VrPanel) { return; }
 
-	// 제목 (단계별, 영어 — 3D 텍스트는 한글 폰트가 없어 영어로 표기).
+	// 제목 = 브레드크럼 (단계별, 영어 — 3D 텍스트는 한글 폰트가 없어 영어로 표기).
+	// 3단계까지 들어가면 "지금 어디쯤인가"가 헷갈린다 — 지나온 선택을 제목에 남긴다.
 	FString Header;
 	switch (Stage)
 	{
 	case EStage::Mode:
-		Header = TEXT("SporTrack : Baseball    -    Select a mode"); break;
+		Header = TEXT("SporTrack : Baseball   >   Mode"); break;
 	case EStage::Difficulty:
-		Header = MsEnMode(PendingMode) + TEXT("    -    Select difficulty"); break;
+		Header = MsEnMode(PendingMode) + TEXT("   >   Difficulty"); break;
 	case EStage::Stance:
-		Header = MsEnMode(PendingMode) + TEXT(" / ") + MsEnDifficulty(PendingDifficulty)
-			+ TEXT("    -    Select batter box"); break;
+		Header = MsEnMode(PendingMode) + TEXT("   >   ") + MsEnDifficulty(PendingDifficulty)
+			+ TEXT("   >   Batter box"); break;
 	case EStage::DefenseDrill:
-		Header = TEXT("Defense    -    Select a drill"); break;
+		Header = TEXT("Defense   >   Drill"); break;
 	default: break;
 	}
 	VrPanel->SetTitle(Header, FColor(228, 233, 244));
@@ -589,7 +661,9 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 		default: break;
 		}
 		if (!bAvail)  { Label += TEXT("  (coming soon)"); }
-		if (bHovered) { Label += MsDwellBar(Progress); }
+		// 겨누는 카드는 앞에 표식을 붙여 텍스트만 봐도 구분되게 한다
+		// (진행도 자체는 카드 채움/링이 보여주므로 여기선 막대를 쓰지 않는다).
+		if (bHovered) { Label = TEXT("> ") + Label; }
 
 		VrPanel->SetRow(i, Label, MsRowColor(bAvail, bHovered, Progress));
 	}
@@ -599,9 +673,8 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 	if (Stage != EStage::Mode)
 	{
 		const bool bHovered = (VrHoverIndex == RowCount);
-		FString Label = TEXT("< Back");
-		if (bHovered) { Label += MsDwellBar(Progress); }
-		VrPanel->SetBackBelowRows(RowCount, Label, MsRowColor(true, bHovered, Progress), true);
+		VrPanel->SetBackBelowRows(RowCount, TEXT("< Back"),
+			MsRowColor(true, bHovered, Progress), true);
 	}
 	else
 	{
@@ -640,9 +713,9 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 		case EStage::DefenseDrill:
 			switch (SelectedIndex)
 			{
-			case 0: Desc = TEXT("Catch batted balls with the glove (controller)"); break;
-			case 1: Desc = TEXT("Throw to the target (controller motion)"); break;
-			case 2: Desc = TEXT("Decide the backup base (quiz)"); break;
+			case 0: Desc = TEXT("Catch grounders, flies and liners - success rate per ball type"); break;
+			case 1: Desc = TEXT("Catch, then throw to the called base - accuracy, velocity, transfer"); break;
+			case 2: Desc = TEXT("Read the ball and the runners, pick your backup spot"); break;
 			default: break;
 			}
 			break;
@@ -652,6 +725,6 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 	VrPanel->SetFooter(Desc, !NoticeText.IsEmpty() ? FColor(255, 180, 90) : FColor(150, 156, 168));
 
 	VrPanel->SetHint(
-		TEXT("Aim a card with the controller and hold to select  (or W/S / Enter)"),
+		TEXT("Point at a card - trigger to pick, or just hold your aim   ·   the ring shows the hold"),
 		FColor(110, 116, 128));
 }

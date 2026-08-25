@@ -52,6 +52,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
 	EBattingStance GetActiveStance() const { return ActiveStance; }
 
+	/**
+	 * 모드 안의 세부 종목을 지정한다 (수비: "Catch"/"Throw"/"Backup").
+	 * ⚠️ SetActiveMode 뒤에 불러야 한다 — SetActiveMode 가 새 세션을 열면서 이 값을 비운다.
+	 * 저장 시 FSessionResult::DrillId 로 남아, 추세 분석이 종목별로 갈라진다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Mode")
+	void SetActiveDrill(FName DrillId);
+
+	/** 현재 세션의 세부 종목. 세부 종목이 없는 모드는 NAME_None. */
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
+	FName GetActiveDrill() const { return ActiveDrill; }
+
+	/** 수비 세부 종목 인덱스(0=포구,1=송구,2=백업) → 저장·집계용 안정 식별자. */
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
+	static FName GetDefenseDrillIdName(int32 DrillIndex);
+
 	/** 한 판(모드 세션)의 결과를 기록. ModeId 가 비어 있으면 현재 모드 이름으로 채운다. */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Mode")
 	void RecordResult(const FScoreResult& Result);
@@ -166,6 +182,10 @@ private:
 
 	UPROPERTY()
 	EBattingStance ActiveStance = EBattingStance::Right;
+
+	/** 현재 세션의 세부 종목 (수비 전용). SetActiveMode 가 비우고 SetActiveDrill 이 채운다. */
+	UPROPERTY()
+	FName ActiveDrill = NAME_None;
 
 	/** 세션 내 누적 결과 (저장/피드백 입력). */
 	UPROPERTY()

@@ -34,3 +34,21 @@ FThrowResult FThrowJudge::Judge(
 	Result.Outcome = (LandProj < TargetProj) ? EThrowOutcome::Short : EThrowOutcome::Over;
 	return Result;
 }
+
+void FThrowJudge::FillMotionMetrics(
+	FThrowResult& InOut,
+	EBaseType TargetBase,
+	float ReleaseSpeedCms,
+	float TransferTimeSec,
+	bool bCleanCatch)
+{
+	InOut.TargetBase = TargetBase;
+
+	// cm/s → km/h : 1 cm/s = 0.036 km/h.
+	InOut.ReleaseSpeedKmh = FMath::Max(ReleaseSpeedCms, 0.0f) * 0.036f;
+
+	// 급구를 못 잡았으면 "잡은 순간"이 없으므로 전환 시간은 미측정(-1)로 남긴다.
+	// 0 을 넣으면 평균이 낙관적으로 오염된다.
+	InOut.bCleanCatch = bCleanCatch;
+	InOut.TransferTimeSec = (bCleanCatch && TransferTimeSec >= 0.0f) ? TransferTimeSec : -1.0f;
+}

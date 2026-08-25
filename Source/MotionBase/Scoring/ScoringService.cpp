@@ -66,6 +66,38 @@ FScoreResult UScoringService::ScoreSwing(const FSwingMetrics& Metrics, const FSc
 	return R;
 }
 
+FScoreResult UScoringService::ScoreDefenseAttempt(bool bSuccess, const TMap<FName, float>& Details)
+{
+	FScoreResult R;
+	R.Accuracy   = bSuccess ? 1.0f : 0.0f;
+	R.Efficiency = 0.0f;   // 미정의 — 수비 3축 모델 없음
+	R.Consistency = 0.0f;  // 미정의 — 단일 시도
+	R.TotalScore = bSuccess ? 100.0f : 0.0f;
+	R.bValid = true;       // 시도 자체는 유효하다 (실패도 데이터다)
+	R.bUncalibrated = true;
+	R.Details = Details;
+	return R;
+}
+
+FScoreResult UScoringService::ScoreDefenseSession(int32 SuccessCount, int32 AttemptCount)
+{
+	FScoreResult R;
+	R.bUncalibrated = true;
+
+	if (AttemptCount <= 0)
+	{
+		return R; // bValid=false
+	}
+
+	const float Rate = static_cast<float>(SuccessCount) / AttemptCount;
+	R.Accuracy = Rate;
+	R.TotalScore = Rate * 100.0f;
+	R.bValid = true;
+	R.Details.Add(TEXT("AttemptCount"), static_cast<float>(AttemptCount));
+	R.Details.Add(TEXT("SuccessCount"), static_cast<float>(SuccessCount));
+	return R;
+}
+
 FScoreResult UScoringService::ScoreSession(const TArray<FSwingMetrics>& History, const FScoringConfig& Config)
 {
 	FScoreResult R;
@@ -116,10 +148,11 @@ FScoreResult UScoringService::ScoreSession(const TArray<FSwingMetrics>& History,
 		const float StdMax = FMath::Max(Config.ConsistencySigmaMax, KINDA_SMALL_NUMBER);
 		R.Consistency = FMath::Clamp(1.0f - (StdDev / StdMax), 0.0f, 1.0f);
 
+		// 가중치 합으로 나눠 0~100 을 지킨다 — 에디터에서 가중치를 만져도 총점이 100 을 넘지 않는다.
 		R.TotalScore = 100.0f * (
 			Config.WeightAccuracy * R.Accuracy +
 			Config.WeightEfficiency * R.Efficiency +
-			Config.WeightConsistency * R.Consistency);
+			Config.WeightConsistency * R.Consistency) / Config.WeightSum();
 	}
 	else
 	{

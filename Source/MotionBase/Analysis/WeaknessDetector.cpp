@@ -14,6 +14,14 @@ FText UWeaknessDetector::GetAxisDisplayName(EWeaknessAxis Axis)
 	case EWeaknessAxis::HeadStability:   return FText::FromString(TEXT("머리 안정"));
 	case EWeaknessAxis::KineticChain:    return FText::FromString(TEXT("운동 사슬"));
 	case EWeaknessAxis::WeightShift:     return FText::FromString(TEXT("체중 이동"));
+	case EWeaknessAxis::CatchReaction:   return FText::FromString(TEXT("Reaction speed"));
+	case EWeaknessAxis::UpperBodyFlex:   return FText::FromString(TEXT("Upper-body flexibility"));
+	case EWeaknessAxis::FootSpeed:       return FText::FromString(TEXT("Foot speed"));
+	case EWeaknessAxis::ThrowAccuracy:   return FText::FromString(TEXT("Throwing accuracy"));
+	case EWeaknessAxis::ArmStrength:     return FText::FromString(TEXT("Arm strength (throw velocity)"));
+	case EWeaknessAxis::TransferQuick:   return FText::FromString(TEXT("Catch-to-throw transfer"));
+	case EWeaknessAxis::BackupJudgment:  return FText::FromString(TEXT("Backup judgment"));
+	case EWeaknessAxis::DecisionSpeed:   return FText::FromString(TEXT("Decision speed"));
 	default:                             return FText::FromString(TEXT("알 수 없음"));
 	}
 }
@@ -31,7 +39,7 @@ FText UWeaknessDetector::GetTrendDisplayName(EWeaknessTrend Trend)
 }
 
 FChronicWeaknessReport UWeaknessDetector::AnalyzeTrend(
-	const TArray<FSessionResult>& History, EGameModeId Mode, int32 Window)
+	const TArray<FSessionResult>& History, EGameModeId Mode, int32 Window, FName DrillId)
 {
 	FChronicWeaknessReport Out;
 	Window = FMath::Max(Window, 1);
@@ -42,10 +50,16 @@ FChronicWeaknessReport UWeaknessDetector::AnalyzeTrend(
 	for (int32 i = History.Num() - 1; i >= 0 && Recent.Num() < Window; --i)
 	{
 		const FSessionResult& S = History[i];
-		if (S.Mode == Mode && S.Report.bValid)
+		if (S.Mode != Mode || !S.Report.bValid)
 		{
-			Recent.Add(&S.Report);
+			continue;
 		}
+		// 세부 종목 필터 — 수비처럼 한 모드 안에 축이 다른 종목이 여럿이면 섞이면 안 된다.
+		if (!DrillId.IsNone() && S.DrillId != DrillId)
+		{
+			continue;
+		}
+		Recent.Add(&S.Report);
 	}
 	Algo::Reverse(Recent);
 
@@ -176,7 +190,7 @@ FWeaknessReport UWeaknessDetector::DetectSwing(const TArray<FSwingMetrics>& Hist
 
 	// TODO(캘리브레이션): 아래 기준값은 실측 데이터로 조정 (하드코딩 확정 금지).
 	constexpr float GoodContactRate    = 0.60f; // 이 이상이면 컨택률 약점 아님
-	constexpr float MinReportSeverity  = 0.15f; // 이 미만 심각도는 리포트에서 제외
+	constexpr float MinReportSeverity  = UWeaknessDetector::MinReportSeverity; // 모드 공통 문턱
 
 	// 한 축을 리포트에 추가 (심각도 문턱 통과 시).
 	auto AddAxis = [&Report](EWeaknessAxis Axis, float Score, const FString& Evidence)
@@ -310,8 +324,8 @@ void UWeaknessDetector::AppendBodyMechanicsWeaknesses(
 	const float AvgShift = SumWeightShift / N;
 	const float ChainRate = static_cast<float>(ChainOrdered) / N;
 
-	// 심각도 문턱은 스윙 지표 판별과 동일하게 유지.
-	constexpr float MinReportSeverity = 0.15f;
+	// 심각도 문턱은 스윙 지표 판별과 동일하게 유지 (모드 공통 상수).
+	constexpr float MinReportSeverity = UWeaknessDetector::MinReportSeverity;
 	auto AddAxis = [&Report](EWeaknessAxis Axis, float Score, const FString& Evidence)
 	{
 		const float ClampedScore = FMath::Clamp(Score, 0.0f, 1.0f);
@@ -354,27 +368,41 @@ FString UWeaknessDetector::SummarizeReport(const FWeaknessReport& Report)
 {
 	if (!Report.bValid)
 	{
-		return TEXT("분석할 스윙 기록이 없습니다.");
+		return TEXT("No records to analyze.");
 	}
 
-	FString Out = FString::Printf(TEXT("시도 %d회, 컨택 %d회.\n"), Report.AttemptCount, Report.ContactCount);
+	FString Out = FString::Printf(TEXT("Attempts %d, successes %d.\n"), Report.AttemptCount, Report.ContactCount);
 
 	if (Report.Weaknesses.Num() == 0)
 	{
-		Out += TEXT("두드러진 약점이 없습니다 — 전반적으로 안정적입니다.");
-		return Out;
+		// 약점이 없어도 부가 근거(Notes)는 계속 실어야 한다 — 코칭이 "무엇이 잘 됐는지"를
+		// 숫자로 짚을 수 있어야 하므로 여기서 끊지 않는다.
+		Out += TEXT("No notable weaknesses - overall stable.\n");
+	}
+	else
+	{
+		Out += TEXT("Weaknesses (most urgent first):\n");
+		for (const FWeakness& W : Report.Weaknesses)
+		{
+			Out += FString::Printf(TEXT("- %s: %s (performance %.2f)\n"),
+				*GetAxisDisplayName(W.Axis).ToString(), *W.Evidence, W.Score);
+		}
 	}
 
-	Out += TEXT("약점 (시급한 순):\n");
-	for (const FWeakness& W : Report.Weaknesses)
+	// 축으로 표현되지 않는 부가 근거 (타구 타입별 성공률·베이스별 정확도 등).
+	// 드릴 선택엔 안 쓰이지만 코칭 문장에는 필요한 숫자다.
+	if (Report.Notes.Num() > 0)
 	{
-		Out += FString::Printf(TEXT("- %s: %s (수행도 %.2f)\n"),
-			*GetAxisDisplayName(W.Axis).ToString(), *W.Evidence, W.Score);
+		Out += TEXT("Breakdown:\n");
+		for (const FString& N : Report.Notes)
+		{
+			Out += FString::Printf(TEXT("- %s\n"), *N);
+		}
 	}
 
 	if (Report.bUncalibrated)
 	{
-		Out += TEXT("(※ 점수 기준 미보정 — 참고용 수치)");
+		Out += TEXT("(* scoring uncalibrated - reference only)");
 	}
 	return Out;
 }

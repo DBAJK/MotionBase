@@ -74,12 +74,14 @@ FSwingMetrics USwingAnalyzer::AnalyzeSwing(
 		Out.PeakSpeedMps = ReportedPeakCmps / 100.0f;
 	}
 
-	// TODO(캘리브레이션): 아래 상수는 실측 스위트스팟/스윙 특성으로 조정 (하드코딩 금지).
-	constexpr float ContactRadiusCm      = 20.0f;  // 유효 컨택 반경 (배럴 선분과의 수직 거리 기준)
-	constexpr float MinSwingSpeedMps     = 2.5f;   // 이 속도 미만은 '스윙 아님'(완전 정지·트래킹 노이즈)
-	constexpr float ContactTimeWindowSec = 0.22f;  // 공이 플레이트에 있는 순간 부근만 컨택 가능
-	// 배트 끝(BatTip = 손에서 +X 80cm)에서 손 쪽으로 이만큼을 유효 타격면(배럴 ≈46~84cm)으로 본다.
-	constexpr float BarrelLengthCm       = 34.0f;
+	// 판정 상수는 헤더(USwingAnalyzer)에 노출돼 있다 — 채점 계층(FScoringConfig)과
+	// 타구 모델(UHitModel)이 같은 값에 맞춰야 하기 때문. 여기서 지역 복사만 만든다.
+	// 히트 판정 완화(2026-08): 실기에서 컨택이 너무 빡빡해 반경(20→32)·시간창(0.22→0.32)을
+	// 넓히고 스윙 게이트(2.5→1.5)를 낮췄다.
+	constexpr float ContactRadiusCm      = USwingAnalyzer::ContactRadiusCm;
+	constexpr float MinSwingSpeedMps     = USwingAnalyzer::MinSwingSpeedMps;
+	constexpr float ContactTimeWindowSec = USwingAnalyzer::ContactTimeWindowSec;
+	constexpr float BarrelLengthCm       = USwingAnalyzer::BarrelLengthCm;
 
 	// 2) 컨택 후보 탐색.
 	//    공에 가장 가까운 표본을 찾되, **두 관문**을 통과한 표본만 본다:
@@ -122,6 +124,9 @@ FSwingMetrics USwingAnalyzer::AnalyzeSwing(
 	if (ContactIdx != INDEX_NONE)
 	{
 		Out.ContactDistanceCm = ContactDistCm;
+		// 후보가 잡혔다 = 시간 창 + 동작 게이트를 통과했다 = **실제로 휘둘렀다.**
+		// 반경 안이면 컨택, 밖이면 헛스윙 — 둘 다 '시도'다 (호출부가 이 플래그로 구분한다).
+		Out.bSwingDetected = true;
 		Out.bContacted = (ContactDistCm <= ContactRadiusCm);
 
 		// 3) 컨택 순간 속도 (peak 아님)
@@ -138,9 +143,10 @@ FSwingMetrics USwingAnalyzer::AnalyzeSwing(
 	}
 	else
 	{
-		// 시간 창 안에서 스윙 동작이 없었다 → 헛스윙. 거리만 참고용으로 남긴다.
+		// 시간 창 안에서 스윙 동작이 없었다 → **지켜본 공**(스윙 자체가 없음).
+		// 거리만 참고용으로 남긴다. bSwingDetected=false 로 헛스윙과 구분된다.
 		Out.ContactDistanceCm = OverallMinCm;
-		// bContacted=false, ContactSpeedMps=0, TimingErrorSeconds=0 (기본값 유지)
+		// bSwingDetected=false, bContacted=false, ContactSpeedMps=0, TimingErrorSeconds=0 (기본값 유지)
 	}
 
 	// TODO: 스윙 평면각 — 궤적 주성분(PCA) 또는 시작→컨택 벡터의 수평 대비 각도.

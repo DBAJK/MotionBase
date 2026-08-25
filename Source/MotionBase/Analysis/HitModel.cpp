@@ -5,9 +5,13 @@ namespace
 	// TODO(캘리브레이션): 아래 상수는 실측·플레이테스트로 조정 (하드코딩 확정 금지).
 	constexpr float BaseLaunchAngleDeg   = 26.0f;   // 이상적 발사각
 	constexpr float LaunchTimingGainDeg  = 80.0f;   // 타이밍 1초당 발사각 변화(도)
-	// ⚠️ 좌우각 감도는 컨택 시간 창(USwingAnalyzer 의 ContactTimeWindowSec, 현재 0.15s)과
-	//    맞물려야 한다. 감도가 낮으면 파울이 될 만큼 빗나간 스윙이 그 전에 헛스윙 처리되어
-	//    파울이 거의 안 나온다. 45°/0.12s ≈ 375 → 타이밍 0.12s 부근부터 파울 밴드가 생긴다.
+	// ⚠️ 좌우각 감도는 컨택 시간 창(`USwingAnalyzer::ContactTimeWindowSec`)과 맞물려 있다.
+	//    감도가 낮으면 파울이 될 만큼 빗나간 스윙이 그 전에 헛스윙 처리돼 파울이 거의 안 나오고,
+	//    높으면 창 안 대부분이 파울이 된다.
+	//    현재: 45°/375 ≈ **0.12s** → 타이밍 오차 0.12s 를 넘는 컨택부터 파울 밴드.
+	//    시간 창은 0.32s 이므로 페어(±0.12s) : 파울(0.12~0.32s) 로 갈린다.
+	//    ※ 창을 0.22 → 0.32 로 넓힐 때 이 값은 그대로 뒀다. 파울 밴드가 넓어진 셈이라
+	//      실기 플레이테스트에서 파울이 과하면 여기부터 낮출 것 (숫자 자체는 미보정).
 	constexpr float SprayTimingGainDeg   = 375.0f;  // 타이밍 1초당 좌우각 변화(도)
 	constexpr float MinLaunchDeg         = -15.0f;
 	constexpr float MaxLaunchDeg         = 55.0f;

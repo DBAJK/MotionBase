@@ -16,7 +16,10 @@ struct FScoringConfig
 {
 	GENERATED_BODY()
 
-	/** 가중치 (합=1 권장). */
+	/**
+	 * 가중치. 합이 1이 아니어도 된다 — 채점 함수가 항상 합으로 나눠 정규화한다.
+	 * (예전엔 세션 채점만 정규화를 안 해서, 에디터에서 가중치를 만지면 총점이 100을 넘었다.)
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weights")
 	float WeightAccuracy = 0.4f;
 
@@ -30,9 +33,15 @@ struct FScoringConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Calibration")
 	float TimingSigmaSeconds = 0.05f;
 
-	/** 정확도 0점이 되는 최대 컨택 거리 (cm). */
+	/**
+	 * 정확도 0점이 되는 최대 컨택 거리 (cm).
+	 *
+	 * ⚠️ **`USwingAnalyzer::ContactRadiusCm` 이상이어야 한다.** 이 값이 더 작으면
+	 *    그 사이 구간(예전: 반경 32 / 상한 30 → 30~32cm)이 "맞긴 맞았는데 정확도 0 ·
+	 *    타구속도 0 · 비거리 0m" 인 죽은 밴드가 된다. 컨택 반경을 넓힐 땐 여기도 같이 올릴 것.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Calibration")
-	float MaxContactDistanceCm = 30.0f;
+	float MaxContactDistanceCm = 32.0f;
 
 	/** 효율 0점 하한 배트 속도 (m/s). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Calibration")
@@ -62,16 +71,14 @@ struct FScoringConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Calibration")
 	bool bCalibrated = false;
 
-	/** 가중치 합을 1로 보정. */
-	void Normalize()
+	/**
+	 * 3축 가중치의 합. 채점 함수가 총점을 이 값으로 나눠 0~100 스케일을 지킨다.
+	 * (예전의 Normalize() 를 대신한다 — 아무도 호출하지 않는 보정 함수보다,
+	 *  쓰는 쪽에서 항상 나누는 편이 설정을 어떻게 만져도 깨지지 않는다.)
+	 */
+	float WeightSum() const
 	{
-		const float Sum = WeightAccuracy + WeightEfficiency + WeightConsistency;
-		if (Sum > KINDA_SMALL_NUMBER)
-		{
-			WeightAccuracy /= Sum;
-			WeightEfficiency /= Sum;
-			WeightConsistency /= Sum;
-		}
+		return FMath::Max(WeightAccuracy + WeightEfficiency + WeightConsistency, KINDA_SMALL_NUMBER);
 	}
 };
 
@@ -95,6 +102,25 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Scoring")
 	static FScoreResult ScoreSession(const TArray<FSwingMetrics>& History, const FScoringConfig& Config);
+
+	// ── 수비 계열 (포구·송구·백업) ──
+	//
+	// ⚠️ 수비는 아직 **3축 채점 모델이 없다.** 타격의 정확도·효율·일관성을 수비에 억지로
+	//    끼워 맞추면(예: 구속을 '효율'로) 근거 없는 숫자가 기록에 남는다. 그래서 여기서는
+	//    성공/실패만 점수로 남기고, 실제 분석 내용은 각 폰이 만드는 FWeaknessReport 가 진다.
+	//    Details 에 원시 측정값을 실어두므로 나중에 실측 캘리브레이션 후 모델을 얹을 수 있다.
+
+	/**
+	 * 수비 시도 1건 → 점수. 성공 100 / 실패 0.
+	 * @param bSuccess 포구 성공 / 목표 zone 도달 / 백업 정답
+	 * @param Details  원시 측정값 (예: "TimingError" -> -0.08, "ReleaseKmh" -> 78)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Scoring")
+	static FScoreResult ScoreDefenseAttempt(bool bSuccess, const TMap<FName, float>& Details);
+
+	/** 수비 세션 집계 → 총점 = 성공률 × 100. 시도가 0이면 bValid=false. */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Scoring")
+	static FScoreResult ScoreDefenseSession(int32 SuccessCount, int32 AttemptCount);
 
 	/** 정확도 축 (0~1): 타이밍 가우시안 감쇠 × 컨택 거리 감쇠. */
 	static float EvalAccuracy(const FSwingMetrics& M, const FScoringConfig& Config);

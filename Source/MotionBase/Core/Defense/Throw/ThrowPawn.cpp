@@ -1,4 +1,4 @@
-﻿#include "Core/Defense/Throw/ThrowPawn.h"
+#include "Core/Defense/Throw/ThrowPawn.h"
 #include "Core/Defense/Throw/ThrowJudge.h"
 #include "Core/Defense/CatchBall/CatchBall.h"
 #include "Core/MotionBaseGameMode.h"
@@ -17,6 +17,32 @@
 #include "Core/Defense/Throw/ThrowHUD.h"
 #include "UI/ModeSelectHUD.h"
 #include "UI/VRInfoPanel.h"
+#include "AI/DrillCatalog.h"
+#include "AI/AIFeedbackService.h"
+#include "Analysis/WeaknessDetector.h"
+#include "Scoring/ScoringService.h"
+#include "Core/ModeManager.h"
+
+namespace
+{
+	// TextRender 는 자동 줄바꿈이 없다 → 글자수로 하드 랩.
+	TArray<FString> ThrowWrap(const FString& In, int32 MaxCharsPerLine, int32 MaxLines)
+	{
+		TArray<FString> Lines;
+		int32 i = 0;
+		const int32 Len = In.Len();
+		while (i < Len && Lines.Num() < MaxLines)
+		{
+			Lines.Add(In.Mid(i, MaxCharsPerLine));
+			i += MaxCharsPerLine;
+		}
+		if (i < Len && Lines.Num() > 0)
+		{
+			Lines.Last().Append(TEXT(" …"));
+		}
+		return Lines;
+	}
+}
 
 AThrowPawn::AThrowPawn()
 {
@@ -65,9 +91,15 @@ void AThrowPawn::BeginPlay()
 	{
 		UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
 	}
+
+	// 나가기 제스처 — 송구 와인드업에서 팔이 위로 올라가므로 기본값보다 조인다.
+	// 시행이 진행 중인 동안(급구 대기/공 들고 있음/송구 중)에는 Tick 에서 진행을 동결한다.
+	ExitGesture.UpThreshold = 0.90f;
+	ExitGesture.HoldSec     = 2.0f;
+
 	if (BallInHandMesh)
 	{
-		BallInHandMesh->SetVisibility(bVR); // 손에 든 공은 VR 에서만.
+		BallInHandMesh->SetVisibility(false); // 공을 잡은 뒤(Ready)에만 보인다.
 	}
 
 	// 상태 패널은 VR 에서만. PC 는 평면 HUD(AThrowHUD)가 담당한다.
@@ -77,6 +109,10 @@ void AThrowPawn::BeginPlay()
 		if (!bVR) { VrPanel->HideAll(); }
 	}
 
+	// AI 운동 추천 서비스 (키가 없으면 요청 시 조용히 생략됨).
+	FeedbackService = NewObject<UAIFeedbackService>(this);
+	FeedbackService->OnFeedbackReady.AddDynamic(this, &AThrowPawn::HandleCoachingReady);
+
 	StartSession();
 }
 
@@ -84,17 +120,54 @@ void AThrowPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	// 스페이스바: 누름=충전 시작, 뗌=발사.
-	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Pressed,  this, &AThrowPawn::OnChargeStart);
-	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Released, this, &AThrowPawn::OnChargeRelease);
+	// 스페이스바는 단계에 따라 역할이 바뀐다: 급구 대기=포구, 송구 준비=충전/발사.
+	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Pressed,  this, &AThrowPawn::OnSpacePressed);
+	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Released, this, &AThrowPawn::OnSpaceReleased);
 	PlayerInputComponent->BindKey(EKeys::M, IE_Pressed, this, &AThrowPawn::ReturnToModeSelect);
 
 	// HUD 교체 (빙의 후 여기서).
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
-		// 주: ThrowHUD 는 다음 단계. 지금은 임시로 기본 HUD 유지.
 		PC->ClientSetHUD(AThrowHUD::StaticClass());
 	}
+}
+
+// ── 베이스 ──
+
+FString AThrowPawn::BaseName(EBaseType Base)
+{
+	switch (Base)
+	{
+	case EBaseType::First:  return TEXT("1B");
+	case EBaseType::Second: return TEXT("2B");
+	case EBaseType::Third:  return TEXT("3B");
+	default:                return TEXT("Home");
+	}
+}
+
+int32 AThrowPawn::BaseIndexOf(EBaseType Base)
+{
+	switch (Base)
+	{
+	case EBaseType::First:  return 0;
+	case EBaseType::Second: return 1;
+	case EBaseType::Third:  return 2;
+	default:                return 3;
+	}
+}
+
+FVector AThrowPawn::BaseLocation(EBaseType Base) const
+{
+	FVector2D Off = HomePlateOffset;
+	switch (Base)
+	{
+	case EBaseType::First:  Off = FirstBaseOffset;  break;
+	case EBaseType::Second: Off = SecondBaseOffset; break;
+	case EBaseType::Third:  Off = ThirdBaseOffset;  break;
+	default: break;
+	}
+	// 베이스는 바닥에 있다 — 캡슐 중심(HomeLocation)에서 반높이만큼 아래.
+	return HomeLocation + FVector(Off.X, Off.Y, -88.0f);
 }
 
 // ── 세션 진행 ──
@@ -108,45 +181,118 @@ void AThrowPawn::StartSession()
 	bHasResult = false;
 	IntervalTimer = 0.0f;
 
-	SpawnNextTarget();
+	SessionResults.Reset();
+	for (int32 i = 0; i < NumBases; ++i) { BaseAttempts[i] = 0; BaseSuccess[i] = 0; }
+
+	LastDrills.Reset();
+	CoachingText.Reset();
+	bAwaitingCoaching = false;
+
+	SpawnNextTrial();
 }
 
-void AThrowPawn::SpawnNextTarget()
+void AThrowPawn::SpawnNextTrial()
 {
-	// 타겟을 정면(+X) 랜덤 거리·좌우로 배치.
-	const float Dist = FMath::RandRange(MinTargetDistance, MaxTargetDistance);
-	const float SideY = FMath::RandRange(-TargetSideSpread, TargetSideSpread);
+	UWorld* World = GetWorld();
+	if (!World) { return; }
 
 	CurrentTrial = FThrowTrial();
+
+	// ① 목표 베이스 지정 — 네 베이스 중 랜덤. 던지기 전에 미리 표시된다.
+	CurrentTrial.TargetBase     = static_cast<EBaseType>(FMath::RandRange(0, NumBases - 1));
 	CurrentTrial.ThrowOrigin    = HomeLocation + FVector(0, 0, 60.0f); // 손 높이
-	CurrentTrial.TargetLocation = HomeLocation + FVector(Dist, SideY, -88.0f); // 바닥
+	CurrentTrial.TargetLocation = BaseLocation(CurrentTrial.TargetBase);
 	CurrentTrial.TargetDistance = FVector::Dist2D(CurrentTrial.TargetLocation, CurrentTrial.ThrowOrigin);
 	CurrentTrial.IdealPower     = DistanceToIdealPower(CurrentTrial.TargetDistance);
 	CurrentTrial.HitRadius      = HitRadius;
 
+	// ② 급구(feed) — 잡아야 시계가 돈다. 정면에서 가슴 높이로 날아온다.
+	const float G = FMath::Abs(World->GetGravityZ());
+	const float SideY = FMath::RandRange(-150.0f, 150.0f); // 살짝 좌우로 흔들어 매번 같은 자리로 오지 않게.
+	CurrentTrial.FeedLaunchLocation = HomeLocation + FVector(FeedDistance, SideY, 150.0f);
+	CurrentTrial.FeedFlightSec      = FMath::Max(FeedFlightSec, 0.3f);
+
+	const FVector Arrival = HomeLocation + FVector(0.0f, 0.0f, 20.0f); // 가슴 높이
+	const FVector ToTarget = Arrival - CurrentTrial.FeedLaunchLocation;
+	const FVector Horiz(ToTarget.X, ToTarget.Y, 0.0f);
+	const float VHoriz = Horiz.Size() / CurrentTrial.FeedFlightSec;
+	const float VZ = (ToTarget.Z / CurrentTrial.FeedFlightSec) + 0.5f * G * CurrentTrial.FeedFlightSec;
+	CurrentTrial.FeedVelocity = Horiz.GetSafeNormal() * VHoriz + FVector(0, 0, VZ);
+
+	// 급구 발사.
+	TSubclassOf<ACatchBall> Cls = BallClass;
+	if (!Cls) { Cls = ACatchBall::StaticClass(); }
+
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ActiveBall = World->SpawnActor<ACatchBall>(Cls, CurrentTrial.FeedLaunchLocation, FRotator::ZeroRotator, Params);
+	if (ActiveBall)
+	{
+		ActiveBall->Launch(CurrentTrial.FeedVelocity);
+	}
+
+	Phase = EThrowPhase::Feed;
 	CurrentPower = 0.0f;
 	bCharging = false;
-	bBallInFlight = false;
 	bHasResult = false;
+	CatchTimeSec = -1.0f;
+	bCleanCatch = false;
+	PendingTransferSec = -1.0f;
+	PendingReleaseSpeedCms = 0.0f;
+
+	if (BallInHandMesh) { BallInHandMesh->SetVisibility(false); }
 }
 
-void AThrowPawn::OnChargeStart()
+void AThrowPawn::CatchFeed(bool bClean)
 {
-	// 공이 날아가는 중이거나 세션 끝이면 무시.
-	if (bBallInFlight || bSessionOver || bWaitingNext)
+	if (Phase != EThrowPhase::Feed) { return; }
+
+	UWorld* World = GetWorld();
+	CatchTimeSec = World ? World->GetTimeSeconds() : 0.0f;
+	bCleanCatch  = bClean;
+
+	if (IsValid(ActiveBall))
 	{
-		return;
+		ActiveBall->Destroy();
 	}
-	bCharging = true;
+	ActiveBall = nullptr;
+
+	Phase = EThrowPhase::Ready;
 	CurrentPower = 0.0f;
+	bCharging = false;
+	ThrowCooldown = 0.25f; // 잡자마자 손 움직임이 송구로 오인되지 않게 짧게 잠근다.
+
+	// 손에 든 공은 VR 에서만 보인다 (PC 는 1인칭 손이 없다).
+	if (BallInHandMesh) { BallInHandMesh->SetVisibility(bVR); }
 }
 
-void AThrowPawn::OnChargeRelease()
+void AThrowPawn::OnSpacePressed()
 {
-	if (!bCharging)
+	if (bSessionOver || bWaitingNext) { return; }
+
+	// 급구 대기 — 타이밍이 맞으면 포구.
+	if (Phase == EThrowPhase::Feed)
 	{
-		return;
+		if (!IsValid(ActiveBall)) { return; }
+		const float Elapsed = ActiveBall->GetElapsedTime();
+		if (FMath::Abs(Elapsed - CurrentTrial.FeedFlightSec) <= FeedCatchWindowSec)
+		{
+			CatchFeed(true);
+		}
+		return; // 빗나간 타이밍은 무시 — 공이 지나가면 자동으로 fumble 처리된다.
 	}
+
+	// 송구 준비 — 파워 충전 시작.
+	if (Phase == EThrowPhase::Ready)
+	{
+		bCharging = true;
+		CurrentPower = 0.0f;
+	}
+}
+
+void AThrowPawn::OnSpaceReleased()
+{
+	if (!bCharging) { return; }
 	bCharging = false;
 	ThrowBall(CurrentPower);
 }
@@ -154,46 +300,65 @@ void AThrowPawn::OnChargeRelease()
 void AThrowPawn::ThrowBall(float Power)
 {
 	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
+	if (!World || Phase != EThrowPhase::Ready) { return; }
 
 	TSubclassOf<ACatchBall> Cls = BallClass;
-	if (!Cls)
-	{
-		Cls = ACatchBall::StaticClass();
-	}
+	if (!Cls) { Cls = ACatchBall::StaticClass(); }
+
+	const FVector Velocity = PowerToVelocity(Power);
 
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
 	ActiveBall = World->SpawnActor<ACatchBall>(Cls, CurrentTrial.ThrowOrigin, FRotator::ZeroRotator, Params);
-	if (ActiveBall)
+	if (!ActiveBall)
 	{
-		ActiveBall->Launch(PowerToVelocity(Power));
-		bBallInFlight = true;
-		LastResult.UsedPower = Power;
+		return;
 	}
+	ActiveBall->Launch(Velocity);
+	LastBallLoc = CurrentTrial.ThrowOrigin;
+
+	// 릴리스 시점에 확정되는 측정값 — 착지 판정 때 결과에 합친다.
+	PendingPower           = Power;
+	PendingReleaseSpeedCms = Velocity.Size();
+	PendingTransferSec     = (CatchTimeSec >= 0.0f) ? (World->GetTimeSeconds() - CatchTimeSec) : -1.0f;
+
+	Phase = EThrowPhase::InFlight;
+	if (BallInHandMesh) { BallInHandMesh->SetVisibility(false); }
 }
 
 void AThrowPawn::FinishThrow(const FThrowResult& Result)
 {
 	LastResult = Result;
 	bHasResult = true;
-	bBallInFlight = false;
 
+	SessionResults.Add(Result);
+
+	// 시도 1건 = 기록 1건 (수비는 성공/실패 + 원시 측정값만 남긴다 — 3축 모델 없음).
+	if (UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
+	{
+		TMap<FName, float> Details;
+		Details.Add(TEXT("TargetBase"),      static_cast<float>(BaseIndexOf(Result.TargetBase)));
+		Details.Add(TEXT("DistanceErrorCm"), Result.DistanceError);
+		Details.Add(TEXT("ReleaseKmh"),      Result.ReleaseSpeedKmh);
+		Details.Add(TEXT("TransferSec"),     Result.TransferTimeSec);
+		MM->RecordResult(UScoringService::ScoreDefenseAttempt(Result.IsSuccess(), Details));
+	}
+
+	const int32 Bi = BaseIndexOf(Result.TargetBase);
+	++BaseAttempts[Bi];
 	if (Result.IsSuccess())
 	{
+		++BaseSuccess[Bi];
 		++SuccessCount;
 	}
 
-	if (ActiveBall)
+	if (IsValid(ActiveBall))
 	{
 		ActiveBall->Destroy();
-		ActiveBall = nullptr;
 	}
+	ActiveBall = nullptr;
 
+	Phase = EThrowPhase::Done;
 	++ThrowIndex;
 
 	if (ThrowIndex >= TotalThrows)
@@ -210,6 +375,219 @@ void AThrowPawn::FinishThrow(const FThrowResult& Result)
 void AThrowPawn::EndSession()
 {
 	bSessionOver = true;
+	RequestThrowFeedback();
+}
+
+// ── 측정 지표 집계 ──
+
+void AThrowPawn::GetBaseStats(EBaseType Base, int32& OutAttempt, int32& OutSuccess) const
+{
+	const int32 Bi = BaseIndexOf(Base);
+	OutAttempt = BaseAttempts[Bi];
+	OutSuccess = BaseSuccess[Bi];
+}
+
+float AThrowPawn::GetAverageReleaseKmh() const
+{
+	if (SessionResults.Num() == 0) { return 0.0f; }
+	float Sum = 0.0f;
+	for (const FThrowResult& R : SessionResults) { Sum += R.ReleaseSpeedKmh; }
+	return Sum / SessionResults.Num();
+}
+
+float AThrowPawn::GetAverageTransferSec() const
+{
+	float Sum = 0.0f;
+	int32 N = 0;
+	for (const FThrowResult& R : SessionResults)
+	{
+		if (R.bCleanCatch && R.TransferTimeSec >= 0.0f) { Sum += R.TransferTimeSec; ++N; }
+	}
+	return (N > 0) ? (Sum / N) : -1.0f; // -1 = 정상 포구한 시행이 없음
+}
+
+float AThrowPawn::GetLiveTransferTime() const
+{
+	if (Phase != EThrowPhase::Ready || CatchTimeSec < 0.0f) { return -1.0f; }
+	const UWorld* World = GetWorld();
+	return World ? (World->GetTimeSeconds() - CatchTimeSec) : -1.0f;
+}
+
+FString AThrowPawn::GetLastMetricsLine() const
+{
+	if (!bHasResult) { return FString(); }
+
+	const FString Transfer = (LastResult.TransferTimeSec >= 0.0f)
+		? FString::Printf(TEXT("%.2fs"), LastResult.TransferTimeSec)
+		: FString(TEXT("-- (fumble)"));
+
+	return FString::Printf(TEXT("to %s   miss %.0fcm   %.0f km/h   transfer %s"),
+		*BaseName(LastResult.TargetBase), LastResult.DistanceError,
+		LastResult.ReleaseSpeedKmh, *Transfer);
+}
+
+// ── AI 운동 추천 ──
+
+FWeaknessReport AThrowPawn::BuildThrowReport() const
+{
+	FWeaknessReport R;
+	R.Mode = EGameModeId::Defense;
+	R.AttemptCount = SessionResults.Num();
+	R.bUncalibrated = true; // 구속·전환 기준값은 아직 실측 미보정.
+
+	if (SessionResults.Num() == 0)
+	{
+		return R; // bValid=false
+	}
+
+	const int32 N = SessionResults.Num();
+	int32 OnTarget = 0, CleanCatches = 0;
+	float SumDist = 0.0f, SumKmh = 0.0f, SumTransfer = 0.0f;
+	int32 TransferN = 0;
+
+	for (const FThrowResult& Res : SessionResults)
+	{
+		if (Res.IsSuccess()) { ++OnTarget; }
+		SumDist += Res.DistanceError;
+		SumKmh  += Res.ReleaseSpeedKmh;
+		if (Res.bCleanCatch)
+		{
+			++CleanCatches;
+			if (Res.TransferTimeSec >= 0.0f) { SumTransfer += Res.TransferTimeSec; ++TransferN; }
+		}
+	}
+
+	R.ContactCount = OnTarget;
+	R.bValid = true;
+
+	const float OnTargetRate = static_cast<float>(OnTarget) / N;
+	const float AvgDist      = SumDist / N;                       // cm
+	const float AvgKmh       = SumKmh / N;                        // km/h
+	const float AvgTransfer  = (TransferN > 0) ? (SumTransfer / TransferN) : -1.0f; // s
+
+	auto AddWeakness = [&R](EWeaknessAxis Axis, float Score, const FString& Evidence)
+	{
+		FWeakness W;
+		W.Axis = Axis;
+		W.Score = FMath::Clamp(Score, 0.0f, 1.0f);
+		W.Severity = 1.0f - W.Score;
+		W.Evidence = Evidence;
+		// 문턱은 타격·포구와 같은 모드 공통 상수를 쓴다.
+		if (W.Severity >= UWeaknessDetector::MinReportSeverity) { R.Weaknesses.Add(W); }
+	};
+
+	// ① 정확도: 도달률이 주(0.6), 빗나간 거리(0.4). 기준 거리는 zone 반경의 4배.
+	const float DistScore = FMath::Clamp(1.0f - (AvgDist / FMath::Max(HitRadius * 4.0f, 1.0f)), 0.0f, 1.0f);
+	AddWeakness(EWeaknessAxis::ThrowAccuracy, OnTargetRate * 0.6f + DistScore * 0.4f,
+		FString::Printf(TEXT("on target %d/%d, average miss %.0f cm (zone radius %.0f cm)"),
+			OnTarget, N, AvgDist, HitRadius));
+
+	// ② 구속: 목표 구속 대비 비율.
+	AddWeakness(EWeaknessAxis::ArmStrength,
+		FMath::Clamp(AvgKmh / FMath::Max(TargetReleaseKmh, 1.0f), 0.0f, 1.0f),
+		FString::Printf(TEXT("average release %.0f km/h (target %.0f km/h)"), AvgKmh, TargetReleaseKmh));
+
+	// ③ 전환 시간: 목표 시간 / 실제 시간. 정상 포구가 하나도 없으면 축을 만들지 않는다
+	//    (0 을 넣으면 "전환이 완벽하다"로 뒤집혀 읽힌다).
+	if (AvgTransfer > 0.0f)
+	{
+		AddWeakness(EWeaknessAxis::TransferQuick,
+			FMath::Clamp(TargetTransferSec / AvgTransfer, 0.0f, 1.0f),
+			FString::Printf(TEXT("average catch-to-throw %.2f s (target %.2f s), clean catches %d/%d"),
+				AvgTransfer, TargetTransferSec, CleanCatches, N));
+	}
+
+	// 베이스별 정확도 — 축이 아니라 노트로. "홈 송구만 다 짧다" 같은 편중을 코칭이 짚을 수 있다.
+	{
+		FString ByBase;
+		const EBaseType Bases[NumBases] =
+			{ EBaseType::First, EBaseType::Second, EBaseType::Third, EBaseType::Home };
+		for (int32 i = 0; i < NumBases; ++i)
+		{
+			int32 A = 0, S = 0;
+			GetBaseStats(Bases[i], A, S);
+			if (A <= 0) { continue; }
+			if (!ByBase.IsEmpty()) { ByBase += TEXT(", "); }
+			ByBase += FString::Printf(TEXT("%s %d/%d"), *BaseName(Bases[i]), S, A);
+		}
+		if (!ByBase.IsEmpty())
+		{
+			R.Notes.Add(FString::Printf(TEXT("Accuracy by target base: %s"), *ByBase));
+		}
+	}
+	if (AvgTransfer > 0.0f)
+	{
+		R.Notes.Add(FString::Printf(TEXT("Clean catches %d/%d before the throw"), CleanCatches, N));
+	}
+	else
+	{
+		R.Notes.Add(TEXT("No clean catch this session - transfer time not measured"));
+	}
+
+	R.Weaknesses.Sort([](const FWeakness& A, const FWeakness& B) { return A.Severity > B.Severity; });
+	return R;
+}
+
+void AThrowPawn::FlushSessionToSave()
+{
+	UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr;
+	if (!MM)
+	{
+		return;
+	}
+	MM->FinalizeSession(
+		UScoringService::ScoreDefenseSession(SuccessCount, SessionResults.Num()),
+		BuildThrowReport());
+}
+
+void AThrowPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	FlushSessionToSave();
+
+	if (IsValid(ActiveBall))
+	{
+		ActiveBall->Destroy();
+		ActiveBall = nullptr;
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void AThrowPawn::RequestThrowFeedback()
+{
+	const FWeaknessReport Report = BuildThrowReport();
+
+	// 과거 "Throw" 세션만 골라 만성 추세를 본다 (종목 필터 없이 보면 포구·백업 축이 섞인다).
+	FChronicWeaknessReport Chronic;
+	if (UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
+	{
+		Chronic = UWeaknessDetector::AnalyzeTrend(
+			MM->GetHistory(), EGameModeId::Defense, 5, UModeManager::GetDefenseDrillIdName(1));
+	}
+	LastDrills = UDrillCatalog::RecommendWithHistory(Report, Chronic, 3);
+
+	if (FeedbackService && FeedbackService->IsConfigured())
+	{
+		CoachingText = TEXT("Requesting AI coaching...");
+		bAwaitingCoaching = true;
+		FeedbackService->RequestThrowCoaching(Report, LastDrills);
+	}
+	else
+	{
+		bAwaitingCoaching = false;
+		CoachingText = TEXT("AI coaching not configured (Config/Secrets.ini)");
+	}
+
+	UE_LOG(LogMotionBase, Log, TEXT("[Throw] 코칭 요청: 명중 %d/%d, 평균 %.0f km/h, 전환 %.2fs, 약점 %d개"),
+		SuccessCount, TotalThrows, GetAverageReleaseKmh(), GetAverageTransferSec(), Report.Weaknesses.Num());
+}
+
+void AThrowPawn::HandleCoachingReady(bool bSuccess, const FString& Text)
+{
+	bAwaitingCoaching = false;
+	CoachingText = Text;
+	UE_LOG(LogMotionBase, Log, TEXT("[Throw] AI 코칭 %s: %s"),
+		bSuccess ? TEXT("수신") : TEXT("실패"), *Text);
 }
 
 // ── 파워 ↔ 거리 ──
@@ -218,7 +596,7 @@ FVector AThrowPawn::PowerToVelocity(float Power) const
 {
 	Power = FMath::Clamp(Power, 0.0f, 1.0f);
 
-	// 방향: 타겟으로 자동 조준 (수평 방향만).
+	// 방향: 목표 베이스로 자동 조준 (수평 방향만).
 	const FVector Flat = CurrentTrial.TargetLocation - CurrentTrial.ThrowOrigin;
 	const FVector Dir = FVector(Flat.X, Flat.Y, 0.0f).GetSafeNormal();
 
@@ -246,14 +624,23 @@ void AThrowPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	// VR: 컨트롤러 던지기 동작 인식 (파워는 손 속도로).
+	if (ThrowCooldown > 0.0f)
+	{
+		ThrowCooldown = FMath::Max(0.0f, ThrowCooldown - DeltaSeconds);
+	}
+
+	// VR: 컨트롤러 던지기/포구 동작 인식.
 	if (bVR)
 	{
 		// 뒤로가기 — 컨트롤러를 위로 들고 유지하면 모드 선택으로 복귀.
 		if (ThrowController)
 		{
+			// 시행이 도는 동안엔 동결 — 급구를 받으려 손을 들거나 와인드업으로 팔이 올라간
+			// 자세를 나가기로 오인하지 않게. 판정이 끝난 뒤(Done) 틈에서만 진행이 쌓인다.
+			const bool bGestureAllowed = (Phase == EThrowPhase::Done) || bSessionOver;
 			bool bExit = false;
-			ExitGesture.Update(ThrowController->GetForwardVector(), ThrowController->IsTracked(), DeltaSeconds, bExit);
+			ExitGesture.Update(ThrowController->GetForwardVector(),
+				ThrowController->IsTracked(), bGestureAllowed, DeltaSeconds, bExit);
 			if (bExit)
 			{
 				ReturnToModeSelect();
@@ -261,7 +648,21 @@ void AThrowPawn::Tick(float DeltaSeconds)
 			}
 		}
 
+		TickVRFeedCatch();
 		TickVRThrow(DeltaSeconds);
+	}
+
+	// 급구가 지나갔는데 못 잡았으면 fumble 로 넘긴다 (전환 시간은 미측정).
+	if (Phase == EThrowPhase::Feed)
+	{
+		if (!IsValid(ActiveBall))
+		{
+			CatchFeed(false); // 공이 사라짐 = 놓침
+		}
+		else if (ActiveBall->GetElapsedTime() > CurrentTrial.FeedFlightSec + FeedCatchWindowSec)
+		{
+			CatchFeed(false);
+		}
 	}
 
 	// 파워 충전 (키보드 모드).
@@ -270,40 +671,67 @@ void AThrowPawn::Tick(float DeltaSeconds)
 		CurrentPower = FMath::Clamp(CurrentPower + DeltaSeconds / ChargeTime, 0.0f, 1.0f);
 	}
 
-	// 공이 착지했는지 확인 → 판정.
-	if (bBallInFlight && ActiveBall)
+	// 송구한 공이 착지했는지 확인 → 판정.
+	if (Phase == EThrowPhase::InFlight)
 	{
-		if (ActiveBall->GetActorLocation().Z <= HomeLocation.Z - 88.0f + 5.0f)
+		// 공의 착지면은 폰 발밑과 ACatchBall 자체 바닥(기본 Z=0) 중 **높은 쪽**이다.
+		// 낮은 쪽을 기준으로 잡으면 공이 이미 멈춘 뒤에도 계속 기다리게 된다.
+		const float GroundZ = FMath::Max(HomeLocation.Z - 88.0f, 0.0f) + 5.0f;
+
+		if (IsValid(ActiveBall))
 		{
-			const FThrowResult Result = FThrowJudge::Judge(
-				ActiveBall->GetActorLocation(),
+			LastBallLoc = ActiveBall->GetActorLocation();
+		}
+
+		if (!IsValid(ActiveBall) || LastBallLoc.Z <= GroundZ)
+		{
+			FThrowResult Result = FThrowJudge::Judge(
+				LastBallLoc,
 				CurrentTrial.TargetLocation,
 				CurrentTrial.ThrowOrigin,
 				CurrentTrial.HitRadius,
-				LastResult.UsedPower);
+				PendingPower);
+			FThrowJudge::FillMotionMetrics(Result, CurrentTrial.TargetBase,
+				PendingReleaseSpeedCms, PendingTransferSec, bCleanCatch);
 			FinishThrow(Result);
 		}
 	}
 
-	// 다음 타겟 대기.
+	// 다음 시행 대기.
 	if (bWaitingNext && !bSessionOver)
 	{
 		IntervalTimer -= DeltaSeconds;
 		if (IntervalTimer <= 0.0f)
 		{
 			bWaitingNext = false;
-			SpawnNextTarget();
+			SpawnNextTrial();
 		}
 	}
 
-	// 타겟 마커 (사람 자리) — 캡슐 형태로 표시.
-	if (!bSessionOver)
+	// ── 베이스 마커 — 네 베이스를 모두 그리고 목표만 강조한다 ──
+	if (!bSessionOver && GetWorld())
 	{
-		const FVector T = CurrentTrial.TargetLocation;
-		DrawDebugCapsule(GetWorld(), T + FVector(0, 0, 88.0f), 88.0f, 34.0f,
-			FQuat::Identity, FColor::Red, false, -1.0f, 0, 3.0f);
-		DrawDebugCircle(GetWorld(), T + FVector(0, 0, 2.0f), CurrentTrial.HitRadius, 32,
-			FColor::Yellow, false, -1.0f, 0, 3.0f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+		const EBaseType Bases[NumBases] =
+			{ EBaseType::First, EBaseType::Second, EBaseType::Third, EBaseType::Home };
+		for (int32 i = 0; i < NumBases; ++i)
+		{
+			const bool bTarget = (Bases[i] == CurrentTrial.TargetBase);
+			const FVector T = BaseLocation(Bases[i]);
+			const FColor Col = bTarget ? FColor(255, 190, 90) : FColor(90, 96, 110);
+
+			// 베이스 판 (마름모 대신 사각 박스로 단순 표시).
+			DrawDebugBox(GetWorld(), T + FVector(0, 0, 3.0f), FVector(45.0f, 45.0f, 3.0f),
+				FQuat::Identity, Col, false, -1.0f, 0, bTarget ? 3.0f : 1.5f);
+
+			if (bTarget)
+			{
+				// 받는 사람 + 목표 zone.
+				DrawDebugCapsule(GetWorld(), T + FVector(0, 0, 88.0f), 88.0f, 34.0f,
+					FQuat::Identity, FColor::Red, false, -1.0f, 0, 3.0f);
+				DrawDebugCircle(GetWorld(), T + FVector(0, 0, 2.0f), CurrentTrial.HitRadius, 32,
+					FColor::Yellow, false, -1.0f, 0, 3.0f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+			}
+		}
 	}
 
 	// VR 상태 패널 갱신.
@@ -317,30 +745,84 @@ void AThrowPawn::RefreshVrPanel()
 {
 	if (!VrPanel) { return; }
 
-	// 제목: 진행 + 성공 수.
+	// 세션 종료 → AI 운동 추천 오버레이.
+	if (bSessionOver)
+	{
+		VrPanel->SetTitle(
+			FString::Printf(TEXT("AI exercise tips    (On-target %d / %d)"), SuccessCount, TotalThrows),
+			FColor(150, 210, 255));
+
+		int32 Row = 0;
+		const float AvgT = GetAverageTransferSec();
+		VrPanel->SetRow(Row++, FString::Printf(TEXT("avg %.0f km/h    transfer %s"),
+			GetAverageReleaseKmh(),
+			(AvgT >= 0.0f) ? *FString::Printf(TEXT("%.2fs"), AvgT) : TEXT("--")),
+			FColor(150, 200, 255));
+
+		for (const FString& L : ThrowWrap(CoachingText, 30, 3))
+		{
+			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
+		}
+		for (const FTrainingDrill& D : LastDrills)
+		{
+			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
+		}
+		VrPanel->HideRowsFrom(Row);
+
+		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended exercises"),
+			FColor(150, 156, 168));
+		VrPanel->SetHint(TEXT("Raise controller = menu"), FColor(110, 116, 128));
+		return;
+	}
+
+	// 제목: 진행 + 목표 베이스 (지정된 곳이 항상 눈에 보이게).
 	VrPanel->SetTitle(
-		FString::Printf(TEXT("Throw  %d / %d      On-target %d"),
-			GetThrowNumber(), GetTotalThrows(), GetSuccessCount()),
+		FString::Printf(TEXT("Throw  %d / %d      ->  %s      On-target %d"),
+			GetThrowNumber(), GetTotalThrows(), *BaseName(CurrentTrial.TargetBase), GetSuccessCount()),
 		FColor(228, 233, 244));
 
-	// 행0: 파워 게이지 (ASCII 바 — 폰트 글리프 걱정 없음).
-	const int32 Cells = 10;
-	const int32 Filled = FMath::Clamp(FMath::RoundToInt(CurrentPower * Cells), 0, Cells);
-	const FString Bar = FString::Printf(TEXT("Power [%s%s] %3.0f%%"),
-		*FString::ChrN(Filled, TEXT('=')), *FString::ChrN(Cells - Filled, TEXT('.')),
-		CurrentPower * 100.0f);
-	VrPanel->SetRow(0, Bar, bCharging ? FColor(255, 190, 90) : FColor(150, 200, 255));
-	VrPanel->HideRowsFrom(1);
-
-	// 푸터: 직전 결과(색 포함), 없으면 조준 안내.
-	FString Outcome; FLinearColor OColor;
-	if (GetLastOutcomeText(Outcome, OColor))
+	// 행0: 단계별 안내 / 파워 게이지.
+	if (Phase == EThrowPhase::Feed)
 	{
-		VrPanel->SetFooter(Outcome, OColor.ToFColor(true));
+		VrPanel->SetRow(0, TEXT("Catch the feed first"), FColor(255, 190, 90));
 	}
 	else
 	{
-		VrPanel->SetFooter(TEXT("Auto-aimed at the target - just match the power (distance)"), FColor(150, 156, 168));
+		const int32 Cells = 10;
+		const int32 Filled = FMath::Clamp(FMath::RoundToInt(CurrentPower * Cells), 0, Cells);
+		const FString Bar = FString::Printf(TEXT("Power [%s%s] %3.0f%%"),
+			*FString::ChrN(Filled, TEXT('=')), *FString::ChrN(Cells - Filled, TEXT('.')),
+			CurrentPower * 100.0f);
+		VrPanel->SetRow(0, Bar, bCharging ? FColor(255, 190, 90) : FColor(150, 200, 255));
+	}
+
+	// 행1: 전환 시계 (잡은 뒤 흐르는 시간) — 늦으면 붉게.
+	const float Live = GetLiveTransferTime();
+	if (Live >= 0.0f)
+	{
+		VrPanel->SetRow(1, FString::Printf(TEXT("transfer  %.2fs"), Live),
+			(Live > TargetTransferSec) ? FColor(230, 130, 90) : FColor(90, 220, 110));
+		VrPanel->HideRowsFrom(2);
+	}
+	else
+	{
+		VrPanel->HideRowsFrom(1);
+	}
+
+	// 푸터: 직전 결과 + 측정값, 없으면 조준 안내.
+	FString Outcome; FLinearColor OColor;
+	if (GetLastOutcomeText(Outcome, OColor))
+	{
+		const FString Metrics = GetLastMetricsLine();
+		VrPanel->SetFooter(Metrics.IsEmpty() ? Outcome : (Outcome + TEXT("   ") + Metrics),
+			OColor.ToFColor(true));
+	}
+	else
+	{
+		VrPanel->SetFooter(TEXT("Auto-aimed at the called base - just match the power (distance)"),
+			FColor(150, 156, 168));
 	}
 
 	// 힌트: 조작 안내. 컨트롤러를 위로 드는 중이면 나가기 진행바를 보여준다.
@@ -351,17 +833,27 @@ void AThrowPawn::RefreshVrPanel()
 	}
 	else
 	{
-		VrPanel->SetHint(TEXT("Fling the controller forward to throw (hand speed = power)   ·   raise controller = exit"),
+		VrPanel->SetHint(TEXT("Reach the glove to the feed, then fling forward to throw   ·   raise controller = exit"),
 			FColor(110, 116, 128));
+	}
+}
+
+void AThrowPawn::TickVRFeedCatch()
+{
+	if (Phase != EThrowPhase::Feed || !IsValid(ActiveBall) || !ThrowController)
+	{
+		return;
+	}
+
+	const float Dist = FVector::Dist(ActiveBall->GetActorLocation(), ThrowController->GetComponentLocation());
+	if (Dist <= FeedCatchRadius)
+	{
+		CatchFeed(true);
 	}
 }
 
 void AThrowPawn::TickVRThrow(float DeltaSeconds)
 {
-	if (ThrowCooldown > 0.0f)
-	{
-		ThrowCooldown = FMath::Max(0.0f, ThrowCooldown - DeltaSeconds);
-	}
 	if (!ThrowController)
 	{
 		return;
@@ -382,13 +874,13 @@ void AThrowPawn::TickVRThrow(float DeltaSeconds)
 		(Speed - MinThrowSpeedCms) / FMath::Max(MaxThrowSpeedCms - MinThrowSpeedCms, 1.0f),
 		0.0f, 1.0f);
 
-	const bool bReady = !bBallInFlight && !bSessionOver && !bWaitingNext;
+	// 공을 들고 있을 때(Ready)만 송구로 인식한다 — 급구를 잡기 전 손 흔들림은 무시.
+	const bool bReady = (Phase == EThrowPhase::Ready) && !bSessionOver && !bWaitingNext;
 	if (bReady)
 	{
 		CurrentPower = SpeedPower;
 	}
 
-	// 던지는 동작(속도 임계 초과) 인식 → 그 파워로 송구.
 	if (bReady && ThrowCooldown <= 0.0f && Speed >= ThrowTriggerSpeedCms)
 	{
 		ThrowBall(SpeedPower);
@@ -416,7 +908,7 @@ bool AThrowPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) co
 		OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f);
 		return true;
 	}
-	if (!bHasResult || bBallInFlight)
+	if (!bHasResult || Phase == EThrowPhase::InFlight)
 	{
 		return false;
 	}

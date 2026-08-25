@@ -46,6 +46,10 @@ public:
 	static constexpr float RowTopZ  = 30.0f;
 	static constexpr float RowStepZ = 22.0f;
 
+	/** 카드 한 장의 반너비/반높이 (cm). 프레임·하이라이트를 그릴 때의 기준. */
+	static constexpr float CardHalfW = 82.0f;
+	static constexpr float CardHalfH = 9.0f;
+
 	/** 자식 텍스트를 생성·등록한다. 소유 폰이 BeginPlay 에서 한 번 호출. 재호출은 무시. */
 	void BuildPanel();
 
@@ -74,7 +78,50 @@ public:
 	UTextRenderComponent* GetRowText(int32 Index) const;
 	UTextRenderComponent* GetBackText() const { return BackText; }
 
+	// ══ 공간감(VR) 연출 ══════════════════════════════════════════════
+	// 평평한 텍스트 목록은 헤드셋 안에서 "화면을 붙여놨다"처럼 보인다. 아래 셋으로
+	// 같은 데이터를 곡면 카드 + 프레임 + 광선/조준점으로 바꿔 공간 UI 로 읽히게 한다.
+	// (UMG 에셋 없이 동작해야 하므로 프레임은 디버그 라인으로 그린다 — 스테레오에 렌더된다.)
+
+	/**
+	 * 행들을 눈을 중심으로 한 원통면에 올리고, 각 행이 눈을 바라보도록 기울인다.
+	 * 위/아래 행이 시야 가장자리에서도 정면으로 보여 목록이 '휘어 감싸는' 느낌이 된다.
+	 *
+	 * @param EyeOffsetZ 패널 원점 기준 눈높이 (눈높이 - 패널높이). 보통 음수/양수 작은 값.
+	 * @param RadiusCm   원통 반지름 = 눈에서 패널까지 거리.
+	 */
+	void ApplyCurvedLayout(float EyeOffsetZ, float RadiusCm);
+
+	/**
+	 * 카드 프레임·선택 하이라이트·구분선을 월드에 그린다 (매 틱 호출).
+	 * @param VisibleRowCount 지금 보이는 행 수
+	 * @param HoverIndex      겨누고 있는 행 (뒤로 카드는 VisibleRowCount, 없으면 INDEX_NONE)
+	 * @param DwellProgress   드웰 진행도 0~1 (하이라이트가 이만큼 채워진다)
+	 * @param bBackVisible    뒤로 카드가 떠 있는지
+	 */
+	void DrawChrome(int32 VisibleRowCount, int32 HoverIndex, float DwellProgress, bool bBackVisible) const;
+
+	/**
+	 * 컨트롤러 광선 + 패널 위 조준점 + 드웰 링을 그린다.
+	 * 광선이 패널 면에 '닿는 점'이 보여야 어디를 겨누는지 손으로 알 수 있다.
+	 */
+	void DrawPointerRay(const FVector& Origin, const FVector& Dir, float DwellProgress, bool bHovering) const;
+
+	/** 겨누는 카드가 살짝 커졌다 돌아오는 애니메이션 (Tick 에서 호출). */
+	void TickHoverAnim(float DeltaSeconds, int32 HoverIndex, int32 VisibleRowCount);
+
 private:
+	/** 카드 사각 테두리 하나를 그린다 (행 컴포넌트의 월드 축 기준). */
+	void DrawCardFrame(const UTextRenderComponent* Card, const FColor& Color,
+		float Thickness, float FillProgress) const;
+
+	/** 곡면 배치 파라미터 (ApplyCurvedLayout 이 채운다). 0 이면 평면 배치. */
+	float CurveRadiusCm = 0.0f;
+	float CurveEyeZ     = 0.0f;
+
+	/** 행별 현재 텍스트 크기 (호버 애니메이션 보간 대상). */
+	TArray<float> RowSizes;
+
 	/** 공통 스타일(카메라 향함·중앙정렬·월드사이즈·초기 숨김)로 텍스트 하나 생성·등록. */
 	UTextRenderComponent* CreateText(const TCHAR* Name, float WorldSize);
 

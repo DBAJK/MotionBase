@@ -27,68 +27,116 @@ bool UAIFeedbackService::IsConfigured() const
 	return !LoadApiKey().IsEmpty();
 }
 
-FString UAIFeedbackService::BuildSystemPrompt() const
+FString UAIFeedbackService::BuildSystemPrompt(ECoachDomain Domain) const
 {
+	if (Domain == ECoachDomain::Throwing)
+	{
+		return TEXT(
+			"You are a baseball throwing coach. Using ONLY the given 'throwing analysis' "
+			"and 'recommended exercises', write 2-3 short, specific coaching sentences in English.\n"
+			"Rules:\n"
+			"- Cite only the numbers provided (accuracy to the target base, release velocity, transfer time); "
+			"do not invent new figures or metrics.\n"
+			"- Separate the causes: missing the zone is direction/step, low velocity is whole-body power, "
+			"slow transfer is glove-to-hand footwork. Address the weakest one first.\n"
+			"- Mention the recommended exercises by their names naturally.\n"
+			"- Encouraging tone, but no exaggeration.\n"
+			"- If an 'uncalibrated' note is present, hedge with words like 'roughly' instead of being absolute.\n"
+			"- Output the coaching sentences only: no preamble, lists, or markdown.");
+	}
+
+	if (Domain == ECoachDomain::Backup)
+	{
+		return TEXT(
+			"You are a baseball infield/outfield positioning coach. The player just took a BACKUP-POSITION "
+			"JUDGMENT test, not a physical workout. Using ONLY the given 'judgment analysis' and "
+			"'recommended exercises', write 2-3 short, specific coaching sentences in English.\n"
+			"Rules:\n"
+			"- This is about DECISION MAKING. Never prescribe strength, speed, or flexibility work here.\n"
+			"- The two decision variables are the batted-ball direction and the runner situation - "
+			"frame the advice around those.\n"
+			"- Cite only the numbers provided (correct rate, decision time, which cases were missed); "
+			"do not invent new figures.\n"
+			"- Mention the recommended exercises by their names naturally.\n"
+			"- Encouraging tone, but no exaggeration.\n"
+			"- If an 'uncalibrated' note is present, hedge with words like 'roughly' instead of being absolute.\n"
+			"- Output the coaching sentences only: no preamble, lists, or markdown.");
+	}
+
+	if (Domain == ECoachDomain::Fielding)
+	{
+		return TEXT(
+			"You are a baseball fielding (catching) coach. Using ONLY the given 'catch analysis' "
+			"and 'recommended exercises', write 2-3 short, specific coaching sentences in English.\n"
+			"Rules:\n"
+			"- Cite only the numbers provided; do not invent new figures or metrics.\n"
+			"- Point out fitness factors (reaction speed, upper-body flexibility, foot speed) that match the weaknesses.\n"
+			"- Mention the recommended exercises by their names naturally.\n"
+			"- Encouraging tone, but no exaggeration.\n"
+			"- If an 'uncalibrated' note is present, hedge with words like 'roughly' instead of being absolute.\n"
+			"- Output the coaching sentences only: no preamble, lists, or markdown.");
+	}
+
 	return TEXT(
-		"당신은 야구 타격 코치입니다. 주어진 '약점 분석'·'훈련 추세'·'추천 드릴'만 근거로 "
-		"한국어로 2~3문장의 짧고 구체적인 코칭을 작성하세요.\n"
-		"규칙:\n"
-		"- 제공된 숫자만 인용하고, 새로운 수치나 지표를 지어내지 마세요.\n"
-		"- '훈련 추세'가 있으면 반영하세요: '개선 중'이면 격려하고, '악화'·'만성'이면 "
-		"반복되는 약점임을 짚어 그 드릴에 집중하라고 권하세요. 추세가 없으면 언급하지 마세요.\n"
-		"- 추천 드릴을 이름으로 자연스럽게 언급하세요.\n"
-		"- 격려하는 톤이되 과장하지 마세요.\n"
-		"- '미보정' 표시가 있으면 단정하지 말고 '대략' 같은 표현을 쓰세요.\n"
-		"- 코칭 문장만 출력하고 머리말·목록·마크다운은 쓰지 마세요.");
+		"You are a baseball hitting coach. Using ONLY the given 'weakness analysis', 'training trend', "
+		"and 'recommended drills', write 2-3 short, specific coaching sentences in English.\n"
+		"Rules:\n"
+		"- Cite only the numbers provided; do not invent new figures or metrics.\n"
+		"- If a 'training trend' is present, reflect it: encourage when 'improving', and when 'worsening' "
+		"or 'chronic', note the recurring weakness and urge focus on that drill. If no trend, do not mention it.\n"
+		"- Mention the recommended drills by their names naturally.\n"
+		"- Encouraging tone, but no exaggeration.\n"
+		"- If an 'uncalibrated' note is present, hedge with words like 'roughly' instead of being absolute.\n"
+		"- Output the coaching sentences only: no preamble, lists, or markdown.");
 }
 
 FString UAIFeedbackService::BuildUserPrompt(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
 	const FChronicWeaknessReport& Chronic) const
 {
-	FString P = TEXT("[약점 분석]\n");
+	FString P = TEXT("[Analysis]\n");
 	P += UWeaknessDetector::SummarizeReport(Report);
 
 	// 이력이 쌓였을 때만 추세 블록을 넣는다 — 없으면 LLM 이 지어내지 않도록 아예 생략.
 	if (Chronic.bValid && Chronic.Trends.Num() > 0)
 	{
-		P += FString::Printf(TEXT("\n\n[훈련 추세] (최근 %d세션 기준)\n"), Chronic.SessionsAnalyzed);
+		P += FString::Printf(TEXT("\n\n[Training trend] (last %d sessions)\n"), Chronic.SessionsAnalyzed);
 		const int32 ShowN = FMath::Min(Chronic.Trends.Num(), 3);
 		for (int32 i = 0; i < ShowN; ++i)
 		{
 			const FAxisTrend& T = Chronic.Trends[i];
-			P += FString::Printf(TEXT("- %s: %d/%d세션 등장, %s%s\n"),
+			P += FString::Printf(TEXT("- %s: appeared in %d/%d sessions, %s%s\n"),
 				*UWeaknessDetector::GetAxisDisplayName(T.Axis).ToString(),
 				T.AppearanceCount, T.WindowSize,
 				*UWeaknessDetector::GetTrendDisplayName(T.Trend).ToString(),
-				T.bChronic ? TEXT(", 만성") : TEXT(""));
+				T.bChronic ? TEXT(", chronic") : TEXT(""));
 		}
 	}
 
-	P += TEXT("\n\n[추천 드릴]\n");
+	P += TEXT("\n\n[Recommended exercises]\n");
 	if (Drills.Num() == 0)
 	{
-		P += TEXT("- (없음)\n");
+		P += TEXT("- (none)\n");
 	}
 	else
 	{
 		for (const FTrainingDrill& D : Drills)
 		{
-			P += FString::Printf(TEXT("- %s: %s (핵심: %s)\n"), *D.Name, *D.Description, *D.FocusCue);
+			P += FString::Printf(TEXT("- %s: %s (focus: %s)\n"), *D.Name, *D.Description, *D.FocusCue);
 		}
 	}
 
-	P += TEXT("\n위 분석과 드릴을 근거로 코칭을 작성해 주세요.");
+	P += TEXT("\nUsing the analysis and exercises above, write the coaching.");
 	return P;
 }
 
-FString UAIFeedbackService::BuildRequestBody(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
+FString UAIFeedbackService::BuildRequestBody(ECoachDomain Domain, const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
 	const FChronicWeaknessReport& Chronic) const
 {
 	// FJsonObject 로 구성해 한글·따옴표 이스케이프를 안전하게 처리.
 	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("model"), ModelId);
 	Root->SetNumberField(TEXT("max_tokens"), MaxTokens);
-	Root->SetStringField(TEXT("system"), BuildSystemPrompt());
+	Root->SetStringField(TEXT("system"), BuildSystemPrompt(Domain));
 
 	const TSharedRef<FJsonObject> UserMsg = MakeShared<FJsonObject>();
 	UserMsg->SetStringField(TEXT("role"), TEXT("user"));
@@ -107,6 +155,27 @@ FString UAIFeedbackService::BuildRequestBody(const FWeaknessReport& Report, cons
 void UAIFeedbackService::RequestSwingCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
 	const FChronicWeaknessReport& Chronic)
 {
+	DispatchCoachingRequest(BuildRequestBody(ECoachDomain::Batting, Report, Drills, Chronic));
+}
+
+void UAIFeedbackService::RequestCatchCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills)
+{
+	// 포구는 만성 추세 이력이 아직 없다 — 빈(무효) 추세를 넘겨 프롬프트에서 생략되게 한다.
+	DispatchCoachingRequest(BuildRequestBody(ECoachDomain::Fielding, Report, Drills, FChronicWeaknessReport()));
+}
+
+void UAIFeedbackService::RequestThrowCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills)
+{
+	DispatchCoachingRequest(BuildRequestBody(ECoachDomain::Throwing, Report, Drills, FChronicWeaknessReport()));
+}
+
+void UAIFeedbackService::RequestBackupCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills)
+{
+	DispatchCoachingRequest(BuildRequestBody(ECoachDomain::Backup, Report, Drills, FChronicWeaknessReport()));
+}
+
+void UAIFeedbackService::DispatchCoachingRequest(const FString& Body)
+{
 	const FString ApiKey = LoadApiKey();
 	if (ApiKey.IsEmpty())
 	{
@@ -116,8 +185,6 @@ void UAIFeedbackService::RequestSwingCoaching(const FWeaknessReport& Report, con
 		OnFeedbackReady.Broadcast(false, TEXT("AI 코칭 미설정 (Config/Secrets.ini)"));
 		return;
 	}
-
-	const FString Body = BuildRequestBody(Report, Drills, Chronic);
 
 	const TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 	Request->SetURL(TEXT("https://api.anthropic.com/v1/messages"));

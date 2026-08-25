@@ -17,6 +17,11 @@
 #include "Core/Defense/CatchBall/CatchBallHUD.h"
 #include "UI/ModeSelectHUD.h"
 #include "UI/VRInfoPanel.h"
+#include "AI/DrillCatalog.h"
+#include "AI/AIFeedbackService.h"
+#include "Analysis/WeaknessDetector.h"
+#include "Scoring/ScoringService.h"
+#include "Core/ModeManager.h"
 #include "GameFramework/PlayerController.h"
 
 namespace
@@ -31,6 +36,24 @@ namespace
 		case ECatchBallType::LineDrive:  return TEXT("Line drive");
 		default:                         return TEXT("Mixed");
 		}
+	}
+
+	// TextRender 는 자동 줄바꿈이 없다 → 글자수로 하드 랩(한글 한 글자=한 글리프라 안전).
+	TArray<FString> WrapForPanel(const FString& In, int32 MaxCharsPerLine, int32 MaxLines)
+	{
+		TArray<FString> Lines;
+		int32 i = 0;
+		const int32 Len = In.Len();
+		while (i < Len && Lines.Num() < MaxLines)
+		{
+			Lines.Add(In.Mid(i, MaxCharsPerLine));
+			i += MaxCharsPerLine;
+		}
+		if (i < Len && Lines.Num() > 0)
+		{
+			Lines.Last().Append(TEXT(" …"));
+		}
+		return Lines;
 	}
 }
 
@@ -82,6 +105,12 @@ void ACatchBallPawn::BeginPlay()
 	{
 		UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
 	}
+
+	// 나가기 제스처를 이 종목에 맞게 조인다.
+	// 뜬공을 기다리는 자세 = 글러브를 위로 들고 대기 = 기본값(37°/1.5s)과 정확히 겹친다.
+	// 거의 수직(±23°)으로 2.5초를 요구하고, 공이 날아오는 동안에는 Tick 에서 아예 끈다.
+	ExitGesture.UpThreshold = 0.92f;
+	ExitGesture.HoldSec     = 2.5f;
 	if (GloveMesh)
 	{
 		GloveMesh->SetVisibility(bVR); // 글러브는 VR 에서만 보인다.
@@ -93,6 +122,10 @@ void ACatchBallPawn::BeginPlay()
 		VrPanel->BuildPanel();
 		if (!bVR) { VrPanel->HideAll(); }
 	}
+
+	// AI 운동 추천 서비스 (키가 없으면 요청 시 조용히 생략됨).
+	FeedbackService = NewObject<UAIFeedbackService>(this);
+	FeedbackService->OnFeedbackReady.AddDynamic(this, &ACatchBallPawn::HandleCoachingReady);
 
 	StartSession();
 }
@@ -119,7 +152,11 @@ void ACatchBallPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 	PlayerInputComponent->BindKey(EKeys::Two,   IE_Pressed, this, &ACatchBallPawn::SelectFly);
 	PlayerInputComponent->BindKey(EKeys::Three, IE_Pressed, this, &ACatchBallPawn::SelectLine);
 	PlayerInputComponent->BindKey(EKeys::Four,  IE_Pressed, this, &ACatchBallPawn::SelectRandom);
-	
+
+	// 공 속도 조절 — [ 느리게 / ] 빠르게. 다음 구부터 반영된다.
+	PlayerInputComponent->BindKey(EKeys::LeftBracket,  IE_Pressed, this, &ACatchBallPawn::SpeedDown);
+	PlayerInputComponent->BindKey(EKeys::RightBracket, IE_Pressed, this, &ACatchBallPawn::SpeedUp);
+
 	// HUD 교체는 빙의 완료 후(여기)에 한다 — BeginPlay 시점엔 아직 Controller 가 없다.
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
@@ -145,6 +182,19 @@ void ACatchBallPawn::StartSession()
 	bSessionOver = false;
 	bWaitingNext = false;
 	IntervalTimer = 0.0f;
+
+	// 타구 타입별 집계 초기화 (측정 지표 ②).
+	for (int32 i = 0; i < NumBallTypes; ++i)
+	{
+		TypeAttempts[i] = 0;
+		TypeSuccess[i]  = 0;
+	}
+
+	// AI 운동 추천 세션 상태 초기화.
+	SessionResults.Reset();
+	LastDrills.Reset();
+	CoachingText.Reset();
+	bAwaitingCoaching = false;
 
 	SpawnNextPitch();
 }
@@ -201,6 +251,27 @@ void ACatchBallPawn::FinishPitch(const FCatchResult& Result)
 	LastResult = Result;
 	bPitchActive = false;
 
+	SessionResults.Add(Result); // AI 약점 리포트 입력으로 누적.
+
+	// 시도 1건 = 기록 1건. 세션 종료 시 FinalizeSession 이 한 판으로 묶어 저장한다.
+	// (수비는 3축 채점 모델이 없어 성공/실패만 남기고, 원시 측정값은 Details 로 붙인다.)
+	if (UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
+	{
+		TMap<FName, float> Details;
+		Details.Add(TEXT("BallType"),      static_cast<float>(TypeIndexOf(CurrentTrial.ResolvedType)));
+		Details.Add(TEXT("DistanceErrorCm"), Result.DistanceError);
+		Details.Add(TEXT("TimingErrorSec"),  Result.TimingError);
+		Details.Add(TEXT("BallSpeedScale"),  BallSpeedScale);
+		MM->RecordResult(UScoringService::ScoreDefenseAttempt(Result.IsSuccess(), Details));
+	}
+
+	// 타구 타입별 집계 — 이번 구가 실제로 어떤 유형이었는지(Mixed 확정 결과) 기준.
+	if (const int32 Ti = TypeIndexOf(CurrentTrial.ResolvedType); Ti != INDEX_NONE)
+	{
+		++TypeAttempts[Ti];
+		if (Result.IsSuccess()) { ++TypeSuccess[Ti]; }
+	}
+
 	if (Result.IsSuccess())
 	{
 		++SuccessCount;
@@ -242,6 +313,170 @@ void ACatchBallPawn::EndSession()
 	bSessionOver = true;
 	StatusLine = FString::Printf(TEXT("Session over!  Caught %d / %d    (M: back to menu)"),
 		SuccessCount, TotalPitches);
+
+	// 세션이 끝나면 포구 성적으로 약점을 판별해 AI 운동 추천을 요청한다.
+	RequestCatchFeedback();
+}
+
+FWeaknessReport ACatchBallPawn::BuildCatchReport() const
+{
+	FWeaknessReport R;
+	R.Mode = EGameModeId::Defense;
+	R.AttemptCount = SessionResults.Num();
+	R.bUncalibrated = true; // 포구 기준값은 아직 실측 미보정.
+
+	if (SessionResults.Num() == 0)
+	{
+		return R; // bValid=false
+	}
+
+	int32 Catches = 0, Drops = 0, Misses = 0;
+	float SumAbsTiming = 0.0f;   // s
+	float SumDist = 0.0f; int32 DistN = 0; // cm, 놓침 제외
+	for (const FCatchResult& Res : SessionResults)
+	{
+		switch (Res.Outcome)
+		{
+		case ECatchOutcome::Success: ++Catches; break;
+		case ECatchOutcome::Dropped: ++Drops;   break;
+		default:                     ++Misses;  break;
+		}
+		SumAbsTiming += FMath::Abs(Res.TimingError);
+		if (Res.Outcome != ECatchOutcome::Dropped)
+		{
+			SumDist += Res.DistanceError; ++DistN; // 실제 뻗어본 시도만 거리 의미.
+		}
+	}
+
+	const int32 N = SessionResults.Num();
+	R.ContactCount = Catches;
+	R.bValid = true;
+
+	const float AvgAbsTiming = SumAbsTiming / N;                 // s
+	const float DropRate = static_cast<float>(Drops) / N;
+	const float MissRate = static_cast<float>(Misses + Drops) / N;
+	const float AvgDist = (DistN > 0) ? (SumDist / DistN) : 0.0f; // cm
+
+	// 문턱을 넘는 축만 약점으로 담는다. 문턱은 타격과 같은 값을 쓴다 —
+	// 모드마다 다르면 같은 수행도가 모드에 따라 약점이 됐다 안 됐다 한다.
+	auto AddWeakness = [&R](EWeaknessAxis Axis, float Score, const FString& Evidence)
+	{
+		FWeakness W;
+		W.Axis = Axis;
+		W.Score = FMath::Clamp(Score, 0.0f, 1.0f);
+		W.Severity = 1.0f - W.Score;
+		W.Evidence = Evidence;
+		if (W.Severity >= UWeaknessDetector::MinReportSeverity) { R.Weaknesses.Add(W); }
+	};
+
+	// 반응속도: 타이밍 오차(±0.35s 창) + 놓침 페널티.
+	const float ReactionScore = FMath::Clamp(1.0f - (AvgAbsTiming / 0.35f), 0.0f, 1.0f) * (1.0f - 0.5f * DropRate);
+	AddWeakness(EWeaknessAxis::CatchReaction, ReactionScore,
+		FString::Printf(TEXT("avg timing error %.0f ms, drops %d/%d"), AvgAbsTiming * 1000.0f, Drops, N));
+
+	// 상체 유연성: 포구 순간 글러브-공 거리(못 닿음). 기준 150cm.
+	const float FlexScore = FMath::Clamp(1.0f - (AvgDist / 150.0f), 0.0f, 1.0f);
+	AddWeakness(EWeaknessAxis::UpperBodyFlex, FlexScore,
+		FString::Printf(TEXT("avg glove-to-ball distance at catch %.0f cm"), AvgDist));
+
+	// 발 스피드: 위치 선점 실패(실패율). 이동이 컨트롤러라 비중을 낮춰(×0.6) 반영.
+	const float FootScore = FMath::Clamp(1.0f - MissRate * 0.6f, 0.0f, 1.0f);
+	AddWeakness(EWeaknessAxis::FootSpeed, FootScore,
+		FString::Printf(TEXT("caught %d/%d - room to get into position"), Catches, N));
+
+	// 타구 타입별 성공률(측정 지표 ②) — 축이 아니라 노트로 실어 코칭 문장에 숫자가 남게 한다.
+	// "전체 6/10"보다 "뜬공만 1/3"이 훨씬 실행 가능한 조언으로 이어진다.
+	{
+		FString Breakdown;
+		const ECatchBallType Types[NumBallTypes] =
+			{ ECatchBallType::GroundBall, ECatchBallType::FlyBall, ECatchBallType::LineDrive };
+		const TCHAR* Names[NumBallTypes] = { TEXT("grounder"), TEXT("fly ball"), TEXT("line drive") };
+
+		for (int32 i = 0; i < NumBallTypes; ++i)
+		{
+			int32 A = 0, S = 0;
+			GetTypeStats(Types[i], A, S);
+			if (A <= 0) { continue; } // 안 나온 유형은 적지 않는다 (LLM 이 0%로 오해하지 않도록).
+			if (!Breakdown.IsEmpty()) { Breakdown += TEXT(", "); }
+			Breakdown += FString::Printf(TEXT("%s %d/%d (%.0f%%)"),
+				Names[i], S, A, 100.0f * S / A);
+		}
+		if (!Breakdown.IsEmpty())
+		{
+			R.Notes.Add(FString::Printf(TEXT("Catch rate by ball type: %s"), *Breakdown));
+		}
+		R.Notes.Add(FString::Printf(TEXT("Ball speed setting: x%.1f"), BallSpeedScale));
+	}
+
+	// 심각도 내림차순 (가장 시급한 약점이 앞으로).
+	R.Weaknesses.Sort([](const FWeakness& A, const FWeakness& B) { return A.Severity > B.Severity; });
+	return R;
+}
+
+void ACatchBallPawn::FlushSessionToSave()
+{
+	UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr;
+	if (!MM)
+	{
+		return;
+	}
+	// 시도가 0건이면 ModeManager 가 빈 세션으로 스스로 무시하므로 무조건 불러도 안전하다.
+	MM->FinalizeSession(
+		UScoringService::ScoreDefenseSession(SuccessCount, SessionResults.Num()),
+		BuildCatchReport());
+}
+
+void ACatchBallPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// 모드 복귀·앱 종료로 폰이 사라지기 전에 세션을 확정 저장한다.
+	// 다음 진입의 SetActiveMode 가 누적을 비우므로 여기서 flush 하지 않으면 기록이 사라진다.
+	FlushSessionToSave();
+
+	if (IsValid(ActiveBall))
+	{
+		ActiveBall->Destroy();
+		ActiveBall = nullptr;
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void ACatchBallPawn::RequestCatchFeedback()
+{
+	const FWeaknessReport Report = BuildCatchReport();
+
+	// 과거 같은 종목("Catch") 이력만 골라 만성 약점을 본다 — 종목 필터를 빼면
+	// 송구·백업 세션의 축이 섞여 엉뚱한 추세가 나온다.
+	FChronicWeaknessReport Chronic;
+	if (UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
+	{
+		Chronic = UWeaknessDetector::AnalyzeTrend(
+			MM->GetHistory(), EGameModeId::Defense, 5, UModeManager::GetDefenseDrillIdName(0));
+	}
+	LastDrills = UDrillCatalog::RecommendWithHistory(Report, Chronic, 3);
+
+	if (FeedbackService && FeedbackService->IsConfigured())
+	{
+		CoachingText = TEXT("Requesting AI coaching...");
+		bAwaitingCoaching = true;
+		FeedbackService->RequestCatchCoaching(Report, LastDrills);
+	}
+	else
+	{
+		bAwaitingCoaching = false;
+		CoachingText = TEXT("AI coaching not configured (Config/Secrets.ini)");
+	}
+
+	UE_LOG(LogMotionBase, Log, TEXT("[CatchBall] 코칭 요청: 성공 %d/%d, 약점 %d개, 드릴 %d개"),
+		SuccessCount, TotalPitches, Report.Weaknesses.Num(), LastDrills.Num());
+}
+
+void ACatchBallPawn::HandleCoachingReady(bool bSuccess, const FString& Text)
+{
+	bAwaitingCoaching = false;
+	CoachingText = Text; // 성공=코칭 문장, 실패=사유. 둘 다 그대로 보여준다.
+	UE_LOG(LogMotionBase, Log, TEXT("[CatchBall] AI 코칭 %s: %s"),
+		bSuccess ? TEXT("수신") : TEXT("실패"), *Text);
 }
 
 // ── 유형 → 발사 파라미터 ──
@@ -286,6 +521,10 @@ FCatchTrial ACatchBallPawn::BuildTrial(ECatchBallType Type) const
 	default: break;
 	}
 
+	// 공 속도 조절: 체공시간을 배율로 나눈다 (배율↑ = 체공↓ = 공이 빨라짐).
+	// 발사 속도는 아래 포물선 역산이 이 체공시간에서 자동으로 따라온다.
+	Flight = FMath::Max(Flight / FMath::Max(BallSpeedScale, 0.1f), 0.2f);
+
 	// 포물선 역산: Flight 초 뒤 정확히 Arrival 에 도달하는 초기 속도.
 	const FVector ToTarget = Arrival - Trial.LaunchLocation;
 	const FVector Horiz(ToTarget.X, ToTarget.Y, 0.0f);
@@ -329,14 +568,21 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 		// 뒤로가기 — 글러브(컨트롤러)를 위로 들고 유지하면 모드 선택으로 복귀.
 		if (GloveController)
 		{
+			// 공이 날아오는 동안(bPitchActive)에는 진행을 동결한다 — 뜬공을 잡으려고
+			// 글러브를 들고 기다리는 자세가 나가기로 오인되면 세션이 통째로 날아간다.
+			// (리셋이 아니라 동결이라, 투구 사이 틈에 계속 들고 있으면 정상적으로 나갈 수 있다.)
 			bool bExit = false;
-			ExitGesture.Update(GloveController->GetForwardVector(), GloveController->IsTracked(), DeltaSeconds, bExit);
+			ExitGesture.Update(GloveController->GetForwardVector(),
+				GloveController->IsTracked(), /*bAllowed=*/!bPitchActive, DeltaSeconds, bExit);
 			if (bExit)
 			{
 				ReturnToModeSelect();
 				return; // 폰이 곧 교체된다 — 이 프레임 종료.
 			}
 		}
+
+		// 컨트롤러 썸스틱/트랙패드로 위치 이동 (걷기 대체) → 글러브를 공에 맞춰 포구.
+		TickVRLocomotion(DeltaSeconds);
 
 		TickVRCatch();
 		RefreshVrPanel();
@@ -400,6 +646,55 @@ void ACatchBallPawn::TickVRCatch()
 	}
 }
 
+void ACatchBallPawn::TickVRLocomotion(float DeltaSeconds)
+{
+	// 룸스케일로 실제 걸어서 낙구지점(최대 ±5m)까지 가는 건 무리다.
+	// 컨트롤러 썸스틱/트랙패드로 폰(몸+글러브)을 옮겨 위치를 잡고, 글러브로 공을 맞춰 포구한다.
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		return;
+	}
+
+	// 글러브가 붙은 손(기본 오른손) 기준으로 축 키를 고른다.
+	const FName Hand = GloveController ? GloveController->MotionSource : FName(TEXT("Right"));
+	const bool bLeft = (Hand == FName(TEXT("Left")));
+	const TCHAR* Side = bLeft ? TEXT("Left") : TEXT("Right");
+
+	// Vive 컨트롤러 가운데 '원형 트랙패드'로 이동한다. 문제는 UE 가 이 패드를 두 이름 중
+	// 하나로 잡는다는 것:
+	//   · MotionController_<Side>_Thumbstick_X/Y  (OpenXR 제네릭)
+	//   · Vive_<Side>_Trackpad_X/Y                (Vive 전용)
+	// 실기에서 어느 쪽으로 매핑되든 동작하도록 둘 다 읽어 절댓값이 큰 쪽을 쓴다.
+	// (미등록 키면 FKey 가 무효라 GetInputAnalogKeyState 가 0 을 돌려주므로 안전.)
+	auto ReadAxis = [PC, Side](const TCHAR* Generic, const TCHAR* ViveName) -> float
+	{
+		const float A = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("MotionController_%s_%s"), Side, Generic)));
+		const float B = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("Vive_%s_%s"), Side, ViveName)));
+		return (FMath::Abs(B) > FMath::Abs(A)) ? B : A;
+	};
+
+	float AxisX = ReadAxis(TEXT("Thumbstick_X"), TEXT("Trackpad_X")); // 좌우(+우)
+	float AxisY = ReadAxis(TEXT("Thumbstick_Y"), TEXT("Trackpad_Y")); // 앞뒤(+앞)
+
+	// 데드존 (손떨림/드리프트 무시).
+	if (FMath::Abs(AxisX) < StickDeadzone) { AxisX = 0.0f; }
+	if (FMath::Abs(AxisY) < StickDeadzone) { AxisY = 0.0f; }
+
+	if (AxisX == 0.0f && AxisY == 0.0f)
+	{
+		return;
+	}
+
+	// 시점은 정면(+X) 고정이므로 월드축으로 바로 이동. (X=앞뒤, Y=좌우)
+	FVector Move(AxisY, AxisX, 0.0f);
+	if (Move.SizeSquared() > 1.0f)
+	{
+		Move.Normalize(); // 대각선 가속 방지.
+	}
+	AddActorWorldOffset(Move * VRMoveSpeed * DeltaSeconds, false);
+}
+
 void ACatchBallPawn::ReturnToModeSelect()
 {
 	// 모드 선택 HUD 로 되돌린다.
@@ -447,9 +742,98 @@ void ACatchBallPawn::SelectFly()    { SessionType = ECatchBallType::FlyBall; }
 void ACatchBallPawn::SelectLine()   { SessionType = ECatchBallType::LineDrive; }
 void ACatchBallPawn::SelectRandom() { SessionType = ECatchBallType::Mixed; }
 
+// ── 공 속도 조절 (측정이 아니라 난이도 손잡이) ──
+
+void ACatchBallPawn::SpeedDown()
+{
+	BallSpeedScale = FMath::Clamp(BallSpeedScale - BallSpeedStep, 0.5f, 2.0f);
+	StatusLine = FString::Printf(TEXT("Ball speed x%.1f  (applies from the next pitch)"), BallSpeedScale);
+}
+
+void ACatchBallPawn::SpeedUp()
+{
+	BallSpeedScale = FMath::Clamp(BallSpeedScale + BallSpeedStep, 0.5f, 2.0f);
+	StatusLine = FString::Printf(TEXT("Ball speed x%.1f  (applies from the next pitch)"), BallSpeedScale);
+}
+
+// ── 타구 타입별 집계 ──
+
+int32 ACatchBallPawn::TypeIndexOf(ECatchBallType Type)
+{
+	switch (Type)
+	{
+	case ECatchBallType::GroundBall: return 0;
+	case ECatchBallType::FlyBall:    return 1;
+	case ECatchBallType::LineDrive:  return 2;
+	default:                         return INDEX_NONE; // Mixed 는 확정 유형이 아니다.
+	}
+}
+
+void ACatchBallPawn::GetTypeStats(ECatchBallType Type, int32& OutAttempt, int32& OutSuccess) const
+{
+	const int32 Ti = TypeIndexOf(Type);
+	OutAttempt = (Ti != INDEX_NONE) ? TypeAttempts[Ti] : 0;
+	OutSuccess = (Ti != INDEX_NONE) ? TypeSuccess[Ti]  : 0;
+}
+
+float ACatchBallPawn::GetTypeSuccessRate(ECatchBallType Type) const
+{
+	int32 A = 0, S = 0;
+	GetTypeStats(Type, A, S);
+	return (A > 0) ? (static_cast<float>(S) / A) : -1.0f; // -1 = 시행 없음
+}
+
 void ACatchBallPawn::RefreshVrPanel()
 {
 	if (!VrPanel) { return; }
+
+	// 세션 종료 → AI 운동 추천 오버레이 (코칭 문장 + 추천 드릴).
+	// 한글 코칭은 KRFont 가 있으면 렌더된다. 없으면 데스크톱 로그로 확인.
+	if (bSessionOver)
+	{
+		VrPanel->SetTitle(
+			FString::Printf(TEXT("AI exercise tips    (Caught %d / %d)"), SuccessCount, TotalPitches),
+			FColor(150, 210, 255));
+
+		int32 Row = 0;
+
+		// 타구 타입별 성공률 — AI 문장보다 먼저, 근거 숫자를 눈으로 확인할 수 있게.
+		{
+			FString Line;
+			const ECatchBallType Types[NumBallTypes] =
+				{ ECatchBallType::GroundBall, ECatchBallType::FlyBall, ECatchBallType::LineDrive };
+			const TCHAR* Short[NumBallTypes] = { TEXT("GB"), TEXT("FB"), TEXT("LD") };
+			for (int32 i = 0; i < NumBallTypes; ++i)
+			{
+				int32 A = 0, S = 0;
+				GetTypeStats(Types[i], A, S);
+				if (A <= 0) { continue; }
+				if (!Line.IsEmpty()) { Line += TEXT("   "); }
+				Line += FString::Printf(TEXT("%s %d/%d"), Short[i], S, A);
+			}
+			if (!Line.IsEmpty() && Row < UVRInfoPanel::MaxRows)
+			{
+				VrPanel->SetRow(Row++, Line, FColor(150, 200, 255));
+			}
+		}
+
+		for (const FString& L : WrapForPanel(CoachingText, 30, 3))
+		{
+			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
+		}
+		for (const FTrainingDrill& D : LastDrills)
+		{
+			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
+		}
+		VrPanel->HideRowsFrom(Row);
+
+		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended exercises"),
+			FColor(150, 156, 168));
+		VrPanel->SetHint(TEXT("Raise glove = menu"), FColor(110, 116, 128));
+		return;
+	}
 
 	// 제목: 진행 + 성공 수.
 	VrPanel->SetTitle(
@@ -457,8 +841,9 @@ void ACatchBallPawn::RefreshVrPanel()
 			GetPitchNumber(), GetTotalPitches(), GetSuccessCount()),
 		FColor(228, 233, 244));
 
-	// 행0: 이번 세션 타구 유형.
-	VrPanel->SetRow(0, FString::Printf(TEXT("Type: %s"), *CatchTypeName(SessionType)), FColor(150, 200, 255));
+	// 행0: 이번 세션 타구 유형 + 공 속도 배율.
+	VrPanel->SetRow(0, FString::Printf(TEXT("Type: %s      Ball speed x%.1f"),
+		*CatchTypeName(SessionType), BallSpeedScale), FColor(150, 200, 255));
 	VrPanel->HideRowsFrom(1);
 
 	// 푸터: 직전 결과(색 포함), 없으면 진행 상태 문구.
@@ -480,7 +865,7 @@ void ACatchBallPawn::RefreshVrPanel()
 	}
 	else
 	{
-		VrPanel->SetHint(TEXT("Catch the ball with your glove (controller)   ·   raise glove = exit"),
+		VrPanel->SetHint(TEXT("Stick/trackpad = move   ·   reach the glove to the ball to catch   ·   raise glove = exit"),
 			FColor(110, 116, 128));
 	}
 }

@@ -169,7 +169,7 @@ void ASwingTestPawn::RequestFeedback()
 	LastChronic = FChronicWeaknessReport();
 	if (UModeManager* ModeManager = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
 	{
-		LastChronic = UWeaknessDetector::AnalyzeTrend(ModeManager->GetHistory(), EGameModeId::Batting, 5);
+		LastChronic = UWeaknessDetector::AnalyzeTrend(ModeManager->GetHistory(), EGameModeId::Batting, 5, NAME_None);
 	}
 	LastDrills = UDrillCatalog::RecommendWithHistory(LastReport, LastChronic, 3);
 	bShowFeedback = true;

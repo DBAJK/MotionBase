@@ -83,6 +83,26 @@ void ACatchBallHUD::DrawHUD()
 	const FString SuccessStr = FString::Printf(TEXT("Caught  %d"), Pawn->GetSuccessCount());
 	DrawLabel(SuccessStr, PanelX + PanelW - 150.0f * S, PanelY + 16.0f * S, Good, 1.1f * S);
 
+	// 타구 타입별 성공률 (측정 지표 ②) + 공 속도 배율 — 진행 줄 가운데.
+	{
+		FString ByType;
+		const ECatchBallType StatTypes[3] =
+			{ ECatchBallType::GroundBall, ECatchBallType::FlyBall, ECatchBallType::LineDrive };
+		const TCHAR* Short[3] = { TEXT("GB"), TEXT("FB"), TEXT("LD") };
+		for (int32 i = 0; i < 3; ++i)
+		{
+			int32 A = 0, Su = 0;
+			Pawn->GetTypeStats(StatTypes[i], A, Su);
+			if (A <= 0) { continue; }
+			if (!ByType.IsEmpty()) { ByType += TEXT("  "); }
+			ByType += FString::Printf(TEXT("%s %d/%d"), Short[i], Su, A);
+		}
+		const FString Line = ByType.IsEmpty()
+			? FString::Printf(TEXT("speed x%.1f  ([ / ])"), Pawn->GetBallSpeedScale())
+			: FString::Printf(TEXT("%s      speed x%.1f"), *ByType, Pawn->GetBallSpeedScale());
+		DrawCentered(Line, PanelX + PanelW * 0.5f, PanelY + 18.0f * S, TextDim, 0.8f * S);
+	}
+
 	// ── 유형 선택 칩 4개 (패널 하단 줄) ──
 	const ECatchBallType Types[4] = {
 		ECatchBallType::GroundBall, ECatchBallType::FlyBall,
@@ -112,7 +132,7 @@ void ACatchBallHUD::DrawHUD()
 	}
 
 	// ── 하단 조작 안내 ──
-	DrawCentered(TEXT("WASD move   Space catch   1-4 type   M exit"),
+	DrawCentered(TEXT("WASD move   Space catch   1-4 type   [ / ] ball speed   M exit"),
 		W * 0.5f, PanelY + PanelH + 12.0f * S, TextDim, 0.8f * S);
 
 	// ── 마지막 판정 결과 (있으면 중앙에 크게) ──
@@ -121,5 +141,34 @@ void ACatchBallHUD::DrawHUD()
 	if (Pawn->GetLastOutcomeText(ResultLine, ResultColor))
 	{
 		DrawCentered(ResultLine, W * 0.5f, Canvas->SizeY * 0.42f, ResultColor, 1.6f * S);
+	}
+
+	// ── 세션 종료 시 AI 운동 추천 (코칭 문장 + 추천 드릴) ──
+	// ⚠️ 코칭·드릴은 한글이라 Korean 글리프가 있는 폰트에서만 제대로 보인다.
+	//    (엔진 기본 MediumFont 는 한글이 없어 네모로 나올 수 있음 — 앱 전역 폰트 이슈.)
+	const FString& Coaching = Pawn->GetCoachingText();
+	if (!Coaching.IsEmpty())
+	{
+		float PY = Canvas->SizeY * 0.52f;
+		DrawCentered(TEXT("AI exercise tips"), W * 0.5f, PY, FLinearColor(0.6f, 0.82f, 1.0f, 1.0f), 1.1f * S);
+		PY += 34.0f * S;
+
+		// Coaching sentences — rough wrap by character count.
+		constexpr int32 MaxChars = 60;
+		int32 i = 0;
+		while (i < Coaching.Len())
+		{
+			DrawCentered(Coaching.Mid(i, MaxChars), W * 0.5f, PY, TextMain, 0.85f * S);
+			PY += 26.0f * S;
+			i += MaxChars;
+		}
+
+		// Recommended drills.
+		for (const FTrainingDrill& D : Pawn->GetRecommendedDrills())
+		{
+			DrawCentered(FString::Printf(TEXT("- %s : %s"), *D.Name, *D.FocusCue),
+				W * 0.5f, PY, FLinearColor(1.0f, 0.78f, 0.47f, 1.0f), 0.8f * S);
+			PY += 24.0f * S;
+		}
 	}
 }

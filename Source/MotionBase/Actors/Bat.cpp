@@ -156,7 +156,6 @@ void ABat::BeginSwingCapture(const FVector& InBallLocation, double InIdealContac
 		return;
 	}
 
-	bCapturing = true;
 	BallLocation = InBallLocation;
 
 	// 샘플은 provider 시간축(Initialize 이후 경과초)으로 찍힌다.
@@ -167,8 +166,6 @@ void ABat::BeginSwingCapture(const FVector& InBallLocation, double InIdealContac
 
 FSwingMetrics ABat::EndSwingCaptureAndAnalyze()
 {
-	bCapturing = false;
-
 	FSwingMetrics Metrics;
 
 	TArray<FSwingSample> Samples;

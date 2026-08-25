@@ -50,7 +50,7 @@ void ACoverHUD::DrawHUD()
 
 	// ── 상단 패널 (진행/성공 + 상황 + 역할) ──
 	const float PanelW = 940.0f * S;
-	const float PanelH = 120.0f * S;
+	const float PanelH = 134.0f * S;
 	const float PanelX = (W - PanelW) * 0.5f;
 	const float PanelY = 28.0f * S;
 	DrawPanel(PanelX, PanelY, PanelW, PanelH, CvPanelBg, CvPanelLine);
@@ -59,9 +59,24 @@ void ACoverHUD::DrawHUD()
 		Pawn->GetTrialNumber(), Pawn->GetTotalTrials(), Pawn->GetSuccessCount());
 	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 12.0f * S, CvTextDim, 0.85f * S);
 
-	DrawCentered(Pawn->GetSituationText(), W * 0.5f, PanelY + 42.0f * S, CvTextMain, 1.15f * S);
-	const FString RoleLine = FString::Printf(TEXT("You: [%s]  -  which base to back up?"), *Pawn->GetRoleText());
-	DrawCentered(RoleLine, W * 0.5f, PanelY + 78.0f * S, CvGood, 1.0f * S);
+	// 판단 시간(측정 지표 ②)을 흐르는 채로 보여준다 — 목표 시간을 넘기면 주황.
+	{
+		const float Live = Pawn->GetLiveDecisionSec();
+		const float Shown = (Live >= 0.0f) ? Live : Pawn->GetLastDecisionSec();
+		if (Shown >= 0.0f)
+		{
+			DrawLabel(FString::Printf(TEXT("decide  %.1fs"), Shown),
+				PanelX + PanelW - 150.0f * S, PanelY + 12.0f * S,
+				(Shown > 3.0f) ? FLinearColor(0.95f, 0.55f, 0.30f, 1.0f) : CvTextDim, 0.85f * S);
+		}
+	}
+
+	// 1 케이스 = 타구 방향·종류 + 주자 상황 + 내 포지션. 세 줄을 모두 보여줘야 판단이 성립한다.
+	DrawCentered(Pawn->GetSituationText(), W * 0.5f, PanelY + 38.0f * S, CvTextMain, 1.15f * S);
+	DrawCentered(FString::Printf(TEXT("Runners: %s"), *Pawn->GetRunnersText()),
+		W * 0.5f, PanelY + 66.0f * S, CvTextDim, 0.9f * S);
+	const FString RoleLine = FString::Printf(TEXT("You: [%s]  -  what is your job?"), *Pawn->GetRoleText());
+	DrawCentered(RoleLine, W * 0.5f, PanelY + 92.0f * S, CvGood, 1.0f * S);
 
 	// ── 보기 4개 ──
 	const int32 N = Pawn->GetOptionCount();
@@ -100,6 +115,39 @@ void ACoverHUD::DrawHUD()
 		{
 			DrawCentered(Pawn->GetExplainText(), W * 0.5f, OptY0 + N * OptStep + 64.0f * S,
 				CvTextDim, 0.85f * S);
+		}
+	}
+
+	// ── 세션 종료 시 AI 판단 코칭 + 추천 훈련 ──
+	const FString& Coaching = Pawn->GetCoachingText();
+	if (!Coaching.IsEmpty())
+	{
+		float PY = H * 0.60f;
+		const float AvgD = Pawn->GetAverageDecisionSec();
+		if (AvgD >= 0.0f)
+		{
+			DrawCentered(FString::Printf(TEXT("average decision time  %.1fs"), AvgD),
+				W * 0.5f, PY, CvTextDim, 0.85f * S);
+			PY += 28.0f * S;
+		}
+
+		DrawCentered(TEXT("AI judgment tips"), W * 0.5f, PY, FLinearColor(0.6f, 0.82f, 1.0f, 1.0f), 1.1f * S);
+		PY += 34.0f * S;
+
+		constexpr int32 MaxChars = 60;
+		int32 i = 0;
+		while (i < Coaching.Len())
+		{
+			DrawCentered(Coaching.Mid(i, MaxChars), W * 0.5f, PY, CvTextMain, 0.85f * S);
+			PY += 26.0f * S;
+			i += MaxChars;
+		}
+
+		for (const FTrainingDrill& D : Pawn->GetRecommendedDrills())
+		{
+			DrawCentered(FString::Printf(TEXT("- %s : %s"), *D.Name, *D.FocusCue),
+				W * 0.5f, PY, FLinearColor(1.0f, 0.78f, 0.47f, 1.0f), 0.8f * S);
+			PY += 24.0f * S;
 		}
 	}
 

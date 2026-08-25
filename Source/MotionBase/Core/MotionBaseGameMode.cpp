@@ -6,7 +6,6 @@
 #include "Testing/VRBattingPawn.h"
 #include "Testing/ViveBringupPawn.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
-#include "Core/Defense/DefensePawn.h"
 #include "UI/ModeSelectHUD.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -38,9 +37,10 @@ TSubclassOf<APawn> AMotionBaseGameMode::GetPawnClassForMode(EGameModeId Mode) co
 		}
 		return ASwingTestPawn::StaticClass();
 
-	case EGameModeId::Defense:
-		return ADefensePawn::StaticClass();
-		
+	// ⚠️ 수비(Defense)는 여기 없다 — 세부 종목(포구/송구/백업)을 고르지 않으면 띄울 폰이
+	//    정해지지 않기 때문. 진입은 항상 StartDefenseDrill 을 거친다.
+	//    (예전엔 빈 스텁 ADefensePawn 을 돌려줬는데, 모드 선택이 항상 종목 서브메뉴로 가므로
+	//     한 번도 실행되지 않는 죽은 경로였다.)
 	default:
 		// 나머지 모드는 미구현 (ROADMAP Phase 3~4).
 		return nullptr;
@@ -53,6 +53,14 @@ bool AMotionBaseGameMode::StartMode(EGameModeId Mode, EDifficultyLevel Difficult
 	{
 		UE_LOG(LogMotionBase, Log, TEXT("GameMode: %s 은(는) 아직 준비 중인 모드입니다."),
 			*UModeManager::GetModeDisplayName(Mode).ToString());
+		return false;
+	}
+
+	// 수비는 세부 종목을 고르기 전엔 진입할 수 없다 (StartDefenseDrill 이 진입 경로).
+	if (Mode == EGameModeId::Defense)
+	{
+		UE_LOG(LogMotionBase, Warning,
+			TEXT("GameMode: 수비는 세부 종목이 필요합니다 — StartDefenseDrill(0=포구/1=송구/2=백업) 을 쓰세요."));
 		return false;
 	}
 
@@ -174,12 +182,14 @@ bool AMotionBaseGameMode::StartDefenseDrill(int32 DrillIndex)
 		return false;
 	}
 
-	// 세션 진입 처리 (모드는 Defense 로 기록).
+	// 세션 진입 처리 (모드는 Defense, 세부 종목은 DrillId 로 기록).
+	// 순서 주의: SetActiveMode 가 새 세션을 열며 세부 종목을 비우므로 그다음에 지정한다.
 	if (UGameInstance* GI = GetGameInstance())
 	{
 		if (UModeManager* MM = GI->GetSubsystem<UModeManager>())
 		{
 			MM->SetActiveMode(EGameModeId::Defense);
+			MM->SetActiveDrill(UModeManager::GetDefenseDrillIdName(DrillIndex));
 		}
 	}
 

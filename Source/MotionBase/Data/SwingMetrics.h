@@ -20,7 +20,14 @@ struct FSwingMetrics
 	UPROPERTY(BlueprintReadWrite, Category = "Swing")
 	float PeakSpeedMps = 0.0f;
 
-	/** 컨택 타이밍 오차 (초). 이상 타이밍 대비 +빠름 / -느림. */
+	/**
+	 * 컨택 타이밍 오차 (초) = **컨택 시각 − 이상 시각**.
+	 *   양수(+) = 늦음 (공이 지나간 뒤에 배트가 옴 → 밀어치기·땅볼)
+	 *   음수(−) = 빠름 (공이 오기 전에 배트가 지나감 → 당겨치기·뜬공)
+	 *
+	 * ⚠️ 부호를 반대로 읽으면 UHitModel 의 발사각·좌우각이 통째로 뒤집힌다.
+	 *    (USwingAnalyzer 가 채우고, UHitModel·UScoringService·UWeaknessDetector 가 이 부호를 전제한다.)
+	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Swing")
 	float TimingErrorSeconds = 0.0f;
 
@@ -32,7 +39,19 @@ struct FSwingMetrics
 	UPROPERTY(BlueprintReadWrite, Category = "Swing")
 	float SwingPlaneAngleDeg = 0.0f;
 
-	/** 유효 컨택 여부. false면 헛스윙. */
+	/** 유효 컨택 여부. false면 헛스윙(또는 스윙 자체가 없었음 — bSwingDetected 로 구분). */
 	UPROPERTY(BlueprintReadWrite, Category = "Swing")
 	bool bContacted = false;
+
+	/**
+	 * 시간 창 안에서 **실제 스윙 동작이 감지됐는지** (컨택 여부와 무관).
+	 *
+	 * 왜 필요한가: VR 은 스윙을 버튼이 아니라 궤적으로 자동 판정하므로, bContacted=false 하나로는
+	 *   ① 지켜본 공(스윙 안 함)  ② 휘둘렀는데 빗나감(헛스윙)
+	 * 을 구분할 수 없다. 둘을 같이 묶으면 헛스윙이 시도 집계에서 빠져 **컨택률이 영원히 100%** 가 된다.
+	 *   - true  + bContacted=false → 헛스윙 (시도 1건으로 집계해야 함)
+	 *   - false                    → 지켜본 공 (시도 아님)
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Swing")
+	bool bSwingDetected = false;
 };
