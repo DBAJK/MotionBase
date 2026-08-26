@@ -10,6 +10,7 @@
 #include "Data/TrainingFeedback.h"
 #include "UI/SessionResultView.h"
 #include "UI/VRExitGesture.h"
+#include "UI/VRHaptics.h"
 #include "VRBattingPawn.generated.h"
 
 class UCameraComponent;
@@ -97,6 +98,44 @@ protected:
 	/** 좌우 오프셋 (cm). 0=정면. 우타는 -, 좌타는 + 로 살짝 밀 수 있음. */
 	UPROPERTY(EditAnywhere, Category = "VRBatting|Plate")
 	float ContactSideCm = 0.0f;
+
+	// ── 컨택 햅틱 (배트를 쥔 손) ──
+	//
+	// ⚠️ **컨택했을 때만** 울린다. 헛스윙에 진동을 주면 플레이어는 맞았다고 느끼는데
+	//    화면은 MISS 라 판정을 의심하게 된다 — 측정 신뢰를 스스로 깎는 셈이다.
+	//
+	// ⚠️ 진동은 실제 임팩트 순간이 아니라 **스윙 분석 시점**(도달 + PostContactDelaySec)에
+	//    울린다. 컨택 여부를 궤적 분석이 끝나야 알 수 있기 때문이다. 현재 기본값 0.12초 =
+	//    120ms 지연으로, 임팩트 큐로는 감지 한계선 근처다. 더 줄이려면 PostContactDelaySec 을
+	//    낮춰야 하는데 그러면 늦은 컨택이 궤적에서 잘리므로, 채점을 희생하지 않는 선에서만 조정할 것.
+
+	/** 컨택 시 컨트롤러를 진동시킬지. 끄면 진동 관련 코드가 전부 건너뛴다. */
+	UPROPERTY(EditAnywhere, Category = "VRBatting|Haptics")
+	bool bContactHaptics = true;
+
+	/** 진동 주파수 0~1. 낮을수록 묵직한 '텅' — 배트 임팩트는 낮은 쪽이 어울린다. */
+	UPROPERTY(EditAnywhere, Category = "VRBatting|Haptics", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HapticFrequency = 0.35f;
+
+	/** 빗맞은 컨택(타구 속도 ≒ 0)의 진동 세기 0~1. */
+	UPROPERTY(EditAnywhere, Category = "VRBatting|Haptics", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HapticMinAmplitude = 0.35f;
+
+	/** 정타(아래 기준 타구 속도 이상)의 진동 세기 0~1. */
+	UPROPERTY(EditAnywhere, Category = "VRBatting|Haptics", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HapticMaxAmplitude = 1.0f;
+
+	/**
+	 * 진동이 최대 세기가 되는 타구 속도 (m/s).
+	 * 타구 속도는 배트 속도 × 컨택 품질이라, 빗맞으면 자동으로 약하게 울린다 —
+	 * 세기가 곧 "얼마나 잘 맞았는가"의 촉각 피드백이 된다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "VRBatting|Haptics", meta = (ClampMin = "1.0"))
+	float HapticFullExitVelocityMps = 35.0f;
+
+	/** 진동 지속 시간 (초). 임팩트는 짧아야 '충격'으로 느껴진다 — 길면 그냥 떨림이다. */
+	UPROPERTY(EditAnywhere, Category = "VRBatting|Haptics", meta = (ClampMin = "0.01", ClampMax = "0.5"))
+	float HapticDurationSec = 0.09f;
 
 	/** 컨택 높이 (cm). 가슴~허리. */
 	UPROPERTY(EditAnywhere, Category = "VRBatting|Plate")
@@ -211,4 +250,10 @@ private:
 
 	/** VR '배트 위로 들어 나가기' 제스처 상태 (헤드셋만으로 모드 선택 복귀). */
 	FVRExitGesture ExitGesture;
+
+	/** 컨택 진동 상태 (Tick 이 지속시간을 재고 EndPlay 가 끈다). */
+	FVRHapticPulse ContactHaptic;
+
+	/** 타구 결과에 맞는 세기로 배트 손을 진동시킨다. 컨택했을 때만 호출할 것. */
+	void PlayContactHaptic(float ExitVelocityMps);
 };

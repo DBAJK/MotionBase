@@ -33,3 +33,4 @@ Thumbs.db
 # ── 로컬 비밀값 (AI API 키 등) ────────────────────────────────────
 Config/Secrets.ini
 *.env
+DEMO_2MIN.md

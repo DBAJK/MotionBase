@@ -275,7 +275,9 @@ void AThrowPawn::CatchFeed(bool bClean)
 	Phase = EThrowPhase::Ready;
 	CurrentPower = 0.0f;
 	bCharging = false;
-	ThrowCooldown = 0.25f; // 잡자마자 손 움직임이 송구로 오인되지 않게 짧게 잠근다.
+	// 잡자마자 손 움직임이 송구로 오인되지 않게 짧게 잠근다.
+	// 길이는 PostCatchThrowLockSec — 전환 시간이 측정 지표라 바닥을 낮게 잡는다(헤더 주석 참고).
+	ThrowCooldown = PostCatchThrowLockSec;
 
 	// 손에 든 공은 VR 에서만 보인다 (PC 는 1인칭 손이 없다).
 	if (BallInHandMesh) { BallInHandMesh->SetVisibility(bVR); }
@@ -887,8 +889,14 @@ void AThrowPawn::RefreshVrPanel()
 			GetThrowNumber(), GetTotalThrows(), *BaseName(CurrentTrial.TargetBase), GetSuccessCount()),
 		FColor(228, 233, 244));
 
-	// 행0: 단계별 안내 / 파워 게이지.
-	if (Phase == EThrowPhase::Feed)
+	// 행0: 추적 경고 > 단계별 안내 / 파워 게이지 (경고가 최우선).
+	if (bControllerLost)
+	{
+		// 추적이 끊긴 동안에는 던지기가 물리적으로 인식되지 않는다. 원인을 알려주지 않으면
+		// 플레이어는 계속 허공에 던지면서 게임이 멈춘 줄 안다.
+		VrPanel->SetRow(0, TEXT("Controller not tracked - move it into view"), FColor(255, 120, 120));
+	}
+	else if (Phase == EThrowPhase::Feed)
 	{
 		VrPanel->SetRow(0, TEXT("Catch the feed first"), FColor(255, 190, 90));
 	}
@@ -962,6 +970,24 @@ void AThrowPawn::TickVRThrow(float DeltaSeconds)
 	{
 		return;
 	}
+
+	// ── 추적 가드 ──
+	// 추적이 끊기면 컴포넌트 위치가 마지막 값에 고정된다 → 손 속도가 0 으로 잡혀
+	// 아무리 던져도 트리거를 못 넘고, 화면엔 아무 일도 안 일어난다("고장난 줄 안다").
+	// 그래서 ① 진행 중이던 동작을 버리고 ② 패널에 알릴 플래그를 세운다.
+	//
+	// ⚠️ bHasPrevControllerLoc 도 반드시 내린다. 추적이 다른 위치에서 복귀하면
+	//    그 순간의 좌표 점프가 그대로 거대한 가짜 속도가 되어 의도치 않은 만루 송구가 나간다.
+	if (!ThrowController->IsTracked())
+	{
+		bControllerLost       = true;
+		bHasPrevControllerLoc = false;
+		bThrowMotionActive    = false;
+		ThrowPeakSpeedCms     = 0.0f;
+		ThrowMotionSec        = 0.0f;
+		return;
+	}
+	bControllerLost = false;
 
 	// 컨트롤러 속도 (cm/s) = 위치 변화량 / dt.
 	const FVector Loc = ThrowController->GetComponentLocation();

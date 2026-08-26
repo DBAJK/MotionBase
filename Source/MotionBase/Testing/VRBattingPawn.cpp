@@ -172,6 +172,9 @@ void AVRBattingPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// 다음 모드 진입 시 SetActiveMode 가 누적을 비우므로, 여기서 flush 하지 않으면 기록이 사라진다.
 	FlushSessionToSave();
 
+	// 진동을 반드시 끄고 나간다 — 안 끄면 모드 선택 화면에서도 컨트롤러가 계속 울린다.
+	ContactHaptic.Stop(Cast<APlayerController>(GetController()));
+
 	if (PitchingZone)
 	{
 		PitchingZone->Destroy();
@@ -275,6 +278,10 @@ void AVRBattingPawn::AnalyzeSwingNow()
 	// ── ④ 컨택 ──
 	++ContactCount;
 
+	// 손에 임팩트를 돌려준다. 세기는 타구 속도에 비례하므로 빗맞으면 약하게 울린다
+	// (= 얼마나 잘 맞았는지가 화면을 보기 전에 손으로 먼저 온다).
+	PlayContactHaptic(LastHit.ExitVelocityMps);
+
 	// 비거리 집계 (결과 화면용) — 컨택한 타구만.
 	MaxCarryDistanceM = FMath::Max(MaxCarryDistanceM, LastHit.CarryDistanceM);
 	SumCarryDistanceM += LastHit.CarryDistanceM;
@@ -311,6 +318,32 @@ void AVRBattingPawn::ReturnToModeSelect()
 	{
 		GM->ReturnToModeSelect();
 	}
+}
+
+void AVRBattingPawn::PlayContactHaptic(float ExitVelocityMps)
+{
+	if (!bContactHaptics)
+	{
+		return;
+	}
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		return;
+	}
+
+	// 배트를 쥔 손 = 스탠스가 정하는 손 (BeginPlay 에서 ABat::SetHandMotionSource 와 같은 기준).
+	const EControllerHand BatHand = (SessionStance == EBattingStance::Left)
+		? EControllerHand::Left
+		: EControllerHand::Right;
+
+	// 타구 속도 → 세기. 0 m/s = 최소, HapticFullExitVelocityMps 이상 = 최대.
+	const float Alpha = FMath::Clamp(
+		ExitVelocityMps / FMath::Max(HapticFullExitVelocityMps, KINDA_SMALL_NUMBER), 0.0f, 1.0f);
+	const float Amplitude = FMath::Lerp(HapticMinAmplitude, HapticMaxAmplitude, Alpha);
+
+	ContactHaptic.Play(PC, BatHand, HapticFrequency, Amplitude, HapticDurationSec);
 }
 
 void AVRBattingPawn::ShowResultText(const FString& Text, const FLinearColor& Color)
@@ -486,6 +519,9 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 			ResultText->SetVisibility(false);
 		}
 	}
+
+	// 컨택 진동 지속시간 카운트다운 — SetHapticsByValue 는 꺼줄 때까지 계속 울린다.
+	ContactHaptic.Update(Cast<APlayerController>(GetController()), DeltaSeconds);
 
 	// 컨트롤러 트리거(아래 검지 버튼)를 당기면 지금까지의 스윙으로 AI 운동 추천을 요청한다.
 	// (스윙은 배트 궤적으로 자동 판정되므로 트리거는 비어 있다 — 코칭 버튼으로 재활용.)

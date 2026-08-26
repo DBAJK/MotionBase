@@ -116,13 +116,21 @@ protected:
 	TObjectPtr<UVRInfoPanel> VrPanel;
 
 	// ── VR 송구 튜닝 ──
-	/** 이 속도(cm/s) 이상으로 컨트롤러를 휘두르면 **송구 동작 시작**으로 본다(발사 아님). */
+	/**
+	 * 이 속도(cm/s) 이상으로 컨트롤러를 휘두르면 **송구 동작 시작**으로 본다(발사 아님).
+	 *
+	 * ⚠️ 판정은 컨트롤러의 **위치 이동 속도만** 본다 (타격과 달리 회전 ω×r 보정이 없다).
+	 *    그래서 손목만 까딱하면 컨트롤러가 실제로 이동한 거리가 짧아 이 값을 못 넘고,
+	 *    플레이어 입장에서는 "던졌는데 공이 안 나간다"로 보인다.
+	 *    250 → 180 으로 낮춰 팔을 크게 못 쓰는 사람도 동작이 인식되게 했다.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Throw|VR")
-	float ThrowTriggerSpeedCms = 250.0f;
+	float ThrowTriggerSpeedCms = 180.0f;
 
-	/** 파워 0 에 대응하는 손 속도 (cm/s). */
+	/** 파워 0 에 대응하는 손 속도 (cm/s). ThrowTriggerSpeedCms 와 같이 움직여야 한다 —
+	 *  트리거보다 크면 동작은 인식됐는데 파워가 0 인 구간이 생긴다. */
 	UPROPERTY(EditAnywhere, Category = "Throw|VR")
-	float MinThrowSpeedCms = 250.0f;
+	float MinThrowSpeedCms = 180.0f;
 
 	/**
 	 * 파워 1 에 대응하는 손 속도 (cm/s). 이 이상은 최대 파워.
@@ -150,6 +158,18 @@ protected:
 	/** VR 포구 인정 반경 (cm) — 글러브(컨트롤러)와 급구 사이 거리. */
 	UPROPERTY(EditAnywhere, Category = "Throw|VR")
 	float FeedCatchRadius = 60.0f;
+
+	/**
+	 * 급구를 잡은 직후 송구 입력을 잠그는 시간 (초).
+	 *
+	 * 공을 잡으러 뻗던 손의 관성이 그대로 송구 동작으로 오인되는 것을 막는 장치다.
+	 * ⚠️ 다만 **전환 시간(transfer)이 이 종목의 측정 지표**라, 이 값이 그대로
+	 *    측정 가능한 최소 전환 시간의 바닥이 된다. 잠금이 길수록 "빠른 전환"을
+	 *    아무리 잘해도 그 아래로는 기록될 수 없다 → 지표를 갉아먹지 않는 선까지만 잡는다.
+	 *    (0.25 → 0.12. 목표 전환 시간이 1.2초이므로 바닥이 10% 에서 1% 로 내려간다.)
+	 */
+	UPROPERTY(EditAnywhere, Category = "Throw|VR", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	float PostCatchThrowLockSec = 0.12f;
 
 	// ── 설정값 ──
 
@@ -332,6 +352,14 @@ private:
 	FVector PrevControllerLoc = FVector::ZeroVector;
 	bool    bHasPrevControllerLoc = false;
 	float   ThrowCooldown = 0.0f;   // 던진 직후 재던짐 방지
+
+	/**
+	 * 송구 손 컨트롤러 추적이 끊겼는지 (TickVRThrow 가 매 프레임 갱신).
+	 *
+	 * 추적이 끊기면 위치가 고정돼 손 속도가 0 으로 잡히고, 아무리 던져도 조용히 무시된다.
+	 * 화면에 아무 표시가 없으면 플레이어는 "게임이 고장났다"고 판단하므로 패널에 알린다.
+	 */
+	bool    bControllerLost = false;
 
 	// 던지기 동작 추적 — 피크 속도에서 릴리스를 잡기 위한 상태 (TickVRThrow).
 	bool  bThrowMotionActive = false;  // 트리거 속도를 넘어 동작이 시작됨
