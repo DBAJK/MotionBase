@@ -1,6 +1,37 @@
 #include "Scoring/ScoringService.h"
 #include "Analysis/HitModel.h"
 
+void FScoringConfig::ApplyDifficulty(EDifficultyLevel Level)
+{
+	// 판정선만 움직인다 (안타 비거리 / 홈런 비거리 / 파울 라인).
+	// 기준(Pro)은 간이 모델의 원래 값 — 아래로 갈수록 "잘 맞혔다"로 쳐 주는 폭이 넓어진다.
+	switch (Level)
+	{
+	case EDifficultyLevel::Beginner:
+		// 처음 잡는 사람: 앞으로 날아가기만 하면 안타로 불러 준다.
+		HitDistanceM     = 10.0f;
+		HomeRunDistanceM = 60.0f;
+		FoulLineDeg      = 58.0f;
+		break;
+
+	case EDifficultyLevel::Pro:
+		HitDistanceM     = 30.0f;
+		HomeRunDistanceM = 100.0f;
+		FoulLineDeg      = 45.0f;
+		break;
+
+	default: // Amateur — 기본 시연 난이도
+		// VR 컨트롤러 스윙의 배트 속도(대략 15~22 m/s)에서 **정타면 안타가 나오도록** 맞췄다.
+		//   배트 19 m/s · 컨택 오차 10cm → 타구속도 ≈ 20 m/s → 비거리 ≈ 16m
+		// 예전 기준(30m)은 타구속도 26 m/s(=프로급 배트 속도)를 요구해서, 잘 맞혀도
+		// 대부분 '아웃'으로 찍혔다 — 간이 모델이 투구 속도를 안 더하는 탓이다.
+		HitDistanceM     = 16.0f;
+		HomeRunDistanceM = 75.0f;
+		FoulLineDeg      = 52.0f;
+		break;
+	}
+}
+
 float UScoringService::EvalAccuracy(const FSwingMetrics& M, const FScoringConfig& Config)
 {
 	if (!M.bContacted)

@@ -213,6 +213,16 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Throw")
 	float IntervalBetweenThrows = 1.5f;
 
+	/**
+	 * 첫 시행까지의 대기 (초).
+	 *
+	 * ⚠️ 0 으로 두면 안 된다: VR 은 **BeginPlay 시점에 HMD 포즈가 카메라에 아직 안 들어와**
+	 *    플레이어가 어디를 보는지 알 수 없다. 그 상태로 그라운드를 깔면 베이스와 급구가
+	 *    엉뚱한 방향(월드 +X)에 생겨 "공이 왜 저기서 날아오지"가 된다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Throw", meta = (ClampMin = "0.2"))
+	float FirstTrialDelaySec = 1.5f;
+
 	// ── 급구(feed) 설정 — 전환 시간 측정을 위한 "잡는 공" ──
 	/** 급구가 출발하는 정면 거리 (cm). */
 	UPROPERTY(EditAnywhere, Category = "Throw|Feed")
@@ -261,8 +271,20 @@ private:
 	/** 타겟 거리를 정확히 맞히는 정답 파워(0~1). */
 	float DistanceToIdealPower(float Distance) const;
 
-	/** 베이스 → 월드 위치 (폰 기준 오프셋 적용). */
+	/** 베이스 → 월드 위치 (그라운드 기준점·정면 방향 적용). */
 	FVector BaseLocation(EBaseType Base) const;
+
+	/**
+	 * 그라운드(베이스 배치·급구 방향)의 기준점과 정면을 **한 번만** 확정한다.
+	 *
+	 * ⚠️ 예전엔 월드 +X 를 정면으로 고정했다. VR 플레이어는 룸 안에서 아무 방향이나 보고 서
+	 *    있으므로, 그 가정이 깨지면 베이스가 등 뒤에 깔리고 급구가 옆에서 스쳐 지나간다
+	 *    ("공이 왜 날아오는지 모르겠다"의 실제 원인).
+	 *
+	 * ⚠️ **매 시행 다시 잡으면 안 된다.** 그라운드는 고정된 지형이라, 고개를 돌릴 때마다
+	 *    베이스가 따라 돌면 어디로 던지는지 감각이 사라진다. 첫 시행에서 한 번만 잡는다.
+	 */
+	void EnsureFieldAnchor();
 
 	/**
 	 * 플레이어가 서 있는 **바닥면 Z** (월드).
@@ -301,6 +323,13 @@ private:
 
 	FThrowTrial CurrentTrial;
 	FVector HomeLocation = FVector::ZeroVector;
+
+	// ── 그라운드 기준 (EnsureFieldAnchor 가 첫 시행에 한 번 잡는다) ──
+	/** 내가 서 있는 자리(월드 XY, Z=바닥) — 베이스·급구가 여기를 중심으로 배치된다. */
+	FVector FieldAnchor = FVector::ZeroVector;
+	/** 내 정면(월드 yaw, 도). VR 은 HMD 방향, PC 는 폰 정면(+X). */
+	float   FieldYawDeg = 0.0f;
+	bool    bFieldAnchored = false;
 
 	EThrowPhase Phase = EThrowPhase::Feed;
 

@@ -92,6 +92,11 @@ void AThrowPawn::BeginPlay()
 		UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
 	}
 
+	// 그라운드 기준 임시값 — 첫 시행에서 EnsureFieldAnchor 가 실제 값(HMD 방향)으로 덮어쓴다.
+	// (그전에 BaseLocation 이 불려도 월드 원점에 베이스가 찍히지 않게 하는 안전값.)
+	FieldAnchor = FVector(HomeLocation.X, HomeLocation.Y, FloorZ());
+	FieldYawDeg = GetActorRotation().Yaw;
+
 	// 나가기 제스처 — 송구 와인드업에서 팔이 위로 올라가므로 기본값보다 조인다.
 	// 시행이 진행 중인 동안(급구 대기/공 들고 있음/송구 중)에는 Tick 에서 진행을 동결한다.
 	ExitGesture.UpThreshold = 0.90f;
@@ -166,6 +171,27 @@ int32 AThrowPawn::BaseIndexOf(EBaseType Base)
 	}
 }
 
+void AThrowPawn::EnsureFieldAnchor()
+{
+	if (bFieldAnchored)
+	{
+		return;
+	}
+
+	// VR: 머리(카메라)가 있는 자리와 보고 있는 방향. 폰 루트는 트래킹 원점일 뿐이라
+	//     루트를 기준으로 삼으면 플레이 공간 한쪽에 선 사람에겐 그라운드가 통째로 어긋난다.
+	// PC: 루트가 곧 몸이고 정면은 +X (BeginPlay 에서 고정) — 기존 동작 그대로.
+	const bool bUseHead = (bVR && Camera);
+	const FVector Src   = bUseHead ? Camera->GetComponentLocation() : GetActorLocation();
+
+	FieldAnchor    = FVector(Src.X, Src.Y, FloorZ());
+	FieldYawDeg    = bUseHead ? Camera->GetComponentRotation().Yaw : GetActorRotation().Yaw;
+	bFieldAnchored = true;
+
+	UE_LOG(LogMotionBase, Log, TEXT("[Throw] 그라운드 기준 확정: %s / 정면 %.0f°"),
+		*FieldAnchor.ToCompactString(), FieldYawDeg);
+}
+
 FVector AThrowPawn::BaseLocation(EBaseType Base) const
 {
 	FVector2D Off = HomePlateOffset;
@@ -176,9 +202,14 @@ FVector AThrowPawn::BaseLocation(EBaseType Base) const
 	case EBaseType::Third:  Off = ThirdBaseOffset;  break;
 	default: break;
 	}
+
+	// 오프셋은 '내 정면' 기준이다 — 월드 축이 아니라 EnsureFieldAnchor 가 잡은 방향으로 돌린다.
+	const FVector Local(Off.X, Off.Y, 0.0f);
+	const FVector World = FRotator(0.0f, FieldYawDeg, 0.0f).RotateVector(Local);
+
 	// 베이스는 바닥에 있다. 바닥면 계산은 VR/PC 가 다르므로 FloorZ() 로 통일한다
 	// (VR 에서 -88 을 쓰면 베이스 마커가 땅속에 묻혀 안 보였다).
-	return FVector(HomeLocation.X + Off.X, HomeLocation.Y + Off.Y, FloorZ());
+	return FVector(FieldAnchor.X + World.X, FieldAnchor.Y + World.Y, FloorZ());
 }
 
 // ── 세션 진행 ──
@@ -199,7 +230,10 @@ void AThrowPawn::StartSession()
 	CoachingText.Reset();
 	bAwaitingCoaching = false;
 
-	SpawnNextTrial();
+	// 첫 시행은 한 박자 뒤에 — VR 은 BeginPlay 시점에 HMD 포즈가 없어 그라운드를 깔 방향을
+	// 모른다 (FirstTrialDelaySec 주석 참고). 플레이어에게도 준비할 틈이 된다.
+	bWaitingNext  = true;
+	IntervalTimer = FMath::Max(FirstTrialDelaySec, 0.2f);
 }
 
 void AThrowPawn::SpawnNextTrial()
@@ -207,25 +241,33 @@ void AThrowPawn::SpawnNextTrial()
 	UWorld* World = GetWorld();
 	if (!World) { return; }
 
+	// 그라운드 기준(내 자리·내 정면)을 확정한다. 첫 시행에서만 실제로 잡히고 이후엔 그대로 쓴다.
+	EnsureFieldAnchor();
+
 	CurrentTrial = FThrowTrial();
 
 	// ① 목표 베이스 지정 — 네 베이스 중 랜덤. 던지기 전에 미리 표시된다.
 	CurrentTrial.TargetBase     = static_cast<EBaseType>(FMath::RandRange(0, NumBases - 1));
-	CurrentTrial.ThrowOrigin    = FVector(HomeLocation.X, HomeLocation.Y, ThrowHandZ()); // 손 높이
+	CurrentTrial.ThrowOrigin    = FVector(FieldAnchor.X, FieldAnchor.Y, ThrowHandZ()); // 손 높이
 	CurrentTrial.TargetLocation = BaseLocation(CurrentTrial.TargetBase);
 	CurrentTrial.TargetDistance = FVector::Dist2D(CurrentTrial.TargetLocation, CurrentTrial.ThrowOrigin);
 	CurrentTrial.IdealPower     = DistanceToIdealPower(CurrentTrial.TargetDistance);
 	CurrentTrial.HitRadius      = HitRadius;
 
-	// ② 급구(feed) — 잡아야 시계가 돈다. 정면에서 가슴 높이로 날아온다.
+	// ② 급구(feed) — 잡아야 시계가 돈다. **내 정면**에서 가슴 높이로 날아온다.
+	//    (동료가 던져 주는 공이다. 이걸 잡는 순간부터 포구→송구 전환 시간이 측정된다.)
 	const float G = FMath::Abs(World->GetGravityZ());
+	const FRotator FieldFacing(0.0f, FieldYawDeg, 0.0f);
+	const FVector  FieldForward = FieldFacing.RotateVector(FVector::ForwardVector);
+	const FVector  FieldRight   = FieldFacing.RotateVector(FVector::RightVector);
 	const float SideY = FMath::RandRange(-150.0f, 150.0f); // 살짝 좌우로 흔들어 매번 같은 자리로 오지 않게.
 	// 높이는 **바닥 기준** — VR(Stage 원점)은 루트가 바닥, PC 는 루트가 몸 중심이라
 	// 루트에 그냥 더하면 VR 에서 공이 발밑으로 날아와 글러브에 닿지 않는다.
-	CurrentTrial.FeedLaunchLocation = FVector(HomeLocation.X + FeedDistance, HomeLocation.Y + SideY, FloorZ() + 150.0f);
+	CurrentTrial.FeedLaunchLocation =
+		FieldAnchor + FieldForward * FeedDistance + FieldRight * SideY + FVector(0, 0, 150.0f);
 	CurrentTrial.FeedFlightSec      = FMath::Max(FeedFlightSec, 0.3f);
 
-	const FVector Arrival(HomeLocation.X, HomeLocation.Y, CatchHeightZ()); // 가슴 높이
+	const FVector Arrival(FieldAnchor.X, FieldAnchor.Y, CatchHeightZ()); // 가슴 높이
 	const FVector ToTarget = Arrival - CurrentTrial.FeedLaunchLocation;
 	const FVector Horiz(ToTarget.X, ToTarget.Y, 0.0f);
 	const float VHoriz = Horiz.Size() / CurrentTrial.FeedFlightSec;
@@ -639,7 +681,9 @@ void AThrowPawn::DrawPredictedArc(float Power) const
 	// 지금 파워로 던지면 그리는 포물선을 미리 보여준다 —
 	// "얼마나 세게 휘둘러야 저기까지 가는지"를 던지기 전에 눈으로 맞출 수 있게.
 	const FVector V0 = PowerToVelocity(Power);
-	const FVector P0 = FVector(HomeLocation.X, HomeLocation.Y, ThrowHandZ());
+	// 출발점은 이번 시행의 송구 원점(=내가 선 자리의 손 높이). 폰 루트를 쓰면 VR 에서
+	// 예측선이 내 몸이 아니라 트래킹 원점에서 뻗어 나가 궤적이 어긋나 보인다.
+	const FVector P0 = CurrentTrial.ThrowOrigin;
 	const float G  = FMath::Abs(World->GetGravityZ());
 	const float Ground = FloorZ();
 
@@ -745,7 +789,9 @@ void AThrowPawn::Tick(float DeltaSeconds)
 	}
 
 	// 급구가 지나갔는데 못 잡았으면 fumble 로 넘긴다 (전환 시간은 미측정).
-	if (Phase == EThrowPhase::Feed)
+	// ⚠️ 시행 대기 중(bWaitingNext)에는 건드리지 않는다 — 초기 Phase 가 Feed 라, 첫 구가
+	//    나오기도 전에 "공이 없다 = 놓쳤다"로 판정해 버린다.
+	if (Phase == EThrowPhase::Feed && !bWaitingNext && !bSessionOver)
 	{
 		if (!IsValid(ActiveBall))
 		{
@@ -812,7 +858,9 @@ void AThrowPawn::Tick(float DeltaSeconds)
 	}
 
 	// ── 베이스 마커 — 네 베이스를 모두 그리고 목표만 강조한다 ──
-	if (!bSessionOver && GetWorld())
+	// 그라운드 방향이 확정되기 전(첫 시행 대기 중)에는 그리지 않는다 — 임시 방향으로 깔았다가
+	// 첫 구에서 통째로 회전하면 "베이스가 순간이동했다"로 보인다.
+	if (bFieldAnchored && !bSessionOver && GetWorld())
 	{
 		const EBaseType Bases[NumBases] =
 			{ EBaseType::First, EBaseType::Second, EBaseType::Third, EBaseType::Home };

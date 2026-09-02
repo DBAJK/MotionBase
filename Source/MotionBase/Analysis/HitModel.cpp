@@ -16,11 +16,11 @@ namespace
 	constexpr float MinLaunchDeg         = -15.0f;
 	constexpr float MaxLaunchDeg         = 55.0f;
 	constexpr float MaxSprayDeg          = 70.0f;
-	constexpr float FoulLineDeg          = 45.0f;   // |좌우각| 이 값 초과면 파울
 	constexpr float GravityMps2          = 9.8f;
 	constexpr float CarryFactor          = 0.55f;   // 공기저항 근사 (진공 사거리 × 이 값)
-	constexpr float HomeRunDistanceM     = 100.0f;
-	constexpr float HitDistanceM         = 30.0f;
+	// ⚠️ 파울 라인 / 안타·홈런 비거리 임계는 **FScoringConfig 로 옮겼다**
+	//    (FScoringConfig::ApplyDifficulty 가 난이도별로 조절한다). 여기 상수로 되돌리지 말 것 —
+	//    되돌리면 난이도가 판정에 영향을 주지 못해 아마추어가 정타를 쳐도 아웃으로 찍힌다.
 	constexpr float HomeRunMinLaunchDeg  = 15.0f;   // 이 발사각 구간에서만 담장을 넘는다
 	constexpr float HomeRunMaxLaunchDeg  = 45.0f;
 }
@@ -61,7 +61,7 @@ FBattedBallResult UHitModel::Simulate(const FSwingMetrics& M, const FScoringConf
 	// 좌우각: 타이밍 오차에 비례. 극단 타이밍이면 파울 영역까지 간다.
 	R.SprayAngleDeg = FMath::Clamp(M.TimingErrorSeconds * SprayTimingGainDeg, -MaxSprayDeg, MaxSprayDeg);
 
-	R.bFair = FMath::Abs(R.SprayAngleDeg) <= FoulLineDeg;
+	R.bFair = FMath::Abs(R.SprayAngleDeg) <= Config.FoulLineDeg;
 
 	// 비거리: 포물선 사거리 R = v^2 · sin(2θ) / g, 공기저항 계수 적용.
 	const float AngleRad = FMath::DegreesToRadians(R.LaunchAngleDeg);
@@ -73,12 +73,12 @@ FBattedBallResult UHitModel::Simulate(const FSwingMetrics& M, const FScoringConf
 	{
 		R.Class = EHitClass::Foul;
 	}
-	else if (R.CarryDistanceM >= HomeRunDistanceM
+	else if (R.CarryDistanceM >= Config.HomeRunDistanceM
 		&& R.LaunchAngleDeg >= HomeRunMinLaunchDeg && R.LaunchAngleDeg <= HomeRunMaxLaunchDeg)
 	{
 		R.Class = EHitClass::HomeRun;
 	}
-	else if (R.CarryDistanceM >= HitDistanceM)
+	else if (R.CarryDistanceM >= Config.HitDistanceM)
 	{
 		R.Class = EHitClass::Hit;
 	}

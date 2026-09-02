@@ -106,6 +106,9 @@ void AVRBattingPawn::BeginPlay()
 		}
 	}
 
+	// 난이도 → 타구 판정 관대도 (점수 산식은 건드리지 않는다 — FScoringConfig 주석 참고).
+	ScoringConfig.ApplyDifficulty(SessionDifficulty);
+
 	// 배트 생성 — Vive 입력 소스로. provider 는 BeginPlay 에서 만들어지므로
 	// SpawnActorDeferred → SetInputSource → FinishSpawning 순서를 지킨다.
 	FActorSpawnParameters Params;

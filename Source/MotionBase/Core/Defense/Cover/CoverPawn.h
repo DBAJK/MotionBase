@@ -122,6 +122,12 @@ protected:
 private:
 	static constexpr int32 MaxOptions = 4;
 
+	/**
+	 * 'EXIT' 카드를 놓을 행 슬롯 (보기 4개 바로 아래 = 항상 같은 자리).
+	 * 세션 종료 화면의 코칭/드릴 행도 이 슬롯을 넘지 않게 잘라, 나가는 카드가 글자에 묻히지 않게 한다.
+	 */
+	static constexpr int32 BackCardRowSlot = MaxOptions;
+
 	// ── 입력 ──
 	void SelectPrev();   // VR/키보드 커서 이동
 	void SelectNext();

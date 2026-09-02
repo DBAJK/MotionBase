@@ -82,6 +82,9 @@ void ASwingTestPawn::BeginPlay()
 	}
 	PitchingZone->ApplyDifficulty(SessionDifficulty);
 
+	// 난이도 → 타구 판정 관대도 (점수 산식은 건드리지 않는다 — FScoringConfig 주석 참고).
+	ScoringConfig.ApplyDifficulty(SessionDifficulty);
+
 	// 동적 난이도: 과거 기록(이 모드 평균 총점)이 좋을수록 더 어렵게 시작한다.
 	// 기록이 없으면(첫 플레이) 프리셋 그대로 시작 → 이후 스윙 성적으로 조정된다.
 	if (UGameInstance* GI = GetGameInstance())

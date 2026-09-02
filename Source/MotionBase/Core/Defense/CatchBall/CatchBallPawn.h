@@ -132,6 +132,33 @@ protected:
 	float SideSpread = 500.0f;
 
 	/**
+	 * 첫 공까지의 대기 (초).
+	 *
+	 * ⚠️ 0 으로 두면 안 된다: VR 은 **BeginPlay 시점에 HMD 포즈가 아직 카메라에 반영되지 않아**
+	 *    플레이어가 어디를 보는지 알 수 없다. 그 상태로 첫 구를 만들면 정면 기준이 엉뚱하게
+	 *    잡혀 공이 등 뒤에서 날아온다. 한 박자 쉬고 만들면 포즈가 들어온 뒤라 안전하고,
+	 *    플레이어에게도 준비할 틈이 된다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "CatchBall", meta = (ClampMin = "0.2"))
+	float FirstPitchDelaySec = 1.5f;
+
+	/**
+	 * VR 에서 낙구지점이 좌우로 퍼지는 최대 폭 (cm).
+	 *
+	 * PC(±500cm)보다 좁다. VR 이동은 트랙패드(450cm/s)뿐이라 라인드라이브(체공 1.0초)로
+	 * 5m 옆에 떨어지면 **물리적으로 도달 불가**다 — 잡을 수 없는 공은 훈련이 아니라 버그로 읽힌다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "CatchBall|VR", meta = (ClampMin = "0.0"))
+	float VRSideSpread = 250.0f;
+
+	/**
+	 * VR 에서 '헛손질'로 볼 글러브 거리 배수 (캐치 반경 × 이 값).
+	 * 이 안쪽이면 손은 뻗었다고 보고 헛손질, 밖이면 시도 없음(놓침)으로 가른다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "CatchBall|VR", meta = (ClampMin = "1.0"))
+	float VRWhiffRadiusScale = 2.0f;
+
+	/**
 	 * VR 에서 공이 도착하는 높이 (cm, **트래킹 바닥 기준**).
 	 *
 	 * ⚠️ VR 은 SetTrackingOrigin(Stage) 라 **바닥이 폰 루트(캡슐 원점) Z** 다.
@@ -236,6 +263,33 @@ private:
 	FCatchTrial BuildTrial(ECatchBallType Type) const;
 
 	/**
+	 * 이번 구의 기준 위치(월드 XY) — 공이 도착할 '내 자리'.
+	 *
+	 * PC 는 폰 루트(HomeLocation)가 곧 몸이다. VR 은 다르다: 트래킹 원점(Stage)이 폰 루트라
+	 * **플레이어는 루트에서 몇 미터 떨어진 곳에 서 있을 수 있다.** 그때 루트 기준으로 공을
+	 * 보내면 매번 옆으로 지나간다 — 카메라(머리)의 XY 를 기준으로 잡아야 내 앞으로 온다.
+	 */
+	FVector PitchAnchorLocation() const;
+
+	/**
+	 * 이번 구의 '정면'(월드 yaw, 도).
+	 *
+	 * ⚠️ 예전엔 월드 +X 를 정면으로 고정했다. VR 플레이어는 룸 안에서 **아무 방향이나 보고 서
+	 *    있으므로**, 그 가정이 깨지면 공·마커가 전부 등 뒤에 생긴다("아무것도 안 온다"의 원인).
+	 *    VR 은 HMD 가 보는 방향, PC 는 기존대로 폰 정면(+X)을 쓴다.
+	 */
+	float PitchFacingYawDeg() const;
+
+	/**
+	 * 타이밍 창을 지난 공을 정리한다 (VR/PC 공통).
+	 *
+	 * ⚠️ 예전엔 이 처리가 TickVRCatch 안에만 있어서, **PC 는 한 번만 안 누르면 그 구가 영원히
+	 *    끝나지 않았다** — 공은 착지 후 스스로 사라지고 bPitchActive 는 true 로 남아 세션이 통째로
+	 *    멈춘다("아무것도 진행되지 않는다"). 판정 3종 중 '놓침'(JudgeDropped)이 실제로 쓰이는 곳.
+	 */
+	void TickPitchTimeout();
+
+	/**
 	 * 플레이어가 서 있는 **바닥면 Z** (월드).
 	 * VR: 트래킹 원점이 Stage 라 바닥 = 폰 루트 Z. PC: 루트가 몸 중심이라 바닥 = 루트 - 캡슐 반높이.
 	 * 낙구 마커·공의 착지면을 이 값으로 맞춘다 (예전엔 두 경로가 어긋나 마커가 땅에 묻혔다).
@@ -254,8 +308,12 @@ private:
 
 	FCatchTrial CurrentTrial;
 
-	/** 세션 시작 시점의 플레이어 위치 — 모든 발사·낙구지점의 기준. */
+	/** 세션 시작 시점의 폰 위치 — 바닥면(FloorZ) 기준. */
 	FVector HomeLocation = FVector::ZeroVector;
+
+	/** 이번 구를 만들 때 쓴 기준 위치/정면 (마커를 같은 기준으로 그리기 위해 보관). */
+	FVector TrialAnchor = FVector::ZeroVector;
+	float   TrialYawDeg = 0.0f;
 
 	// 이동 입력 플래그 (BindKey 눌림 상태 유지용)
 	bool bMoveRight = false;

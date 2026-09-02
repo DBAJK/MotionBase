@@ -534,6 +534,25 @@ void ACoverPawn::Tick(float DeltaSeconds)
 		}
 
 		UpdateVRMenu(DeltaSeconds);
+
+		// 두 번째 출구 — 보기 아래 'EXIT' 카드를 겨눠 유지하면 나간다 (제스처와 병행).
+		//
+		// 왜 필요한가: '컨트롤러 위로 들기'는 화면에 보이지 않는 조작이라, 모르면 문제를
+		// 다 풀 때까지 갇힌다. 다른 종목처럼 눈에 보이는 카드를 하나 둔다.
+		// ⚠️ 해설 표시 중(bAnswered)·대기 중·세션 종료 후에도 **항상** 받는다 — 보기 겨눔은
+		//    그 구간에 막히지만(오답 정정 방지), 나가는 길까지 같이 막히면 안 된다.
+		if (PointerController && VrPanel)
+		{
+			if (VrPanel->UpdateBackDwell(
+				PointerController->GetComponentLocation(),
+				PointerController->GetForwardVector(),
+				PointerController->IsTracked(),
+				DwellTimeSec, DwellAngleDeg, DeltaSeconds))
+			{
+				ReturnToModeSelect();
+				return; // 폰이 곧 교체된다 — 이 프레임 종료.
+			}
+		}
 	}
 
 	// 다음 문제 대기.
@@ -653,6 +672,11 @@ void ACoverPawn::RefreshVRTexts()
 {
 	if (!bVR || !VrPanel) { return; }
 
+	// 'EXIT' 카드는 **항상 같은 자리**(보기 4개 바로 아래)에 둔다. 상태에 따라 위아래로
+	// 움직이면 겨누던 카드가 발밑에서 도망가 나가기가 더 어려워진다.
+	VrPanel->SetBackBelowRows(BackCardRowSlot, TEXT("EXIT - aim here & hold"),
+		FColor(255, 190, 90), /*bShow=*/true);
+
 	// 제목 = 상황·역할 (또는 종료 집계). 3D 텍스트는 영어로 표기.
 	const FString Head = bSessionOver
 		? FString::Printf(TEXT("Session over   %d / %d correct"), SuccessCount, TotalTrials)
@@ -671,9 +695,11 @@ void ACoverPawn::RefreshVRTexts()
 				AvgD, TargetDecisionSec), FColor(150, 200, 255));
 		}
 		// 코칭 문장 — TextRender 는 자동 줄바꿈이 없어 글자수로 자른다.
+		// ⚠️ 행 수를 BackCardRowSlot 까지로 제한한다. 더 내려오면 'EXIT' 카드 자리를 덮어
+		//    세션이 끝난 뒤에 나갈 카드가 글자에 묻힌다 (전체 리포트는 AI 코칭 화면 담당).
 		{
 			int32 i = 0;
-			while (i < CoachingText.Len() && Row < UVRInfoPanel::MaxRows - 1)
+			while (i < CoachingText.Len() && Row < BackCardRowSlot - 1)
 			{
 				VrPanel->SetRow(Row++, CoachingText.Mid(i, 34), FColor(228, 233, 244));
 				i += 34;
@@ -681,14 +707,14 @@ void ACoverPawn::RefreshVRTexts()
 		}
 		for (const FTrainingDrill& D : LastDrills)
 		{
-			if (Row >= UVRInfoPanel::MaxRows) { break; }
+			if (Row >= BackCardRowSlot) { break; }
 			VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
 		}
 		VrPanel->HideRowsFrom(Row);
 
 		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended judgment training"),
 			FColor(150, 156, 168));
-		VrPanel->SetHint(TEXT("Raise the controller up to exit to menu"), FColor(110, 116, 128));
+		VrPanel->SetHint(TEXT("Aim EXIT and hold  -  or raise the controller up"), FColor(110, 116, 128));
 		return;
 	}
 
@@ -750,7 +776,7 @@ void ACoverPawn::RefreshVRTexts()
 	}
 	else
 	{
-		VrPanel->SetHint(TEXT("Raise the controller up to exit to menu"), FColor(110, 116, 128));
+		VrPanel->SetHint(TEXT("Aim EXIT and hold  -  or raise the controller up"), FColor(110, 116, 128));
 	}
 }
 

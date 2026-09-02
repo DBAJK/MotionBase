@@ -206,11 +206,19 @@ void ACatchBallPawn::StartSession()
 	CoachingText.Reset();
 	bAwaitingCoaching = false;
 
-	SpawnNextPitch();
+	// 첫 구는 한 박자 뒤에 만든다 — VR 은 BeginPlay 시점에 HMD 포즈가 아직 안 들어와
+	// '정면'을 알 수 없다 (FirstPitchDelaySec 주석 참고). PC 에도 준비 시간이 되어 손해가 없다.
+	bWaitingNext  = true;
+	IntervalTimer = FMath::Max(FirstPitchDelaySec, 0.2f);
+	StatusLine    = FString::Printf(TEXT("1 / %d   Get ready!"), TotalPitches);
 }
 
 void ACatchBallPawn::SpawnNextPitch()
 {
+	// 이번 구의 기준(내 자리·내 정면)을 먼저 확정한다 — BuildTrial 과 마커 그리기가 같은 값을 본다.
+	TrialAnchor = PitchAnchorLocation();
+	TrialYawDeg = PitchFacingYawDeg();
+
 	CurrentTrial = BuildTrial(SessionType);
 
 	UWorld* World = GetWorld();
@@ -232,13 +240,21 @@ void ACatchBallPawn::SpawnNextPitch()
 	if (ActiveBall)
 	{
 		// 착지면을 이 폰의 바닥에 맞춘다 (기본값 0 이면 폰이 Z=0 이 아닐 때 공중에서 멈추거나
-		// 바닥을 뚫는다). 궤적 선은 헤드셋에서 공이 보이도록 VR 에서만 켠다.
+		// 바닥을 뚫는다). 궤적 선은 VR/PC 모두 켠다 — 지름 7cm 공은 20m 밖에서 점 하나라
+		// 선이 없으면 어느 쪽에서 오는지 모른다 (헤드셋만의 문제가 아니었다).
 		ActiveBall->SetGroundZ(FloorZ());
-		ActiveBall->SetTrailVisible(bVR);
+		ActiveBall->SetTrailVisible(true);
 		ActiveBall->Launch(CurrentTrial.LaunchVelocity);
 		bPitchActive = true;
 
 		StatusLine = FString::Printf(TEXT("%d / %d   Get ready!"), PitchIndex + 1, TotalPitches);
+
+		UE_LOG(LogMotionBase, Log,
+			TEXT("[CatchBall] #%d %s  발사 %s → 도착 %s (%.2fs, 반경 %.0fcm, 정면 %.0f°)"),
+			PitchIndex + 1, *CatchTypeName(CurrentTrial.ResolvedType),
+			*CurrentTrial.LaunchLocation.ToCompactString(),
+			*CurrentTrial.PredictedLanding.ToCompactString(),
+			CurrentTrial.TimeToLanding, CurrentTrial.CatchRadius, TrialYawDeg);
 	}
 }
 
@@ -525,6 +541,26 @@ float ACatchBallPawn::CatchHeightZ() const
 	return bVR ? (FloorZ() + VRCatchHeightCm) : HomeLocation.Z;
 }
 
+float ACatchBallPawn::PitchFacingYawDeg() const
+{
+	// VR: 플레이어가 실제로 보고 있는 방향(HMD yaw). 룸 안에서 어느 쪽을 보고 서든
+	//     공은 항상 눈앞에서 온다. PC: 기존대로 폰 정면(BeginPlay 에서 +X 로 고정).
+	if (bVR && Camera)
+	{
+		return Camera->GetComponentRotation().Yaw;
+	}
+	return GetActorRotation().Yaw;
+}
+
+FVector ACatchBallPawn::PitchAnchorLocation() const
+{
+	// VR: 머리(카메라)의 XY = 플레이어가 실제로 서 있는 자리. 폰 루트는 트래킹 원점일 뿐이라
+	//     루트를 기준으로 삼으면 플레이 공간 한쪽에 선 사람에게는 공이 늘 옆으로 지나간다.
+	// PC: 루트가 곧 몸 — 기존 동작 유지.
+	const FVector Src = (bVR && Camera) ? Camera->GetComponentLocation() : GetActorLocation();
+	return FVector(Src.X, Src.Y, FloorZ());
+}
+
 FCatchTrial ACatchBallPawn::BuildTrial(ECatchBallType Type) const
 {
 	FCatchTrial Trial;
@@ -532,13 +568,21 @@ FCatchTrial ACatchBallPawn::BuildTrial(ECatchBallType Type) const
 
 	const float G = FMath::Abs(GetWorld()->GetGravityZ()); // 보통 980
 
-	// 발사 지점: 홈 기준 정면(+X) 먼 곳, 위쪽. (항상 플레이어 시야 정면에서 출발)
-	// 높이는 **바닥 기준** — VR/PC 의 루트 의미가 달라 루트에 그냥 더하면 VR 에서 땅에 박힌다.
-	Trial.LaunchLocation = FVector(HomeLocation.X + PitchDistance, HomeLocation.Y, FloorZ() + PitchHeight);
+	// '내 정면' 기준 축 — 월드 +X 고정이 아니다 (VR 플레이어는 아무 방향이나 보고 선다).
+	const FRotator Facing(0.0f, TrialYawDeg, 0.0f);
+	const FVector Forward = Facing.RotateVector(FVector::ForwardVector);
+	const FVector Right   = Facing.RotateVector(FVector::RightVector);
 
-	// 도착 지점: 홈 근처에서 좌우(Y)로만 랜덤. 높이는 글러브가 닿는 가슴 높이.
-	const float TargetY = HomeLocation.Y + FMath::RandRange(-SideSpread, SideSpread);
-	const FVector Arrival(HomeLocation.X, TargetY, CatchHeightZ());
+	// 발사 지점: 내 자리에서 정면으로 먼 곳, 위쪽.
+	// 높이는 **바닥 기준** — VR/PC 의 루트 의미가 달라 루트에 그냥 더하면 VR 에서 땅에 박힌다.
+	// (TrialAnchor.Z 는 이미 바닥면이다 — PitchAnchorLocation 이 FloorZ() 로 맞춰 준다.)
+	Trial.LaunchLocation = TrialAnchor + Forward * PitchDistance + FVector(0, 0, PitchHeight);
+
+	// 도착 지점: 내 자리에서 좌우로만 랜덤. 높이는 글러브가 닿는 가슴 높이.
+	// VR 은 이동 수단이 트랙패드뿐이라 퍼짐을 좁게 잡는다 (닿을 수 있는 공만 낸다).
+	const float Spread = bVR ? VRSideSpread : SideSpread;
+	const FVector ArrivalXY = TrialAnchor + Right * FMath::RandRange(-Spread, Spread);
+	const FVector Arrival(ArrivalXY.X, ArrivalXY.Y, CatchHeightZ());
 
 	// 유형별 체공시간·캐치 반경. (시작값 — 플레이하며 조절)
 	float Flight = 1.6f;
@@ -637,6 +681,9 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 		RefreshVrPanel();
 	}
 
+	// 지나간 공 정리 (VR/PC 공통) — 이게 없으면 한 번 놓친 순간 세션이 멈춘다.
+	TickPitchTimeout();
+
 	// 다음 공 대기.
 	if (bWaitingNext && !bSessionOver)
 	{
@@ -668,13 +715,57 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 		if (bVR)
 		{
 			const FVector AirTarget(CurrentTrial.PredictedLanding.X, CurrentTrial.PredictedLanding.Y, CatchHeightZ());
+			// 잡는 면은 **공이 오는 방향을 마주보게** 세운다 (내 정면 기준 좌우축 × 수직축).
+			// 월드 축으로 고정하면 정면이 +X 가 아닐 때 원이 옆에서 본 선처럼 납작해진다.
+			const FVector RightAxis = FRotator(0.0f, TrialYawDeg, 0.0f).RotateVector(FVector::RightVector);
 			DrawDebugCircle(GetWorld(), AirTarget, CurrentTrial.CatchRadius, 24,
 				FColor(120, 235, 140), false, -1.0f, 0, 2.0f,
-				FVector(1, 0, 0), FVector(0, 0, 1), false); // 세로 원 = 잡는 면
+				RightAxis, FVector::UpVector, false); // 세로 원 = 잡는 면
 			DrawDebugLine(GetWorld(), CurrentTrial.PredictedLanding, AirTarget,
 				FColor(120, 235, 140), false, -1.0f, 0, 1.5f);
 		}
 	}
+}
+
+void ACatchBallPawn::TickPitchTimeout()
+{
+	if (!bPitchActive)
+	{
+		return;
+	}
+
+	// 공이 이미 사라졌다(착지 후 자동 소멸) = 아무 시도 없이 지나갔다.
+	if (!IsValid(ActiveBall))
+	{
+		FinishPitch(FCatchBallJudge::JudgeDropped());
+		return;
+	}
+
+	// 아직 타이밍 창 안이면 기다린다.
+	if (ActiveBall->GetElapsedTime() <= CurrentTrial.TimeToLanding + TimingTolerance)
+	{
+		return;
+	}
+
+	// 창이 닫혔다. VR 은 글러브가 근처까지는 왔는지로 '헛손질'과 '놓침'을 가른다 —
+	// 손을 뻗었지만 빗나간 것과 가만히 서 있던 것은 다른 약점이다 (전자는 정확도, 후자는 반응).
+	if (bVR && GloveController)
+	{
+		const float Dist = FVector::Dist(ActiveBall->GetActorLocation(), GloveController->GetComponentLocation());
+		if (Dist <= CurrentTrial.CatchRadius * VRWhiffRadiusScale)
+		{
+			FinishPitch(FCatchBallJudge::JudgePress(
+				ActiveBall->GetActorLocation(),
+				GloveController->GetComponentLocation(),
+				CurrentTrial.CatchRadius,
+				ActiveBall->GetElapsedTime(),
+				CurrentTrial.TimeToLanding,
+				TimingTolerance));
+			return;
+		}
+	}
+
+	FinishPitch(FCatchBallJudge::JudgeDropped());
 }
 
 void ACatchBallPawn::TickVRCatch()
@@ -700,8 +791,9 @@ void ACatchBallPawn::TickVRCatch()
 		CurrentTrial.TimeToLanding,
 		TimingTolerance);
 
-	// 글러브가 닿아 성공이거나, 타이밍 창을 지났으면 이번 구 종료.
-	if (Result.IsSuccess() || Elapsed > CurrentTrial.TimeToLanding + TimingTolerance)
+	// 여기서는 **성공만** 처리한다. 창을 지나친 공은 TickPitchTimeout 이 헛손질/놓침으로
+	// 가른다 (VR/PC 가 같은 규칙을 쓰도록 한 곳에 모았다).
+	if (Result.IsSuccess())
 	{
 		FinishPitch(Result);
 	}

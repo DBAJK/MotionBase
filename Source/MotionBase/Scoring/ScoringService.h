@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Data/SwingMetrics.h"
 #include "Data/ScoreResult.h"
+#include "Data/MotionBaseTypes.h"
 #include "ScoringService.generated.h"
 
 /**
@@ -62,6 +63,36 @@ struct FScoringConfig
 	/** 일관성 0점이 되는 표준편차 상한. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Calibration")
 	float ConsistencySigmaMax = 0.35f;
+
+	// ── 타구 판정 임계 (난이도가 조절하는 값) ────────────────────────────────
+	//
+	// ⚠️ **채점(정확도·효율·일관성)에는 영향을 주지 않는다.** 난이도를 낮췄다고 점수가
+	//    올라가면 기록·만성 약점 추세가 난이도끼리 섞여 의미를 잃는다. 난이도는
+	//    "이 타구를 안타로 불러 줄 것인가"(연출·판정)만 관대하게 만든다.
+	//
+	// ⚠️ 값 자체는 실측 캘리브레이션 대상 (CLAUDE §규칙) — 하드코딩 확정 아님.
+
+	/** 이 비거리(m) 이상이면 안타. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitJudge")
+	float HitDistanceM = 30.0f;
+
+	/** 이 비거리(m) 이상 + 발사각 조건을 만족하면 홈런. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitJudge")
+	float HomeRunDistanceM = 100.0f;
+
+	/** |좌우각| 이 값(도)을 넘으면 파울. 크면 페어 존이 넓어진다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitJudge")
+	float FoulLineDeg = 45.0f;
+
+	/**
+	 * 난이도별 타구 판정 관대도를 적용한다 (위 세 값만 바꾼다).
+	 *
+	 * 왜 필요한가: 간이 타구 모델은 투구 속도를 반영하지 않아 타구속도가 실제보다 낮게
+	 * 나온다. 그 상태로 "비거리 30m 이상 = 안타"를 요구하면 **아마추어가 잘 맞혀도 대부분
+	 * 아웃**으로 찍혀 훈련 피드백이 죽는다. 모델을 부풀리는 대신(=점수 오염) 판정선을
+	 * 난이도에 맞춰 내린다.
+	 */
+	void ApplyDifficulty(EDifficultyLevel Level);
 
 	/**
 	 * 실측 캘리브레이션 완료 여부.
