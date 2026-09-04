@@ -180,18 +180,27 @@ void AThrowHUD::DrawHUD()
 		DrawCentered(TEXT("AI exercise tips"), W * 0.5f, PY, FLinearColor(0.6f, 0.82f, 1.0f, 1.0f), 1.1f * S);
 		PY += 34.0f * S;
 
+		// 처방 목록 자리를 먼저 떼어두고 문장은 남는 만큼만 — 잘려야 할 쪽은 문장이다.
+		const int32 DrillCount = Pawn->GetRecommendedDrills().Num();
+		const float CoachMaxY = H - (DrillCount * 24.0f * S) - 30.0f * S;
+
 		constexpr int32 MaxChars = 60;
 		int32 i = 0;
-		while (i < Coaching.Len())
+		while (i < Coaching.Len() && PY <= CoachMaxY)
 		{
 			DrawCentered(Coaching.Mid(i, MaxChars), W * 0.5f, PY, TwTextMain, 0.85f * S);
 			PY += 26.0f * S;
 			i += MaxChars;
 		}
 
+		// 수행량을 이름 옆에 함께 띄운다 — AI 문장이 "3 sets of 20" 이라 말하는데 화면 목록엔
+		// 없으면 둘이 따로 노는 것처럼 보인다. 같은 처방을 두 곳에서 같은 값으로 보여준다.
 		for (const FTrainingDrill& D : Pawn->GetRecommendedDrills())
 		{
-			DrawCentered(FString::Printf(TEXT("- %s : %s"), *D.Name, *D.FocusCue),
+			const FString Head = D.Prescription.IsEmpty()
+				? FString::Printf(TEXT("- %s"), *D.Name)
+				: FString::Printf(TEXT("- %s (%s)"), *D.Name, *D.Prescription);
+			DrawCentered(FString::Printf(TEXT("%s : %s"), *Head, *D.FocusCue),
 				W * 0.5f, PY, FLinearColor(1.0f, 0.78f, 0.47f, 1.0f), 0.8f * S);
 			PY += 24.0f * S;
 		}

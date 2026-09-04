@@ -12,6 +12,7 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "UI/VRInfoPanel.h"
+#include "Core/Defense/Backup/BackupPlaybook.h"
 
 namespace
 {
@@ -146,6 +147,63 @@ FText AModeSelectPawn::DefenseDrillDescAt(int32 Index) const
 	return Descs.IsValidIndex(Index) ? Descs[Index] : FText::GetEmpty();
 }
 
+FText AModeSelectPawn::PositionGroupNameAt(int32 Index) const
+{
+	return (Index == 0) ? FText::FromString(TEXT("내야 (1루·2루·유격·3루)"))
+	                     : FText::FromString(TEXT("외야 (좌익·중견·우익)"));
+}
+
+FText AModeSelectPawn::PositionGroupDescAt(int32 Index) const
+{
+	return (Index == 0)
+		? FText::FromString(TEXT("내야 포지션에서 백업 위치 판단을 훈련합니다."))
+		: FText::FromString(TEXT("외야 포지션에서 백업 위치 판단을 훈련합니다 — 이동 거리가 더 깁니다."));
+}
+
+TArray<EFieldPosition> AModeSelectPawn::PositionsInGroup() const
+{
+	// 7개를 한 목록에 넣으면 UVRInfoPanel::MaxRows(6)를 넘는다 — 내야(4)/외야(3)로 쪼갠 이유.
+	static const TArray<EFieldPosition> Infield = { EFieldPosition::First, EFieldPosition::Second, EFieldPosition::Short, EFieldPosition::Third };
+	static const TArray<EFieldPosition> Outfield = { EFieldPosition::Left, EFieldPosition::Center, EFieldPosition::Right };
+	return (PendingPositionGroup == 0) ? Infield : Outfield;
+}
+
+FText AModeSelectPawn::FieldPositionNameAt(int32 Index) const
+{
+	const TArray<EFieldPosition> Positions = PositionsInGroup();
+	if (!Positions.IsValidIndex(Index)) { return FText::GetEmpty(); }
+
+	switch (Positions[Index])
+	{
+	case EFieldPosition::First:  return FText::FromString(TEXT("1루수"));
+	case EFieldPosition::Second: return FText::FromString(TEXT("2루수"));
+	case EFieldPosition::Short:  return FText::FromString(TEXT("유격수"));
+	case EFieldPosition::Third:  return FText::FromString(TEXT("3루수"));
+	case EFieldPosition::Left:   return FText::FromString(TEXT("좌익수"));
+	case EFieldPosition::Center: return FText::FromString(TEXT("중견수"));
+	case EFieldPosition::Right:  return FText::FromString(TEXT("우익수"));
+	default:                     return FText::GetEmpty();
+	}
+}
+
+FText AModeSelectPawn::FieldPositionDescAt(int32 Index) const
+{
+	const TArray<EFieldPosition> Positions = PositionsInGroup();
+	if (!Positions.IsValidIndex(Index)) { return FText::GetEmpty(); }
+
+	switch (Positions[Index])
+	{
+	case EFieldPosition::First:  return FText::FromString(TEXT("1루 커버·1루 뒤 백업·외야 중계를 판단합니다."));
+	case EFieldPosition::Second: return FText::FromString(TEXT("1루 백업·2루 커버(도루·병살)를 판단합니다."));
+	case EFieldPosition::Short:  return FText::FromString(TEXT("2루 커버·3루 커버·좌중견 중계를 판단합니다."));
+	case EFieldPosition::Third:  return FText::FromString(TEXT("3루 커버·번트 처리 상황을 판단합니다."));
+	case EFieldPosition::Left:   return FText::FromString(TEXT("3루 뒤 백업 상황을 판단합니다."));
+	case EFieldPosition::Center: return FText::FromString(TEXT("2루 뒤 백업 + 좌우익수 뒤 광범위 백업을 판단합니다 (외야 사령탑)."));
+	case EFieldPosition::Right:  return FText::FromString(TEXT("1루 뒤 백업 상황을 판단합니다."));
+	default:                     return FText::GetEmpty();
+	}
+}
+
 EDifficultyLevel AModeSelectPawn::DifficultyAt(int32 Index) const
 {
 	return MenuDifficulties.IsValidIndex(Index) ? MenuDifficulties[Index] : EDifficultyLevel::Amateur;
@@ -162,11 +220,13 @@ int32 AModeSelectPawn::GetRowCount() const
 {
 	switch (Stage)
 	{
-	case EStage::Mode:         return MenuModes.Num();
-	case EStage::Difficulty:   return MenuDifficulties.Num();
-	case EStage::Stance:       return MenuStances.Num();
-	case EStage::DefenseDrill: return DefenseDrills.Num();
-	default:                   return 0;
+	case EStage::Mode:                 return MenuModes.Num();
+	case EStage::Difficulty:           return MenuDifficulties.Num();
+	case EStage::Stance:                return MenuStances.Num();
+	case EStage::DefenseDrill:          return DefenseDrills.Num();
+	case EStage::DefensePositionGroup:  return 2; // 내야/외야
+	case EStage::DefensePosition:       return PositionsInGroup().Num();
+	default:                            return 0;
 	}
 }
 
@@ -174,11 +234,13 @@ FText AModeSelectPawn::GetRowLabel(int32 Index) const
 {
 	switch (Stage)
 	{
-	case EStage::Mode:         return UModeManager::GetModeDisplayName(ModeAt(Index));
-	case EStage::Difficulty:   return UModeManager::GetDifficultyDisplayName(DifficultyAt(Index));
-	case EStage::Stance:       return UModeManager::GetStanceDisplayName(StanceAt(Index));
-	case EStage::DefenseDrill: return DefenseDrillNameAt(Index);
-	default:                   return FText::GetEmpty();
+	case EStage::Mode:                 return UModeManager::GetModeDisplayName(ModeAt(Index));
+	case EStage::Difficulty:           return UModeManager::GetDifficultyDisplayName(DifficultyAt(Index));
+	case EStage::Stance:                return UModeManager::GetStanceDisplayName(StanceAt(Index));
+	case EStage::DefenseDrill:          return DefenseDrillNameAt(Index);
+	case EStage::DefensePositionGroup:  return PositionGroupNameAt(Index);
+	case EStage::DefensePosition:       return FieldPositionNameAt(Index);
+	default:                            return FText::GetEmpty();
 	}
 }
 
@@ -214,6 +276,11 @@ FText AModeSelectPawn::GetHeaderSubtitle() const
 			*UModeManager::GetDifficultyDisplayName(PendingDifficulty).ToString()));
 	case EStage::DefenseDrill:
 		return FText::FromString(TEXT("수비 훈련 — 세부 종목을 선택하세요"));
+	case EStage::DefensePositionGroup:
+		return FText::FromString(TEXT("백업 위치 판단 — 내야/외야를 선택하세요"));
+	case EStage::DefensePosition:
+		return FText::FromString(FString::Printf(TEXT("백업 위치 판단 — %s"),
+			*PositionGroupNameAt(PendingPositionGroup).ToString()));
 	default:
 		return FText::GetEmpty();
 	}
@@ -223,11 +290,13 @@ FText AModeSelectPawn::GetSelectedDescription() const
 {
 	switch (Stage)
 	{
-	case EStage::Mode:         return UModeManager::GetModeDescription(ModeAt(SelectedIndex));
-	case EStage::Difficulty:   return UModeManager::GetDifficultyDescription(DifficultyAt(SelectedIndex));
-	case EStage::Stance:       return UModeManager::GetStanceDescription(StanceAt(SelectedIndex));
-	case EStage::DefenseDrill: return DefenseDrillDescAt(SelectedIndex);
-	default:                   return FText::GetEmpty();
+	case EStage::Mode:                 return UModeManager::GetModeDescription(ModeAt(SelectedIndex));
+	case EStage::Difficulty:           return UModeManager::GetDifficultyDescription(DifficultyAt(SelectedIndex));
+	case EStage::Stance:                return UModeManager::GetStanceDescription(StanceAt(SelectedIndex));
+	case EStage::DefenseDrill:          return DefenseDrillDescAt(SelectedIndex);
+	case EStage::DefensePositionGroup:  return PositionGroupDescAt(SelectedIndex);
+	case EStage::DefensePosition:       return FieldPositionDescAt(SelectedIndex);
+	default:                            return FText::GetEmpty();
 	}
 }
 
@@ -250,6 +319,11 @@ FText AModeSelectPawn::GetFooterStatus() const
 		return FText::FromString(TEXT("타석 2종 (우타 / 좌타)"));
 	case EStage::DefenseDrill:
 		return FText::FromString(FString::Printf(TEXT("수비 세부 종목 %d종"), DefenseDrills.Num()));
+	case EStage::DefensePositionGroup:
+		return FText::FromString(TEXT("내야 4 / 외야 3 포지션"));
+	case EStage::DefensePosition:
+		return FText::FromString(FString::Printf(TEXT("%s 포지션 %d개"),
+			*PositionGroupNameAt(PendingPositionGroup).ToString(), PositionsInGroup().Num()));
 	default:
 		return FText::GetEmpty();
 	}
@@ -353,8 +427,18 @@ void AModeSelectPawn::Confirm()
 
 	if (Stage == EStage::DefenseDrill)
 	{
-		// 수비 세부 종목 확정 → 해당 훈련 폰으로 진입.
-		// SelectedIndex: 0=포구, 1=송구, 2=풋워크/반응속도, 3=백업
+		// 백업 위치 판단(index 2)은 포지션을 먼저 골라야 한다 — 바로 시작하지 않고
+		// DefensePositionGroup 단계로 진입한다 (7 포지션이 UVRInfoPanel::MaxRows 를 넘어
+		// 내야/외야 2단계로 쪼갰다 — 설계 노트).
+		if (SelectedIndex == 2)
+		{
+			Stage = EStage::DefensePositionGroup;
+			SelectedIndex = 0;
+			NoticeText.Reset();
+			return;
+		}
+
+		// 나머지 종목(포구/송구)은 곧바로 진입.
 		AMotionBaseGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMotionBaseGameMode>() : nullptr;
 		if (GM && !GM->StartDefenseDrill(SelectedIndex))
 		{
@@ -363,6 +447,31 @@ void AModeSelectPawn::Confirm()
 				*DefenseDrillNameAt(SelectedIndex).ToString());
 			NoticeTimer = NoticeDurationSec;
 		}
+		return;
+	}
+
+	if (Stage == EStage::DefensePositionGroup)
+	{
+		PendingPositionGroup = SelectedIndex;
+		Stage = EStage::DefensePosition;
+		SelectedIndex = 0;
+		NoticeText.Reset();
+		return;
+	}
+
+	if (Stage == EStage::DefensePosition)
+	{
+		// 포지션 확정 → 백업 위치 판단 훈련 폰으로 진입 (DrillIndex 2 = 백업).
+		const TArray<EFieldPosition> Positions = PositionsInGroup();
+		PendingFieldPosition = Positions.IsValidIndex(SelectedIndex) ? Positions[SelectedIndex] : EFieldPosition::First;
+
+		AMotionBaseGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMotionBaseGameMode>() : nullptr;
+		if (!GM)
+		{
+			UE_LOG(LogMotionBase, Warning, TEXT("ModeSelect: AMotionBaseGameMode 를 찾지 못해 시작할 수 없습니다."));
+			return;
+		}
+		GM->StartDefenseDrill(2, PendingFieldPosition);
 		return;
 	}
 
@@ -418,6 +527,26 @@ void AModeSelectPawn::Back()
 		Stage = EStage::Mode;
 		const int32 Idx = MenuModes.IndexOfByKey(PendingMode);
 		SelectedIndex = (Idx != INDEX_NONE) ? Idx : FindFirstImplementedIndex();
+		NoticeText.Reset();
+		NoticeTimer = 0.0f;
+		return;
+	}
+
+	if (Stage == EStage::DefensePosition)
+	{
+		// 포지션 → 그룹. 방금 고른 그룹 위로 커서를 돌려놓는다.
+		Stage = EStage::DefensePositionGroup;
+		SelectedIndex = PendingPositionGroup;
+		NoticeText.Reset();
+		NoticeTimer = 0.0f;
+		return;
+	}
+
+	if (Stage == EStage::DefensePositionGroup)
+	{
+		// 그룹 → 수비 종목(백업이 선택돼 있던 자리로).
+		Stage = EStage::DefenseDrill;
+		SelectedIndex = 2;
 		NoticeText.Reset();
 		NoticeTimer = 0.0f;
 		return;
@@ -624,6 +753,11 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 			+ TEXT("   >   Batter box"); break;
 	case EStage::DefenseDrill:
 		Header = TEXT("Defense   >   Drill"); break;
+	case EStage::DefensePositionGroup:
+		Header = TEXT("Defense   >   Backup   >   Infield/Outfield"); break;
+	case EStage::DefensePosition:
+		Header = FString::Printf(TEXT("Defense   >   Backup   >   %s   >   Position"),
+			(PendingPositionGroup == 0) ? TEXT("Infield") : TEXT("Outfield")); break;
 	default: break;
 	}
 	VrPanel->SetTitle(Header, FColor(228, 233, 244));
@@ -644,6 +778,15 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 		case EStage::Difficulty:   Label = MsEnDifficulty(DifficultyAt(i)); break;
 		case EStage::Stance:       Label = MsEnStance(StanceAt(i)); break;
 		case EStage::DefenseDrill: Label = MsEnDrill(i); break;
+		case EStage::DefensePositionGroup:
+			Label = (i == 0) ? TEXT("Infield (1B/2B/SS/3B)") : TEXT("Outfield (LF/CF/RF)");
+			break;
+		case EStage::DefensePosition:
+		{
+			const TArray<EFieldPosition> Positions = PositionsInGroup();
+			Label = Positions.IsValidIndex(i) ? UBackupPlaybook::PositionName(Positions[i]) : TEXT("?");
+			break;
+		}
 		default: break;
 		}
 		if (!bAvail)  { Label += TEXT("  (coming soon)"); }
@@ -701,9 +844,17 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 			{
 			case 0: Desc = TEXT("Catch grounders, flies and liners - success rate per ball type"); break;
 			case 1: Desc = TEXT("Catch, then throw to the called base - accuracy, velocity, transfer"); break;
-			case 2: Desc = TEXT("Read the ball and the runners, pick your backup spot"); break;
+			case 2: Desc = TEXT("Pick your position, then read the ball and move to your real backup spot"); break;
 			default: break;
 			}
+			break;
+		case EStage::DefensePositionGroup:
+			Desc = (SelectedIndex == 0)
+				? TEXT("Infield jobs: shorter runs, base coverage and relay cutoffs")
+				: TEXT("Outfield jobs: longer runs, backing up bases and the other outfielders");
+			break;
+		case EStage::DefensePosition:
+			Desc = TEXT("A situation is called, then hold the move button and go to your real backup spot");
 			break;
 		default: break;
 		}

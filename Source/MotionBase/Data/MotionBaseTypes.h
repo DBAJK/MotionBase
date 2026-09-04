@@ -76,3 +76,24 @@ enum class EBaseType : uint8
 	Third   UMETA(DisplayName = "3루"),
 	Home    UMETA(DisplayName = "홈")
 };
+
+/**
+ * 수비 포지션. 백업 위치 판단 훈련이 플레이어에게 고르게 하는 7개 야수 자리
+ * (투수·포수 제외 — 둘은 타구 처리 주체라 "백업하러 이동"하는 자리가 아니다).
+ *
+ * ModeSelectPawn(메뉴)·ModeManager(세션 상태)·Core/Defense/Backup(판정) 이 모두 이 값을
+ * 공유해야 해서 EBaseType 과 같은 자리(공용 어휘 계층)에 둔다.
+ * ⚠️ 저장 세이브에 값이 안 남으므로(세션 상태로만 쓰임) 순서 변경은 안전하지만,
+ *    그래도 관례상 끝에만 추가할 것.
+ */
+UENUM(BlueprintType)
+enum class EFieldPosition : uint8
+{
+	First   UMETA(DisplayName = "1루수"),
+	Second  UMETA(DisplayName = "2루수"),
+	Short   UMETA(DisplayName = "유격수"),
+	Third   UMETA(DisplayName = "3루수"),
+	Left    UMETA(DisplayName = "좌익수"),
+	Center  UMETA(DisplayName = "중견수"),
+	Right   UMETA(DisplayName = "우익수")
+};

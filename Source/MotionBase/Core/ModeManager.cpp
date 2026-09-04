@@ -47,6 +47,7 @@ void UModeManager::SetActiveMode(EGameModeId NewMode, EDifficultyLevel NewDiffic
 	SessionResults.Reset();
 	SessionStartedAt = FDateTime::Now();
 	ActiveDrill = NAME_None; // 세부 종목은 진입 직후 SetActiveDrill 로 다시 지정된다.
+	ActiveFieldPosition = EFieldPosition::First; // 포지션도 마찬가지 — SetActiveFieldPosition 이 다시 지정.
 
 	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 모드 진입 → %s / 난이도 %s / 타석 %s (세션 초기화)"),
 		*GetModeDisplayName(NewMode).ToString(), *GetDifficultyDisplayName(NewDifficulty).ToString(),
@@ -69,14 +70,23 @@ void UModeManager::SetActiveDrill(FName DrillId)
 	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 세부 종목 → %s"), *DrillId.ToString());
 }
 
+void UModeManager::SetActiveFieldPosition(EFieldPosition InPosition)
+{
+	ActiveFieldPosition = InPosition;
+	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 수비 포지션 → %d"), static_cast<int32>(InPosition));
+}
+
 FName UModeManager::GetDefenseDrillIdName(int32 DrillIndex)
 {
 	// ⚠️ 저장에 남는 값이라 바꾸면 과거 기록과 매칭이 끊긴다 (표시 이름과 분리한 이유).
+	// index 2 는 "Backup" 이 아니라 "BackupMove" 다 — 4지선다 퀴즈 시절의 "Backup" 기록과
+	// 실제 이동 훈련의 기록이 섞이면 판단 시간 만성 추세가 가짜로 뒤집힌다
+	// (퀴즈=텍스트 읽는 3초, 이동=개시 0.4~0.9초 — 완전히 다른 기준선).
 	switch (DrillIndex)
 	{
 	case 0:  return TEXT("Catch");
 	case 1:  return TEXT("Throw");
-	case 2:  return TEXT("Backup");
+	case 2:  return TEXT("BackupMove");
 	default: return NAME_None;
 	}
 }

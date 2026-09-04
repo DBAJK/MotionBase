@@ -689,12 +689,22 @@ void AModeSelectHUD::DrawSessionResult(const FSessionSummary& Sum)
 	for (int32 i = 0; i < Sum.Drills.Num(); ++i)
 	{
 		const FTrainingDrill& D = Sum.Drills[i];
-		const FString Head = FString::Printf(TEXT("· %s"), *D.Name);
+		// 이름 옆에 수행량(3 sets x 15 reps)을 붙인다 — 여기가 결과 화면의 정본이고,
+		// AI 코칭 문장이 인용하는 값과 반드시 같아야 한다 (둘 다 카탈로그에서 온다).
+		const FString Head = D.Prescription.IsEmpty()
+			? FString::Printf(TEXT("· %s"), *D.Name)
+			: FString::Printf(TEXT("· %s (%s)"), *D.Name, *D.Prescription);
 		DrawText(Head, TextPrimary, x + 12.0f * S, y, FontBody, 0.92f * S);
 		float HW = 0.0f, HH = 0.0f;
 		GetTextSize(Head, HW, HH, FontBody, 0.92f * S);
 		const float DX = x + 12.0f * S + HW + 14.0f * S;
-		const float DH = DrawWrapped(D.Description, TextSecondary, DX, y, InnerW - (DX - x), 0.85f * S, FontBody, 22.0f * S);
+		// 수행 방법 + "무엇이 좋아지는지"를 이어 붙여 한 문단으로 감싼다.
+		FString Body = D.Description;
+		if (!D.Benefit.IsEmpty())
+		{
+			Body += FString::Printf(TEXT(" - %s"), *D.Benefit);
+		}
+		const float DH = DrawWrapped(Body, TextSecondary, DX, y, InnerW - (DX - x), 0.85f * S, FontBody, 22.0f * S);
 		y += FMath::Max(DH, 24.0f * S) + 4.0f * S;
 	}
 	y += 8.0f * S;

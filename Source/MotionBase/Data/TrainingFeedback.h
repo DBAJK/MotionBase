@@ -42,9 +42,14 @@ enum class EWeaknessAxis : uint8
 	ArmStrength     UMETA(DisplayName = "송구 구속"),     // 릴리스 구속 부족 → 주자를 못 잡음
 	TransferQuick   UMETA(DisplayName = "포구→송구 전환"), // 글러브에서 손으로 옮기는 시간이 김
 
-	// ── 수비(백업 위치 판단) 기반 ──
+	// ── 수비(백업 위치 판단) 기반 ── ⚠️ 값을 새로 끼워넣지 말 것 (저장된 세이브의 축이 밀린다). 항상 끝에 추가.
 	BackupJudgment  UMETA(DisplayName = "백업 판단"),     // 정답 백업 zone 을 못 고름
-	DecisionSpeed   UMETA(DisplayName = "판단 속도")      // 답은 맞지만 결정이 느림 (실전이면 늦음)
+	DecisionSpeed   UMETA(DisplayName = "판단 속도"),     // 답은 맞지만 결정(이동 개시)이 느림
+	RouteEfficiency UMETA(DisplayName = "이동 경로 효율") // 정답은 맞지만 헤매며 이동함 (직선거리/실제이동거리)
+	// ⚠️ FootSpeed 를 재사용하지 말 것 — 이 축은 다리가 아니라 컨트롤러로 움직인 경로의
+	//    효율이다. FootSpeed 로 잡으면 DrillCatalog 가 "사다리 스텝" 같은 체력 드릴을
+	//    내주는데, 백업 판단은 판단 훈련이라 컨디셔닝 처방과 정면 충돌한다
+	//    (AIFeedbackService 의 Backup 시스템 프롬프트가 이걸 명시적으로 금지한다).
 };
 
 /** 한 축의 약점. */
@@ -129,6 +134,24 @@ struct FTrainingDrill
 	/** 핵심 포커스 큐 (짧게). */
 	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
 	FString FocusCue;
+
+	/**
+	 * 이 운동이 무엇을 향상시키는지 — "데드리프트는 고관절과 코어를 키운다" 의 자리.
+	 * 코칭 문장이 운동 이름만 나열하지 않고 **왜 하는지**를 말할 수 있게 하는 근거다.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	FString Benefit;
+
+	/**
+	 * 수행량 처방 ("3 sets x 15 reps", "3 sets x 30 seconds", "4 sets x 10m").
+	 *
+	 * ⚠️ **LLM 이 지어내면 안 되는 값이다.** 물리 훈련 처방이라 부상 위험이 있어
+	 *    카탈로그(사람이 검수)가 확정해 프롬프트로 내려보내고, LLM 은 그대로 인용만 한다.
+	 * 정수 필드(Sets/Reps)로 쪼개지 않은 이유: 횟수·시간·거리로 단위가 제각각이라
+	 * (30초 3세트 / 10m 4세트) 정수 두 개로는 절반이 표현되지 않는다.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	FString Prescription;
 };
 
 /**
