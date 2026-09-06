@@ -30,7 +30,7 @@ void UMockMotionInputProvider::AdvancePlayback()
 	while (BatTipSequence.IsValidIndex(BatTipIndex)
 		&& BatTipSequence[BatTipIndex].TimeSeconds <= ElapsedSec)
 	{
-		PushRing(BatTipHistory, BatTipSequence[BatTipIndex], HistoryCapacity);
+		PushBatTipRing(BatTipHistory, BatTipSequence[BatTipIndex]);
 		++BatTipIndex;
 	}
 
@@ -58,7 +58,7 @@ void UMockMotionInputProvider::PlayAll()
 	// 단위 테스트용: 시간 진행 없이 전체를 즉시 소비.
 	for (; BatTipSequence.IsValidIndex(BatTipIndex); ++BatTipIndex)
 	{
-		PushRing(BatTipHistory, BatTipSequence[BatTipIndex], HistoryCapacity);
+		PushBatTipRing(BatTipHistory, BatTipSequence[BatTipIndex]);
 	}
 	for (; BodyPoseSequence.IsValidIndex(BodyPoseIndex); ++BodyPoseIndex)
 	{

@@ -112,9 +112,14 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MotionBase|Bat")
 	EInputSource InputSource = EInputSource::ViveController;
 
-	/** 링버퍼 크기 (최근 N 샘플). 컨택 순간/피크/평면각 추출용. 90fps 기준 45≈0.5초. */
+	/**
+	 * 링버퍼 개수 상한. ⚠️ 주 축출 기준이 아니다 — BeginPlay 에서 판정에 필요한 구간을
+	 * **시간**(초) 기준으로 InputProvider 에 넘기므로(SetHistoryDuration), 실제 보관 구간은
+	 * 프레임레이트에 관계없이 항상 같다. 이 값은 프레임레이트 폭주 등 이상 상황의 메모리
+	 * 안전판일 뿐이라 넉넉하게 잡는다 (120Hz 기준 0.64초+여유 구간에 필요한 샘플 수보다 크게).
+	 */
 	UPROPERTY(EditAnywhere, Category = "MotionBase|Bat", meta = (ClampMin = "8"))
-	int32 RingBufferSize = 45;
+	int32 RingBufferSize = 256;
 
 	/** 실제 입력 소스. BeginPlay 에서 InputSource 에 따라 생성된다. */
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "MotionBase|Bat")

@@ -34,14 +34,25 @@ public:
 
 	/**
 	 * 컨택 가능 시간 창 (±초). 공이 플레이트 부근에 있는 동안만 컨택으로 인정.
-	 * ⚠️ 두 곳이 이 값에 묶여 있다 — 넓힐 땐 같이 확인할 것:
+	 * ⚠️ 세 곳이 이 값에 묶여 있다 — 넓힐 땐 같이 확인할 것 (단일 출처, 여기서만 고친다):
 	 *    · ABat::RingBufferSize — 창보다 짧으면 이른 컨택 표본이 버퍼에서 이미 밀려나 있다
 	 *    · UHitModel 의 SprayTimingGainDeg — 창이 넓어지면 파울 밴드도 같이 넓어진다
+	 *    · AVRBattingPawn::PostContactDelaySec — 이 값보다 짧으면 분석이 창의 후반부가 쌓이기
+	 *      전에 실행돼 늦은 스윙이 통째로 TAKE 로 오분류된다 (기본값을 여기서 직접 유도함)
 	 */
 	static constexpr float ContactTimeWindowSec = 0.32f;
 
 	/** 배트 끝에서 손 쪽으로 이만큼을 유효 타격면(배럴)으로 본다. cm. */
 	static constexpr float BarrelLengthCm = 44.0f;
+
+	/**
+	 * 배트 전체 길이 (cm, 그립 끝 기준). ABat 이 BatTip 오프셋·배럴 메시 배치를 여기서
+	 * 유도한다 — 판정 세그먼트 [BatTip-BarrelLengthCm, BatTip] 와 눈에 보이는 배럴 메시가
+	 * 항상 같은 구간([TotalBatLengthCm-BarrelLengthCm, TotalBatLengthCm])을 가리키게 하기 위함.
+	 * 어긋나면 배트 끝으로 맞혀도 판정이 안 되거나, 판정 안 되는 구간을 맞혔는데 컨택 처리되는
+	 * (겉보기와 실제 판정이 다른) 문제가 생긴다.
+	 */
+	static constexpr float TotalBatLengthCm = 84.0f;
 
 	/**
 	 * 궤적 표본 배열에서 스윙 지표를 계산한다.

@@ -718,10 +718,17 @@ FVector AThrowPawn::PowerToVelocity(float Power) const
 	const FVector Dir = FVector(Flat.X, Flat.Y, 0.0f).GetSafeNormal();
 
 	// 파워 1.0 → MaxThrowRange 까지 가는 45도 발사로 환산.
-	// 45도 사거리 R = v^2/g  →  v = sqrt(R*g). 파워로 사거리를 스케일.
+	//
+	// ⚠️ 릴리스(ThrowOrigin=손 높이 140cm)가 착지면(TargetLocation=바닥)보다 높다.
+	// 평지 45도 공식 R=v²/g 를 그대로 쓰면, 실제 탄도는 그 높이차만큼 더 오래 낙하하며
+	// 수평으로도 더 멀리 나가 목표를 넘긴다 — 그래서 "정답 파워"가 실제 필요한 값보다
+	// 과대했다(재발 이력 있는 버그). 높이차 h 를 반영한 45도 사거리 공식을 역산해서 쓴다:
+	//   R = u·(u + √(u²+2gh)) / g   (u = 수평·수직 성분, 45도라 v = u√2 )
+	//   → v = R·√(g / (R+h))   (h=0 이면 원래 평지 공식 v=√(Rg) 와 정확히 일치)
 	const float G = FMath::Abs(GetWorld()->GetGravityZ());
 	const float Range = FMath::Max(Power * MaxThrowRange, 1.0f);
-	const float Speed = FMath::Sqrt(Range * G);
+	const float HeightDropCm = FMath::Max(0.0f, CurrentTrial.ThrowOrigin.Z - CurrentTrial.TargetLocation.Z);
+	const float Speed = Range * FMath::Sqrt(G / (Range + HeightDropCm));
 
 	// 45도: 수평·수직 성분 동일.
 	const float Comp = Speed / FMath::Sqrt(2.0f);

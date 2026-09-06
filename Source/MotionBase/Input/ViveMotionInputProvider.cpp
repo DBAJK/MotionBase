@@ -79,7 +79,7 @@ void UViveMotionInputProvider::Tick(float DeltaSeconds)
 	}
 	// 첫 프레임은 속도 0 (분석기가 위치 차분으로 폴백).
 
-	PushRing(BatTipHistory, Sample, HistoryCapacity);
+	PushBatTipRing(BatTipHistory, Sample);
 
 	PreviousHandLocation = HandWorld;
 	PreviousHandQuat = HandQuat;

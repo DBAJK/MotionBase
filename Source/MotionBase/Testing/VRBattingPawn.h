@@ -6,6 +6,7 @@
 #include "Data/SwingMetrics.h"
 #include "Data/ScoreResult.h"
 #include "Data/BattedBall.h"
+#include "Analysis/SwingAnalyzer.h"
 #include "Scoring/ScoringService.h"
 #include "Data/TrainingFeedback.h"
 #include "UI/SessionResultView.h"
@@ -85,9 +86,16 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "VRBatting")
 	FScoringConfig ScoringConfig;
 
-	/** 도달 후 이 시간(초) 뒤에 스윙을 분석한다 — 늦은 컨택까지 궤적에 담기게. */
+	/**
+	 * 도달 후 이 시간(초) 뒤에 스윙을 분석한다 — 늦은 컨택까지 궤적에 담기게.
+	 *
+	 * ⚠️ USwingAnalyzer::ContactTimeWindowSec(±) 보다 짧으면 안 된다. 분석은 "지금까지 쌓인
+	 * 궤적"만 보므로, 창의 후반부(도달 +ContactTimeWindowSec 까지)가 되기 전에 분석해버리면
+	 * 그 구간에 있었어야 할 늦은 스윙 표본이 아예 버퍼에 없어 TAKE로 오분류된다
+	 * (버그 재발 이력 있음 — 짧게 만들지 말 것). 기본값을 그 창에서 직접 유도해 항상 맞물리게 한다.
+	 */
 	UPROPERTY(EditAnywhere, Category = "VRBatting")
-	float PostContactDelaySec = 0.12f;
+	float PostContactDelaySec = USwingAnalyzer::ContactTimeWindowSec;
 
 	// ── 컨택 지점(공이 도착할 곳) — 플레이어 기준 오프셋 (cm) ──
 	// 공이 몸 정중앙으로 날아오지 않게, 앞/옆/위로 옮겨 스윙하기 좋은 위치에 도착시킨다.

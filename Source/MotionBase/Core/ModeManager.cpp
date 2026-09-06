@@ -30,8 +30,37 @@ void UModeManager::Deinitialize()
 {
 	// 앱 종료·레벨 정리 시점에 폰이 flush 하지 못한 세션이 남아 있을 수 있다.
 	// FinalizeSession 이 빈 세션은 스스로 걸러내므로 무조건 한 번 호출해도 안전하다.
-	// (여기선 집계 평균·리포트를 다시 구하지 않고, 시도들만 확정 저장한다.)
-	FinalizeSession(FScoreResult(), FWeaknessReport());
+	//
+	// ⚠️ 여기선 정식 UScoringService::ScoreSession(가중치 재정규화 등)을 다시 돌릴 수 없다 —
+	// 세션 시작 시점의 원시 FSwingMetrics 는 이미 사라졌고 남은 건 시도별 FScoreResult 뿐이다.
+	// 그렇다고 기본값(총점 0)으로 저장하면 실제로는 정상 플레이한 세션이 0점으로 남아
+	// 이후 평균·동적 난이도 시드 계산을 조용히 오염시킨다(재발 이력 있음). 시도들의 단순
+	// 평균으로 근사해 저장한다 — 정식 집계보다는 부정확해도 0점보다는 훨씬 안전하다.
+	// (정상 종료 시엔 폰이 이미 FinalizeSession 을 호출해 SessionResults 가 비어 있으므로
+	//  이 경로는 비정상 종료 때만 타는 안전망이다.)
+	FScoreResult FallbackAverage;
+	if (SessionResults.Num() > 0)
+	{
+		double SumAccuracy = 0.0, SumEfficiency = 0.0, SumConsistency = 0.0, SumTotal = 0.0;
+		bool bAnyUncalibrated = false;
+		for (const FScoreResult& Attempt : SessionResults)
+		{
+			SumAccuracy    += Attempt.Accuracy;
+			SumEfficiency  += Attempt.Efficiency;
+			SumConsistency += Attempt.Consistency;
+			SumTotal       += Attempt.TotalScore;
+			bAnyUncalibrated |= Attempt.bUncalibrated;
+		}
+		const double N = SessionResults.Num();
+		FallbackAverage.Accuracy      = static_cast<float>(SumAccuracy / N);
+		FallbackAverage.Efficiency    = static_cast<float>(SumEfficiency / N);
+		FallbackAverage.Consistency   = static_cast<float>(SumConsistency / N);
+		FallbackAverage.TotalScore    = static_cast<float>(SumTotal / N);
+		FallbackAverage.ModeId        = GetModeIdName(ActiveMode);
+		FallbackAverage.bValid        = true;
+		FallbackAverage.bUncalibrated = bAnyUncalibrated;
+	}
+	FinalizeSession(FallbackAverage, FWeaknessReport());
 
 	Super::Deinitialize();
 }

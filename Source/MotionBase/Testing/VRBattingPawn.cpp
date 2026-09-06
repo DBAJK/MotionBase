@@ -82,6 +82,17 @@ void AVRBattingPawn::BeginPlay()
 	// 룸스케일 기준(바닥) — 서 있는 타자의 실제 키가 반영되도록.
 	UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
 
+	// PostContactDelaySec 은 EditAnywhere 라 인스턴스/블루프린트에서 실수로 창(ContactTimeWindowSec)
+	// 보다 짧게 덮어쓸 수 있다 — 그러면 늦은 스윙 표본이 버퍼에 쌓이기 전에 분석해버려 전부
+	// TAKE로 오분류된다(재발 이력 있는 버그). 컴파일 타임에 못 잡으니 여기서 강제로 맞춘다.
+	if (PostContactDelaySec < USwingAnalyzer::ContactTimeWindowSec)
+	{
+		UE_LOG(LogMotionBase, Warning,
+			TEXT("[VRBatting] PostContactDelaySec(%.2f)이 ContactTimeWindowSec(%.2f)보다 짧습니다 — 늦은 스윙이 TAKE로 오분류됩니다. 자동으로 올립니다."),
+			PostContactDelaySec, USwingAnalyzer::ContactTimeWindowSec);
+		PostContactDelaySec = USwingAnalyzer::ContactTimeWindowSec;
+	}
+
 	// 나가기 제스처: 타격 준비 자세(배트를 세움)와 겹치므로 가장 빡빡하게 잡는다.
 	// 수직에서 ±18° 이내로 3초 — 스탠스에서 배트를 이 정도로 곧게 세워 3초를 버티긴 어렵다.
 	ExitGesture.UpThreshold = 0.95f;

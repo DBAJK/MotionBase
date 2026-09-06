@@ -49,9 +49,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Input")
 	virtual float GetElapsedSeconds() const { return 0.0f; }
 
-	/** 히스토리 링버퍼 크기 조정. */
+	/** 히스토리 링버퍼 개수 상한 (메모리 안전판 — 주 축출 기준 아님. SetHistoryDuration 참고). */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Input")
 	void SetHistoryCapacity(int32 InCapacity) { HistoryCapacity = FMath::Max(2, InCapacity); }
+
+	/**
+	 * 배트 궤적 히스토리 보관 기간 (초). 이 값이 주 축출 기준이다 — 프레임레이트에 따라
+	 * 샘플 밀도가 달라져도(90Hz든 120Hz든) 항상 같은 시간 구간이 버퍼에 남는다.
+	 * 호출측(ABat)이 판정에 필요한 구간(시간창×2 + 여유)을 계산해 넘긴다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Input")
+	void SetHistoryDuration(float InSeconds) { HistoryDurationSec = FMath::Max(0.0, static_cast<double>(InSeconds)); }
 
 	// ── 타격 (Vive 컨트롤러 / Mock) ──
 
@@ -71,11 +79,14 @@ public:
 	virtual bool GetBodyScan(float& OutHeightCm, float& OutReachRadiusCm) const { return false; }
 
 protected:
-	/** 히스토리 버퍼 크기 (기본 20샘플 ≒ 90Hz 기준 약 0.22초). */
+	/** 히스토리 버퍼 개수 상한 (기본 20샘플 ≒ 90Hz 기준 약 0.22초). BatTip 이력엔 안전판일 뿐. */
 	UPROPERTY(EditAnywhere, Category = "MotionBase|Input")
 	int32 HistoryCapacity = 20;
 
-	/** 링버퍼 push 헬퍼. */
+	/** SetHistoryDuration 으로 설정. 0 이면(미설정) 개수 기준(HistoryCapacity)만으로 축출한다. */
+	double HistoryDurationSec = 0.0;
+
+	/** 링버퍼 push 헬퍼 — 개수 기준 축출만 한다 (BodyPose 등 시간 필드가 다른 타입 공용). */
 	template<typename T>
 	static void PushRing(TArray<T>& Buffer, const T& Item, int32 Capacity)
 	{
@@ -83,6 +94,37 @@ protected:
 		while (Buffer.Num() > Capacity)
 		{
 			Buffer.RemoveAt(0, 1, EAllowShrinking::No);
+		}
+	}
+
+	/**
+	 * 배트 궤적 링버퍼 push — 시간(FSwingSample::TimeSeconds) 기준으로 축출한다.
+	 * 최신 표본 기준 DurationSec 보다 오래된 표본을 **한 번의 RemoveAt** 으로 잘라낸다
+	 * (표본마다 RemoveAt(0) 을 반복하던 이전 방식은 매번 배열을 시프트해 O(n²)였다).
+	 * DurationSec<=0 이면(미설정) 기존처럼 Capacity 개수 기준으로만 축출한다.
+	 */
+	void PushBatTipRing(TArray<FSwingSample>& Buffer, const FSwingSample& Item) const
+	{
+		Buffer.Add(Item);
+
+		if (HistoryDurationSec > 0.0)
+		{
+			const double Newest = Buffer.Last().TimeSeconds;
+			int32 EvictCount = 0;
+			while (EvictCount < Buffer.Num() - 1 && (Newest - Buffer[EvictCount].TimeSeconds) > HistoryDurationSec)
+			{
+				++EvictCount;
+			}
+			if (EvictCount > 0)
+			{
+				Buffer.RemoveAt(0, EvictCount, EAllowShrinking::No);
+			}
+		}
+
+		// 프레임레이트 폭주 등 이상 상황에서 무한정 커지지 않게 하는 메모리 안전판.
+		if (Buffer.Num() > HistoryCapacity)
+		{
+			Buffer.RemoveAt(0, Buffer.Num() - HistoryCapacity, EAllowShrinking::No);
 		}
 	}
 };

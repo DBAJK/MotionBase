@@ -58,28 +58,46 @@ void APitchingZone::ThrowRandomPitch()
 void APitchingZone::ApplyDifficulty(EDifficultyLevel Level)
 {
 	// TODO(캘리브레이션): 아래 프리셋 수치는 실측·플레이테스트로 조정 (하드코딩 확정 금지).
+	//
+	// ⚠️ 코스 분산(CourseSpread*)은 존 반폭/반높이(StrikeZoneHalf*)의 배수로 정의한다 —
+	// 절대값(cm)으로 고정하면 분산이 존보다 작아질 수 있고, 그러면 FRandRange 가 뽑는 좌표가
+	// 항상 존 안이라 IsLastPitchStrike() 가 매 투구 true 로 고정되어 선구(選球) 훈련이 성립하지
+	// 않는다(실제로 초급에서 발생했던 버그). 배수로 두면 존을 나중에 재캘리브레이션해도
+	// 이 문제가 조용히 재발하지 않는다.
 	switch (Level)
 	{
 	case EDifficultyLevel::Beginner:
+	{
 		SpeedMinKmh = 70.0f;  SpeedMaxKmh = 95.0f;
 		BreakingBallRatio = 0.0f;   BreakAmountCm = 40.0f;
 		AutoPitchIntervalSec = 3.5f;
-		CourseSpreadLateralCm = 15.0f; CourseSpreadVerticalCm = 12.0f;
+		constexpr float kSpreadMul = 1.25f;
+		CourseSpreadLateralCm = StrikeZoneHalfWidthCm * kSpreadMul;
+		CourseSpreadVerticalCm = StrikeZoneHalfHeightCm * kSpreadMul;
 		break;
+	}
 
 	case EDifficultyLevel::Amateur:
+	{
 		SpeedMinKmh = 95.0f;  SpeedMaxKmh = 130.0f;
 		BreakingBallRatio = 0.30f;  BreakAmountCm = 60.0f;
 		AutoPitchIntervalSec = 2.5f;
-		CourseSpreadLateralCm = 25.0f; CourseSpreadVerticalCm = 20.0f;
+		constexpr float kSpreadMul = 1.5f;
+		CourseSpreadLateralCm = StrikeZoneHalfWidthCm * kSpreadMul;
+		CourseSpreadVerticalCm = StrikeZoneHalfHeightCm * kSpreadMul;
 		break;
+	}
 
 	case EDifficultyLevel::Pro:
+	{
 		SpeedMinKmh = 120.0f; SpeedMaxKmh = 155.0f;
 		BreakingBallRatio = 0.55f;  BreakAmountCm = 80.0f;
 		AutoPitchIntervalSec = 1.8f;
-		CourseSpreadLateralCm = 35.0f; CourseSpreadVerticalCm = 28.0f;
+		constexpr float kSpreadMul = 1.8f;
+		CourseSpreadLateralCm = StrikeZoneHalfWidthCm * kSpreadMul;
+		CourseSpreadVerticalCm = StrikeZoneHalfHeightCm * kSpreadMul;
 		break;
+	}
 
 	default:
 		break;
@@ -164,6 +182,9 @@ void APitchingZone::ThrowPitch(EPitchType PitchType, float SpeedKmh)
 	const float SpeedCmps = (SpeedKmh * 100000.0f) / 3600.0f;
 	if (SpeedCmps <= KINDA_SMALL_NUMBER)
 	{
+		// IdleTimer 를 리셋하지 않으면 Tick 이 매 프레임 다시 투구를 시도해 이 경고가
+		// 스팸으로 쏟아진다 — 다음 AutoPitchIntervalSec 만큼은 재시도하지 않게 리셋한다.
+		IdleTimer = 0.0f;
 		UE_LOG(LogMotionBase, Warning, TEXT("PitchingZone: 구속이 0 — 투구 취소"));
 		return;
 	}
