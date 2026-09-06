@@ -2,13 +2,19 @@
 
 namespace
 {
-	FTrainingDrill MakeDrill(EWeaknessAxis Axis, const TCHAR* Name, const TCHAR* Desc, const TCHAR* Cue)
+	// Desc = 수행 방법, Benefit = 무엇이 좋아지는지, Prescription = 수행량.
+	// ⚠️ 수행량은 Desc 에 섞어 쓰지 않는다 — 두 곳에 적히면 어긋나고, LLM 이 어느 쪽을
+	//    인용할지 흔들린다. 횟수·세트는 Prescription 한 곳에만 존재한다.
+	FTrainingDrill MakeDrill(EWeaknessAxis Axis, const TCHAR* Name, const TCHAR* Desc, const TCHAR* Cue,
+		const TCHAR* Benefit, const TCHAR* Prescription)
 	{
 		FTrainingDrill D;
 		D.TargetAxis = Axis;
 		D.Name = Name;
 		D.Description = Desc;
 		D.FocusCue = Cue;
+		D.Benefit = Benefit;
+		D.Prescription = Prescription;
 		return D;
 	}
 }
@@ -20,174 +26,265 @@ TArray<FTrainingDrill> UDrillCatalog::DrillsForAxis(EWeaknessAxis Axis)
 	case EWeaknessAxis::ContactRate:
 		return {
 			MakeDrill(EWeaknessAxis::ContactRate, TEXT("Tracking drill"),
-				TEXT("Follow the ball with your eyes from release to impact, watch 10 pitches (no swing)."),
-				TEXT("Watch the ball longer")),
+				TEXT("Follow the ball with your eyes from release to impact, no swing."),
+				TEXT("Watch the ball longer"),
+				TEXT("Trains eye tracking and pitch recognition, so the barrel meets a ball you actually saw"),
+				TEXT("3 sets x 10 pitches")),
 			MakeDrill(EWeaknessAxis::ContactRate, TEXT("Soft-toss contact"),
-				TEXT("Focus only on making contact with slow, close soft tosses, 20 balls."),
-				TEXT("Contact first")),
+				TEXT("Focus only on making contact with slow, close soft tosses."),
+				TEXT("Contact first"),
+				TEXT("Builds hand-eye coordination and a repeatable contact point"),
+				TEXT("3 sets x 20 balls")),
 		};
 
 	case EWeaknessAxis::Timing:
 		return {
 			MakeDrill(EWeaknessAxis::Timing, TEXT("Rhythm step drill"),
-				TEXT("Repeat a consistent front-foot step timed to the pitcher's release, 15 swings."),
-				TEXT("Release = step")),
+				TEXT("Repeat a consistent front-foot step timed to the pitcher's release."),
+				TEXT("Release = step"),
+				TEXT("Syncs your load and stride to the release, so the swing starts on time"),
+				TEXT("3 sets x 15 swings")),
 			MakeDrill(EWeaknessAxis::Timing, TEXT("Variable-speed soft toss"),
 				TEXT("Mix slow and fast tosses, adjust your timing to the ball."),
-				TEXT("Wait for the ball")),
+				TEXT("Wait for the ball"),
+				TEXT("Improves timing adjustment against changing pitch speeds"),
+				TEXT("3 sets x 15 tosses")),
 		};
 
 	case EWeaknessAxis::ContactAccuracy:
 		return {
 			MakeDrill(EWeaknessAxis::ContactAccuracy, TEXT("Tee precision contact"),
-				TEXT("Hit the center of a stationary tee ball on the bat's sweet spot, 20 swings."),
-				TEXT("Barrel center")),
+				TEXT("Hit the center of a stationary tee ball on the bat's sweet spot."),
+				TEXT("Barrel center"),
+				TEXT("Sharpens barrel control and sweet-spot accuracy"),
+				TEXT("3 sets x 20 swings")),
 			MakeDrill(EWeaknessAxis::ContactAccuracy, TEXT("Zone soft toss"),
 				TEXT("Toss to split high/low and inside/outside zones, make clean contact in each."),
-				TEXT("Aim per zone")),
+				TEXT("Aim per zone"),
+				TEXT("Extends barrel accuracy to every zone, not just your comfortable one"),
+				TEXT("4 zones x 10 swings")),
 		};
 
 	case EWeaknessAxis::BatSpeed:
 		return {
+			MakeDrill(EWeaknessAxis::BatSpeed, TEXT("Deadlift"),
+				TEXT("Hip-hinge lift with a barbell or kettlebell, back flat, drive the floor away - "
+					"go light and keep the form before adding load."),
+				TEXT("Hinge at the hips, not the back"),
+				TEXT("Builds hip extension power and core stability, the base every rotational swing pushes off"),
+				TEXT("3 sets x 15 reps")),
 			MakeDrill(EWeaknessAxis::BatSpeed, TEXT("Rotational power throw"),
-				TEXT("Throw a medicine ball hard in the hitting direction to build lower-body/core rotation, 10 reps x3."),
-				TEXT("Rotate from the legs")),
+				TEXT("Throw a medicine ball hard in the hitting direction using the lower body and core."),
+				TEXT("Rotate from the legs"),
+				TEXT("Develops the lower-body and core rotational power that turns into bat speed"),
+				TEXT("3 sets x 10 throws")),
 			MakeDrill(EWeaknessAxis::BatSpeed, TEXT("Resistance-band swing"),
-				TEXT("Swing against band resistance while keeping your path, accelerate through, 12 swings x3."),
-				TEXT("Accelerate at impact")),
+				TEXT("Swing against band resistance while keeping your path, accelerate through."),
+				TEXT("Accelerate at impact"),
+				TEXT("Trains acceleration through the contact zone under load"),
+				TEXT("3 sets x 12 swings")),
 		};
 
 	case EWeaknessAxis::Consistency:
 		return {
 			MakeDrill(EWeaknessAxis::Consistency, TEXT("Fixed-routine reps"),
-				TEXT("Repeat the same setup-step-swing routine for 10 swings, check the feel each time."),
-				TEXT("Repeat the same move")),
+				TEXT("Repeat the same setup-step-swing routine, check the feel each time."),
+				TEXT("Repeat the same move"),
+				TEXT("Turns the setup-step-swing sequence into a routine, cutting swing-to-swing variance"),
+				TEXT("3 sets x 10 swings")),
 			MakeDrill(EWeaknessAxis::Consistency, TEXT("Checkpoint swing"),
 				TEXT("Slow swings checking posture checkpoints (grip, elbow, rotation) every time."),
-				TEXT("Check your posture")),
+				TEXT("Check your posture"),
+				TEXT("Locks in posture checkpoints so the same swing repeats under pressure"),
+				TEXT("3 sets x 10 slow swings")),
 		};
 
 	case EWeaknessAxis::HipShoulderSeparation:
 		return {
 			MakeDrill(EWeaknessAxis::HipShoulderSeparation, TEXT("Hip-lead separation drill"),
-				TEXT("Keep the upper body back and open the hips first, 10 slow swings to store the coil."),
-				TEXT("Hips first, shoulders back")),
+				TEXT("Keep the upper body back and open the hips first, slow swings to store the coil."),
+				TEXT("Hips first, shoulders back"),
+				TEXT("Increases hip-shoulder separation, so the torso stores and releases more elastic energy"),
+				TEXT("3 sets x 10 slow swings")),
 			MakeDrill(EWeaknessAxis::HipShoulderSeparation, TEXT("Band coil hold"),
-				TEXT("Fix the upper body with a band and rotate only the lower body to feel the separation, 8 reps x3."),
-				TEXT("Upper and lower apart")),
+				TEXT("Fix the upper body with a band and rotate only the lower body to feel the separation."),
+				TEXT("Upper and lower apart"),
+				TEXT("Builds the trunk strength to hold separation instead of spinning as one piece"),
+				TEXT("3 sets x 8 reps")),
 		};
 
 	case EWeaknessAxis::HeadStability:
 		return {
 			MakeDrill(EWeaknessAxis::HeadStability, TEXT("Eyes-fixed tee batting"),
-				TEXT("Stare at one point on the tee ball until impact and keep the head still, 15 swings."),
-				TEXT("Never leave the ball")),
+				TEXT("Stare at one point on the tee ball until impact and keep the head still."),
+				TEXT("Never leave the ball"),
+				TEXT("Keeps the head and eye line still, so the ball stays in focus through contact"),
+				TEXT("3 sets x 15 swings")),
 			MakeDrill(EWeaknessAxis::HeadStability, TEXT("Head-still mirror drill"),
-				TEXT("Swing in front of a mirror/video and check the head does not sway in height or sideways, 10 swings."),
-				TEXT("Keep head height")),
+				TEXT("Swing in front of a mirror or video and check the head does not sway in height or sideways."),
+				TEXT("Keep head height"),
+				TEXT("Removes the head sway that moves your contact point from swing to swing"),
+				TEXT("3 sets x 10 swings")),
 		};
 
 	case EWeaknessAxis::KineticChain:
 		return {
 			MakeDrill(EWeaknessAxis::KineticChain, TEXT("Step-hip-hand sequence drill"),
-				TEXT("Exaggerate the front-foot land -> hip turn -> hands order slowly, 12 swings to learn the sequence."),
-				TEXT("Transfer bottom-up")),
+				TEXT("Exaggerate the front-foot land -> hip turn -> hands order slowly to learn the sequence."),
+				TEXT("Transfer bottom-up"),
+				TEXT("Orders the kinetic chain (land - hips - hands) so power transfers bottom-up instead of leaking"),
+				TEXT("3 sets x 12 swings")),
 			MakeDrill(EWeaknessAxis::KineticChain, TEXT("Med-ball rotation throw"),
-				TEXT("Wind up from the legs and throw, ingraining hip -> torso -> arm order, 10 reps x3."),
-				TEXT("Start from the legs")),
+				TEXT("Wind up from the legs and throw, ingraining the hip -> torso -> arm order."),
+				TEXT("Start from the legs"),
+				TEXT("Ingrains the hip-torso-arm firing order under load"),
+				TEXT("3 sets x 10 throws")),
 		};
 
 	case EWeaknessAxis::WeightShift:
 		return {
 			MakeDrill(EWeaknessAxis::WeightShift, TEXT("Back-to-front load drill"),
-				TEXT("Load onto the back foot then shift to the front foot with the swing, isolate and repeat, 12 swings."),
-				TEXT("Back to front")),
+				TEXT("Load onto the back foot then shift to the front foot with the swing, isolate and repeat."),
+				TEXT("Back to front"),
+				TEXT("Trains a full back-to-front weight transfer, adding drive without extra arm effort"),
+				TEXT("3 sets x 12 swings")),
 			MakeDrill(EWeaknessAxis::WeightShift, TEXT("Step-through batting"),
-				TEXT("Push weight forward with a light step while hitting, keep balance after moving, 10 swings."),
-				TEXT("Plant the front foot")),
+				TEXT("Push weight forward with a light step while hitting, keep balance after moving."),
+				TEXT("Plant the front foot"),
+				TEXT("Teaches you to hold balance while the weight moves forward"),
+				TEXT("3 sets x 10 swings")),
 		};
 
 	// ── Fielding (catch) fitness drills ──
 	case EWeaknessAxis::CatchReaction:
 		return {
 			MakeDrill(EWeaknessAxis::CatchReaction, TEXT("Reaction catch drill"),
-				TEXT("Catch balls thrown without warning or bounced off a wall immediately, 20 reps."),
-				TEXT("Hands before you think")),
+				TEXT("Catch balls thrown without warning or bounced off a wall immediately."),
+				TEXT("Hands before you think"),
+				TEXT("Shortens the reaction time from seeing the ball to getting the glove there"),
+				TEXT("3 sets x 20 catches")),
 			MakeDrill(EWeaknessAxis::CatchReaction, TEXT("Light reaction touch"),
-				TEXT("Reach and touch a randomly firing cue (light / partner's hand), 30s x3."),
-				TEXT("React on the cue")),
+				TEXT("Reach and touch a randomly firing cue (light / partner's hand)."),
+				TEXT("React on the cue"),
+				TEXT("Trains the cue-to-first-movement delay itself, isolated from catching technique"),
+				TEXT("3 sets x 30 seconds")),
 		};
 
 	case EWeaknessAxis::UpperBodyFlex:
 		return {
 			MakeDrill(EWeaknessAxis::UpperBodyFlex, TEXT("Thoracic-shoulder rotation stretch"),
-				TEXT("Twist the upper body far side to side, hold 10s each, 5 per side - build reaching range."),
-				TEXT("Extend your reach range")),
+				TEXT("Twist the upper body far side to side, holding each end position."),
+				TEXT("Extend your reach range"),
+				TEXT("Opens thoracic and shoulder rotation, widening the range you can still catch in"),
+				TEXT("2 sets x 5 per side (10s hold)")),
 			MakeDrill(EWeaknessAxis::UpperBodyFlex, TEXT("Band overhead reach"),
-				TEXT("Hold a band and sweep the arms in a big overhead circle, 12 reps x2."),
-				TEXT("Widen the range")),
+				TEXT("Hold a band and sweep the arms in a big overhead circle."),
+				TEXT("Widen the range"),
+				TEXT("Restores overhead shoulder range for balls above the head"),
+				TEXT("2 sets x 12 reps")),
 		};
 
 	case EWeaknessAxis::FootSpeed:
 		return {
 			MakeDrill(EWeaknessAxis::FootSpeed, TEXT("Ladder quick steps"),
-				TEXT("Step through a ladder/line raising your foot turnover, 30s x3."),
-				TEXT("Short, fast steps")),
+				TEXT("Step through a ladder or line raising your foot turnover."),
+				TEXT("Short, fast steps"),
+				TEXT("Raises foot turnover, so the first step toward the ball comes quicker"),
+				TEXT("3 sets x 30 seconds")),
 			MakeDrill(EWeaknessAxis::FootSpeed, TEXT("Side shuffle"),
-				TEXT("Shuffle side to side fast in a low stance, 10m x4 - positioning quickness."),
-				TEXT("Low and fast")),
+				TEXT("Shuffle side to side fast in a low stance."),
+				TEXT("Low and fast"),
+				TEXT("Builds the lateral quickness that fixes your fielding position before the ball arrives"),
+				TEXT("4 sets x 10m")),
 		};
 
 	// ── Fielding (throw) drills ──
 	case EWeaknessAxis::ThrowAccuracy:
 		return {
 			MakeDrill(EWeaknessAxis::ThrowAccuracy, TEXT("Target line throws"),
-				TEXT("Throw to a chest-high target from 20m, 20 reps - step straight at the target every time."),
-				TEXT("Front foot points at the base")),
+				TEXT("Throw to a chest-high target from 20m, stepping straight at the target every time."),
+				TEXT("Front foot points at the base"),
+				TEXT("Aligns the stride and release line with the target, tightening throw accuracy"),
+				TEXT("3 sets x 20 throws")),
 			MakeDrill(EWeaknessAxis::ThrowAccuracy, TEXT("One-hop to the bag"),
-				TEXT("From long range, aim a deliberate one-hop into the receiver's glove, 15 reps."),
-				TEXT("Low miss, never high")),
+				TEXT("From long range, aim a deliberate one-hop into the receiver's glove."),
+				TEXT("Low miss, never high"),
+				TEXT("Trains the low miss - a one-hop is still catchable, a high throw costs a base"),
+				TEXT("3 sets x 15 throws")),
 		};
 
 	case EWeaknessAxis::ArmStrength:
 		return {
 			MakeDrill(EWeaknessAxis::ArmStrength, TEXT("Long toss ladder"),
-				TEXT("Build distance 15m -> 25m -> 35m and come back down, 5 throws per step."),
-				TEXT("Carry, do not aim")),
+				TEXT("Build distance 15m -> 25m -> 35m and come back down."),
+				TEXT("Carry, do not aim"),
+				TEXT("Builds throwing distance and arm endurance through a progressive range"),
+				TEXT("6 steps x 5 throws")),
 			MakeDrill(EWeaknessAxis::ArmStrength, TEXT("Med-ball crow hop throw"),
-				TEXT("Crow-hop and throw a 2kg med ball with the whole body, 8 reps x3."),
-				TEXT("Legs and trunk, not the arm")),
+				TEXT("Crow-hop and throw a 2kg med ball with the whole body."),
+				TEXT("Legs and trunk, not the arm"),
+				TEXT("Adds whole-body throwing power from the legs and trunk instead of overloading the arm"),
+				TEXT("3 sets x 8 throws")),
 		};
 
 	case EWeaknessAxis::TransferQuick:
 		return {
 			MakeDrill(EWeaknessAxis::TransferQuick, TEXT("Glove-to-hand transfer reps"),
-				TEXT("Catch and move the ball to the throwing hand at the chest, 30 reps - no throw, transfer only."),
-				TEXT("Bring it to the chest, not the ear")),
+				TEXT("Catch and move the ball to the throwing hand at the chest - no throw, transfer only."),
+				TEXT("Bring it to the chest, not the ear"),
+				TEXT("Cuts the glove-to-hand transfer time before the throw even starts"),
+				TEXT("3 sets x 30 transfers")),
 			MakeDrill(EWeaknessAxis::TransferQuick, TEXT("Quick-release footwork"),
-				TEXT("Catch - right/left step - release as one motion, 20 reps at short range."),
-				TEXT("Feet start with the catch")),
+				TEXT("Catch - right/left step - release as one motion at short range."),
+				TEXT("Feet start with the catch"),
+				TEXT("Merges catch, step and release into one motion for a faster release"),
+				TEXT("3 sets x 20 reps")),
 		};
 
 	// ── Fielding (backup judgment) drills ──
+	// ⚠️ 판단 훈련이다. 처방의 단위는 세트·횟수가 아니라 **상황 케이스 수**다 —
+	//    여기에 근력·컨디셔닝 처방이 섞이면 Backup 도메인 프롬프트의 금지 규칙과 충돌한다.
 	case EWeaknessAxis::BackupJudgment:
 		return {
 			MakeDrill(EWeaknessAxis::BackupJudgment, TEXT("Position backup walkthrough"),
-				TEXT("For your position, walk the backup path for each batted-ball direction, 10 cases."),
-				TEXT("Ball direction decides the base")),
+				TEXT("For your position, walk the backup path for each batted-ball direction."),
+				TEXT("Ball direction decides the base"),
+				TEXT("Maps every batted-ball direction to your backup base until the answer is automatic"),
+				TEXT("2 sets x 10 cases")),
 			MakeDrill(EWeaknessAxis::BackupJudgment, TEXT("Runner-situation card review"),
-				TEXT("Fix the runners (none / 1st / 2nd) and say your backup base out loud for each, 15 cases."),
-				TEXT("Runners decide the throw")),
+				TEXT("Fix the runners (none / 1st / 2nd) and say your backup base out loud for each."),
+				TEXT("Runners decide the throw"),
+				TEXT("Links the runner situation to the throw destination that decides your job"),
+				TEXT("3 sets x 15 cases")),
 		};
 
 	case EWeaknessAxis::DecisionSpeed:
 		return {
 			MakeDrill(EWeaknessAxis::DecisionSpeed, TEXT("Call-it-out reaction"),
-				TEXT("A partner calls a situation, you name the backup base within 2 seconds, 20 reps."),
-				TEXT("Decide before you move")),
+				TEXT("A partner calls a situation, you name the backup base within 2 seconds."),
+				TEXT("Decide before you move"),
+				TEXT("Shortens the gap between the situation and your decision, before the feet move"),
+				TEXT("2 sets x 20 calls")),
 			MakeDrill(EWeaknessAxis::DecisionSpeed, TEXT("Pre-pitch routine"),
-				TEXT("Before every pitch, say your job for each batted-ball direction, one full inning."),
-				TEXT("Decide it before the pitch")),
+				TEXT("Before every pitch, say your job for each batted-ball direction."),
+				TEXT("Decide it before the pitch"),
+				TEXT("Moves the decision to before the pitch, so you react instead of think"),
+				TEXT("1 full inning, every pitch")),
+		};
+
+	// ── Fielding (backup route efficiency) drills — 판단 훈련. 컨디셔닝 처방 아님. ──
+	case EWeaknessAxis::RouteEfficiency:
+		return {
+			MakeDrill(EWeaknessAxis::RouteEfficiency, TEXT("Straight-line walkthrough"),
+				TEXT("Walk the exact backup path at half speed, noticing every place you drift off line."),
+				TEXT("Pick the spot, then go straight"),
+				TEXT("Removes drift from the route so you take the shortest path to the spot"),
+				TEXT("2 sets x 8 routes")),
+			MakeDrill(EWeaknessAxis::RouteEfficiency, TEXT("Call-and-commit"),
+				TEXT("Say the backup base out loud before your first step, then don't change your mind mid-route."),
+				TEXT("Decide once, commit fully"),
+				TEXT("Stops mid-route direction changes by forcing the call before the first step"),
+				TEXT("3 sets x 15 reps")),
 		};
 
 	default:
@@ -214,13 +311,17 @@ TArray<FTrainingDrill> UDrillCatalog::Recommend(const FWeaknessReport& Report, i
 		{
 			Out.Add(MakeDrill(EWeaknessAxis::CatchReaction, TEXT("Keep the fielding routine"),
 				TEXT("Nothing stands out - keep taking game-speed reps and hold this feel."),
-				TEXT("Hold current feel")));
+				TEXT("Hold current feel"),
+				TEXT("Maintains the fielding timing you already have instead of rebuilding it"),
+				TEXT("2 sets x 10 game-speed reps")));
 		}
 		else
 		{
 			Out.Add(MakeDrill(EWeaknessAxis::Consistency, TEXT("Keep game feel"),
 				TEXT("Keep taking live batting at game pace to maintain your current balance."),
-				TEXT("Hold current feel")));
+				TEXT("Hold current feel"),
+				TEXT("Maintains the swing balance and timing you already have"),
+				TEXT("3 sets x 10 live swings")));
 		}
 		return Out;
 	}

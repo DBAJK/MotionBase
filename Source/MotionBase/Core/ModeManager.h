@@ -68,6 +68,19 @@ public:
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
 	static FName GetDefenseDrillIdName(int32 DrillIndex);
 
+	/**
+	 * 백업 위치 판단 훈련에서 플레이어가 고른 수비 포지션을 지정한다 (7개 야수 자리).
+	 * ⚠️ SetActiveMode/SetActiveDrill 뒤에 불러야 한다 — SetActiveMode 가 세션을 열며 이 값을
+	 * First 로 되돌린다. ActiveStance 와 같은 패턴(폰 스폰 시 커스텀 파라미터를 못 넘기는
+	 * 구조라 세션 상태를 경유해 새 폰의 BeginPlay 에 전달한다).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Mode")
+	void SetActiveFieldPosition(EFieldPosition InPosition);
+
+	/** 현재 세션의 수비 포지션 (백업 훈련 외에는 의미 없음). */
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Mode")
+	EFieldPosition GetActiveFieldPosition() const { return ActiveFieldPosition; }
+
 	/** 한 판(모드 세션)의 결과를 기록. ModeId 가 비어 있으면 현재 모드 이름으로 채운다. */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Mode")
 	void RecordResult(const FScoreResult& Result);
@@ -186,6 +199,10 @@ private:
 	/** 현재 세션의 세부 종목 (수비 전용). SetActiveMode 가 비우고 SetActiveDrill 이 채운다. */
 	UPROPERTY()
 	FName ActiveDrill = NAME_None;
+
+	/** 현재 세션의 수비 포지션 (백업 훈련 전용). SetActiveMode 가 First 로 되돌린다. */
+	UPROPERTY()
+	EFieldPosition ActiveFieldPosition = EFieldPosition::First;
 
 	/** 세션 내 누적 결과 (저장/피드백 입력). */
 	UPROPERTY()

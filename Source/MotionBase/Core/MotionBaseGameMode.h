@@ -28,9 +28,12 @@ public:
 	bool StartMode(EGameModeId Mode, EDifficultyLevel Difficulty = EDifficultyLevel::Amateur,
 		EBattingStance Stance = EBattingStance::Right);
 
-	/** 수비 세부 종목 선택 → 해당 훈련 폰으로 진입. (0=포구, 1=송구, 2=풋워크, 3=백업) */
+	/**
+	 * 수비 세부 종목 선택 → 해당 훈련 폰으로 진입. (0=포구, 1=송구, 2=백업)
+	 * @param Position 백업 위치 판단(2번)에서 플레이어가 고른 수비 포지션. 다른 종목에선 무시된다.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Flow")
-	bool StartDefenseDrill(int32 DrillIndex);
+	bool StartDefenseDrill(int32 DrillIndex, EFieldPosition Position = EFieldPosition::First);
 	
 	/**
 	 * AI 코칭(운동 추천) 리뷰 화면으로 진입. 게임 세션이 아니라 저장 이력을 읽는

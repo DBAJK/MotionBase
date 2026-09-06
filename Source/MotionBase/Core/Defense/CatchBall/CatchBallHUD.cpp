@@ -154,19 +154,27 @@ void ACatchBallHUD::DrawHUD()
 		PY += 34.0f * S;
 
 		// Coaching sentences — rough wrap by character count.
+		// 처방 목록 자리를 먼저 떼어두고 문장은 남는 만큼만 — 잘려야 할 쪽은 문장이다.
+		const int32 DrillCount = Pawn->GetRecommendedDrills().Num();
+		const float CoachMaxY = Canvas->SizeY - (DrillCount * 24.0f * S) - 30.0f * S;
+
 		constexpr int32 MaxChars = 60;
 		int32 i = 0;
-		while (i < Coaching.Len())
+		while (i < Coaching.Len() && PY <= CoachMaxY)
 		{
 			DrawCentered(Coaching.Mid(i, MaxChars), W * 0.5f, PY, TextMain, 0.85f * S);
 			PY += 26.0f * S;
 			i += MaxChars;
 		}
 
-		// Recommended drills.
+		// Recommended drills — 이름 옆에 수행량(3 sets x 20 등)을 함께. AI 코칭 문장이
+		// 인용하는 값과 화면 목록이 같은 처방을 가리키게 한다.
 		for (const FTrainingDrill& D : Pawn->GetRecommendedDrills())
 		{
-			DrawCentered(FString::Printf(TEXT("- %s : %s"), *D.Name, *D.FocusCue),
+			const FString Head = D.Prescription.IsEmpty()
+				? FString::Printf(TEXT("- %s"), *D.Name)
+				: FString::Printf(TEXT("- %s (%s)"), *D.Name, *D.Prescription);
+			DrawCentered(FString::Printf(TEXT("%s : %s"), *Head, *D.FocusCue),
 				W * 0.5f, PY, FLinearColor(1.0f, 0.78f, 0.47f, 1.0f), 0.8f * S);
 			PY += 24.0f * S;
 		}

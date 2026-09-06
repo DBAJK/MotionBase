@@ -13,7 +13,7 @@
 #include "TimerManager.h"
 #include "Core/Defense/CatchBall/CatchBallPawn.h"
 #include "Core/Defense/Throw/ThrowPawn.h"
-#include "Core/Defense/Cover/CoverPawn.h"
+#include "Core/Defense/Backup/BackupPawn.h"
 #include "AI/AICoachingPawn.h"
 
 AMotionBaseGameMode::AMotionBaseGameMode()
@@ -170,7 +170,7 @@ void AMotionBaseGameMode::ApplyPendingPawnSwap()
 	}
 }
 
-bool AMotionBaseGameMode::StartDefenseDrill(int32 DrillIndex)
+bool AMotionBaseGameMode::StartDefenseDrill(int32 DrillIndex, EFieldPosition Position)
 {
 	// 종목별 폰 결정 (0=포구, 1=송구, 2=백업). 풋워크·반응속도는 메뉴에서 제외됨.
 	TSubclassOf<APawn> PawnClass = nullptr;
@@ -182,8 +182,8 @@ bool AMotionBaseGameMode::StartDefenseDrill(int32 DrillIndex)
 	case 1: // 송구
 		PawnClass = AThrowPawn::StaticClass();
 		break;
-	case 2: // 백업(커버) 위치 판단
-		PawnClass = ACoverPawn::StaticClass();
+	case 2: // 백업 위치 판단 — 실제 이동 훈련 (ABackupPawn, 4지선다 퀴즈 ACoverPawn 대체)
+		PawnClass = ABackupPawn::StaticClass();
 		break;
 	default:
 		UE_LOG(LogMotionBase, Log, TEXT("GameMode: 수비 세부 종목 %d 은(는) 아직 준비 중입니다."), DrillIndex);
@@ -191,13 +191,17 @@ bool AMotionBaseGameMode::StartDefenseDrill(int32 DrillIndex)
 	}
 
 	// 세션 진입 처리 (모드는 Defense, 세부 종목은 DrillId 로 기록).
-	// 순서 주의: SetActiveMode 가 새 세션을 열며 세부 종목을 비우므로 그다음에 지정한다.
+	// 순서 주의: SetActiveMode 가 새 세션을 열며 세부 종목·포지션을 비우므로 그다음에 지정한다.
 	if (UGameInstance* GI = GetGameInstance())
 	{
 		if (UModeManager* MM = GI->GetSubsystem<UModeManager>())
 		{
 			MM->SetActiveMode(EGameModeId::Defense);
 			MM->SetActiveDrill(UModeManager::GetDefenseDrillIdName(DrillIndex));
+			if (DrillIndex == 2)
+			{
+				MM->SetActiveFieldPosition(Position);
+			}
 		}
 	}
 

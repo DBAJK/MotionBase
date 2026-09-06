@@ -22,6 +22,7 @@ FText UWeaknessDetector::GetAxisDisplayName(EWeaknessAxis Axis)
 	case EWeaknessAxis::TransferQuick:   return FText::FromString(TEXT("Catch-to-throw transfer"));
 	case EWeaknessAxis::BackupJudgment:  return FText::FromString(TEXT("Backup judgment"));
 	case EWeaknessAxis::DecisionSpeed:   return FText::FromString(TEXT("Decision speed"));
+	case EWeaknessAxis::RouteEfficiency: return FText::FromString(TEXT("Route efficiency"));
 	default:                             return FText::FromString(TEXT("알 수 없음"));
 	}
 }

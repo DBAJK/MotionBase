@@ -150,9 +150,15 @@ protected:
 private:
 	/**
 	 * 선택 단계.
-	 *   타격 → Difficulty → Stance, 수비 → DefenseDrill, 그 외 → Difficulty 에서 바로 시작.
+	 *   타격 → Difficulty → Stance, 수비 → DefenseDrill,
+	 *     └ 백업 위치 판단(DefenseDrill 의 index 2) 선택 시 → DefensePositionGroup → DefensePosition,
+	 *   그 외 → Difficulty 에서 바로 시작.
+	 *
+	 * DefensePositionGroup 을 따로 두는 이유: 7개 포지션을 한 목록에 다 넣으면
+	 * `UVRInfoPanel::MaxRows`(6)를 넘는다. 패널 레이아웃 상수를 건드리는 대신
+	 * 내야(4)/외야(3) 두 그룹으로 나눠 매 단계 4행 이내로 유지한다 (설계 노트 참고).
 	 */
-	enum class EStage : uint8 { Mode, Difficulty, Stance, DefenseDrill };
+	enum class EStage : uint8 { Mode, Difficulty, Stance, DefenseDrill, DefensePositionGroup, DefensePosition };
 
 	void MoveSelection(int32 Delta);
 
@@ -166,6 +172,17 @@ private:
 	/** 수비 세부 종목 이름/설명 (인덱스 안전). */
 	FText DefenseDrillNameAt(int32 Index) const;
 	FText DefenseDrillDescAt(int32 Index) const;
+
+	/** 백업 위치 판단 — 포지션 그룹(0=내야/1=외야) 이름·설명. */
+	FText PositionGroupNameAt(int32 Index) const;
+	FText PositionGroupDescAt(int32 Index) const;
+
+	/** 현재 선택된 그룹(PendingPositionGroup)에 속한 포지션 목록. */
+	TArray<EFieldPosition> PositionsInGroup() const;
+
+	/** 현재 그룹 안에서의 포지션 이름·설명 (인덱스 안전). */
+	FText FieldPositionNameAt(int32 Index) const;
+	FText FieldPositionDescAt(int32 Index) const;
 
 	/** 난이도 확정 후: 타격이면 Stance 단계로, 아니면 바로 시작. */
 	void ConfirmDifficulty();
@@ -212,6 +229,10 @@ private:
 
 	/** 난이도 단계에서 확정한 난이도 (스탠스 단계에서 사용). */
 	EDifficultyLevel PendingDifficulty = EDifficultyLevel::Amateur;
+
+	/** 백업 위치 판단 — 확정한 포지션 그룹(0=내야/1=외야) / 최종 포지션. */
+	int32 PendingPositionGroup = 0;
+	EFieldPosition PendingFieldPosition = EFieldPosition::First;
 
 	FString NoticeText;
 	float   NoticeTimer = 0.0f;
