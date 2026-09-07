@@ -462,6 +462,22 @@ const TArray<EFieldPosition>& UBackupPlaybook::AllPositions()
 	return All;
 }
 
+int32 UBackupPlaybook::PositionNumber(EFieldPosition Pos)
+{
+	// 투수 1 · 포수 2 는 이 모드에 등장하지 않는다 (백업 판단 대상 7개 포지션만).
+	switch (Pos)
+	{
+	case EFieldPosition::First:  return 3;
+	case EFieldPosition::Second: return 4;
+	case EFieldPosition::Third:  return 5;
+	case EFieldPosition::Short:  return 6;
+	case EFieldPosition::Left:   return 7;
+	case EFieldPosition::Center: return 8;
+	case EFieldPosition::Right:  return 9;
+	default:                     return 0;
+	}
+}
+
 FString UBackupPlaybook::PositionName(EFieldPosition Pos)
 {
 	switch (Pos)

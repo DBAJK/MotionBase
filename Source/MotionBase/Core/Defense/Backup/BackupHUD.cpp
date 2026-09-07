@@ -21,6 +21,8 @@ namespace
 	const FLinearColor MapPlayer  (0.30f, 0.75f, 1.00f, 1.00f);
 	const FLinearColor MapCorrect (0.40f, 0.90f, 0.47f, 1.00f);
 	const FLinearColor MapOther   (0.55f, 0.60f, 0.66f, 0.55f);
+	// 판정 전에 후보 존을 전부 같은 색으로 그릴 때 쓴다 (정답을 미리 알려주지 않기 위해).
+	const FLinearColor MapNeutral (0.72f, 0.76f, 0.84f, 0.85f);
 }
 
 void ABackupHUD::DrawPanel(float X, float Y, float W, float H, const FLinearColor& Fill, const FLinearColor& Border)
@@ -86,20 +88,21 @@ void ABackupHUD::DrawMinimap(ABackupPawn* Pawn, float CenterX, float CenterY, fl
 		const FLinearColor Col = bSelf ? MapPosSelf : MapPosIdle;
 		const float S = bSelf ? 5.0f : 3.0f;
 		DrawRect(Col, P.X - S, P.Y - S, S * 2.0f, S * 2.0f);
-		if (bSelf)
-		{
-			DrawCentered(UBackupPlaybook::PositionName(Pos), P.X, P.Y + 6.0f, Col, 0.6f);
-		}
+		// 동료 이름도 같이 띄운다 — 정답 강조를 걷어낸 지금은 "누가 어디 있나"가 판단 근거다.
+		DrawCentered(UBackupPlaybook::PositionName(Pos), P.X, P.Y + S + 2.0f, Col, bSelf ? 0.6f : 0.5f);
 	}
 
-	// 방향 판단 후보 존 (정답=초록 강조, 나머지=흐림). CutoffRelay 는 선분으로.
+	// 방향 판단 후보 존. 판정 전에는 전부 중립색 — 정답을 미리 알려주면 판단 훈련이
+	// 아니라 "초록 원 따라가기"가 된다. 판정이 끝난 뒤에만 정답=초록으로 공개해 복기시킨다.
+	// (월드 존 DrawZones 와 같은 기준: ABackupPawn::IsAnswerRevealed)
+	const bool bReveal = Pawn->IsAnswerRevealed();
 	const FBackupTrial& Trial = Pawn->GetCurrentTrial();
 	for (int32 i = 0; i < Trial.CandidateZones.Num(); ++i)
 	{
 		const FBackupZone& Z = Trial.CandidateZones[i];
 		const bool bCorrect = (i == Trial.CorrectCandidateIndex);
-		const FLinearColor Col = bCorrect ? MapCorrect : MapOther;
-		const float Thick = bCorrect ? 2.5f : 1.0f;
+		const FLinearColor Col = bReveal ? (bCorrect ? MapCorrect : MapOther) : MapNeutral;
+		const float Thick = bReveal ? (bCorrect ? 2.5f : 1.0f) : 1.4f;
 
 		if (Z.Role == EBackupRole::CutoffRelay)
 		{
@@ -223,6 +226,6 @@ void ABackupHUD::DrawHUD()
 	}
 
 	// ── 조작 안내 ──
-	DrawCentered(TEXT("Hold WASD to move to your backup zone    -    M to exit"),
+	DrawCentered(TEXT("Hold WASD to move to your backup zone    -    Q / E (or arrows) to look around    -    M to exit"),
 		W * 0.5f, H - 30.0f * S, TextDim, 0.75f * S);
 }

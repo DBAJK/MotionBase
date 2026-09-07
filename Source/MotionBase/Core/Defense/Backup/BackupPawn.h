@@ -15,6 +15,7 @@ class UMotionControllerComponent;
 class UVRInfoPanel;
 class UAIFeedbackService;
 class ACatchBall;
+class AFielderMarker;
 
 /** 한 시행의 진행 단계. */
 UENUM(BlueprintType)
@@ -69,6 +70,13 @@ public:
 
 	EBackupPhase GetPhase() const { return Phase; }
 	bool IsHoldTrial() const { return CurrentTrial.bIsHoldTrial; }
+
+	/**
+	 * 정답을 공개해도 되는 시점인가 — 판정이 끝난 뒤(복기)에만 true.
+	 * 진행 중(Live)에 정답 존을 강조하면 판단 훈련이 아니라 "초록 원 따라가기"가 된다.
+	 * 월드 존 그리기(DrawZones)와 HUD 미니맵이 같은 기준을 쓰도록 여기서 한 번만 정의한다.
+	 */
+	bool IsAnswerRevealed() const { return Phase == EBackupPhase::Done && bHasResult; }
 
 	/** 현재 타구 속도 배율 (연출용, [ / ] 로 조절). 1.0 이 기본. */
 	float GetBallSpeedScale() const { return BallSpeedScale; }
@@ -167,6 +175,26 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Backup")
 	float PCMoveSpeedCms = 700.0f;
 
+	// ── PC 시야 조작 (VR 은 고개를 돌리면 되므로 해당 없음) ──
+	// PC 는 폰이 항상 홈을 보도록 고정돼 있어서 둘러볼 수단이 아예 없었다. 동료 수비수
+	// 마커(AFielderMarker)를 세워 놔도 등 뒤에 있으면 못 보므로 판단 근거가 되지 못한다.
+
+	/** 키(Q/E · ←/→)로 도는 속도 (도/초). */
+	UPROPERTY(EditAnywhere, Category = "Backup|PC", meta = (ClampMin = "10.0"))
+	float PCTurnSpeedDegPerSec = 110.0f;
+
+	/** 마우스 시야 감도 (도/픽셀). 0 이면 마우스 룩을 끈다 (키보드만 사용). */
+	UPROPERTY(EditAnywhere, Category = "Backup|PC", meta = (ClampMin = "0.0"))
+	float PCMouseLookSensitivity = 2.0f;
+
+	/** 마우스 상하 반전. */
+	UPROPERTY(EditAnywhere, Category = "Backup|PC")
+	bool bPCInvertMouseY = false;
+
+	/** 카메라 상하 각도 제한 (도). 뜬공을 올려다볼 수 있을 만큼은 열어 둔다. */
+	UPROPERTY(EditAnywhere, Category = "Backup|PC", meta = (ClampMin = "10.0", ClampMax = "89.0"))
+	float PCMaxPitchDeg = 75.0f;
+
 	/** 첫 시행까지의 대기 (초). VR 은 HMD 포즈가 BeginPlay 시점에 아직 없어 배치를 못 잡는다. */
 	UPROPERTY(EditAnywhere, Category = "Backup", meta = (ClampMin = "0.2"))
 	float FirstTrialDelaySec = 1.5f;
@@ -195,6 +223,18 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Backup|Ball", meta = (ClampMin = "0.05", ClampMax = "0.5"))
 	float BallSpeedStep = 0.1f;
 
+	// ── 동료 수비수 3D 마커 (판단 근거 — 판정에는 관여하지 않는다) ──
+	// 정답 존 강조를 걷어낸 자리를 메우는 것. "누가 어디 서 있는가"가 보여야 백업 판단이
+	// 성립한다. HUD 미니맵은 헤드셋에 렌더되지 않으므로 VR 에선 이게 유일한 배치 단서다.
+
+	/** 마커 액터 클래스. 미지정 시 AFielderMarker 기본 사용. */
+	UPROPERTY(EditAnywhere, Category = "Backup|Fielders")
+	TSubclassOf<AFielderMarker> FielderMarkerClass;
+
+	/** 동료 마커를 세울지. 끄면 예전처럼 빈 필드가 된다 (비교·디버그용). */
+	UPROPERTY(EditAnywhere, Category = "Backup|Fielders")
+	bool bShowFielderMarkers = true;
+
 private:
 	// ── PC 이동 입력 (BindKey 눌림/뗌 → 플래그, 다른 폰들과 동일 패턴) ──
 	void OnFwdPressed()    { bMoveFwd = true; }
@@ -210,6 +250,23 @@ private:
 	bool bMoveBack = false;
 	bool bMoveLeft = false;
 	bool bMoveRight = false;
+
+	// ── PC 시야 회전 (Q/E · ←/→) ──
+	void OnTurnLeftPressed()   { bTurnLeft = true; }
+	void OnTurnLeftReleased()  { bTurnLeft = false; }
+	void OnTurnRightPressed()  { bTurnRight = true; }
+	void OnTurnRightReleased() { bTurnRight = false; }
+
+	bool bTurnLeft = false;
+	bool bTurnRight = false;
+
+	/**
+	 * PC 시야 회전 — 키 + 마우스. VR 이면 아무것도 하지 않는다.
+	 * ⚠️ 좌우는 **폰 자체**를 돌린다. WASD 이동이 GetActorRotation().Yaw 기준이라
+	 *    (아래 이동 코드 참고) 이렇게 해야 "보는 방향으로 걷는다"가 유지된다.
+	 *    상하는 카메라 상대 회전만 건드린다 — 폰을 기울이면 이동 평면까지 기운다.
+	 */
+	void TickPCLook(float DeltaSeconds);
 
 	void ReturnToModeSelect(); // M
 
@@ -245,8 +302,19 @@ private:
 	/** 이동 개시(1단계) 커밋 시도 — 조건이 차면 방향 판정까지 끝낸다. */
 	void TryCommitHeading();
 
-	/** 정답 존 + 방향 판단 후보 존을 디버그 드로우로 그린다 (PC 검증의 핵심 도구, 헤드셋에도 렌더됨). */
+	/**
+	 * 후보 백업 존을 디버그 드로우로 그린다 (헤드셋에도 렌더됨).
+	 * 진행 중엔 후보 전부를 **같은 중립색**으로 — 선택지는 알려주되 정답은 숨긴다.
+	 * 판정이 끝나면(IsAnswerRevealed) 정답만 초록으로 강조해 복기시킨다.
+	 */
 	void DrawZones() const;
+
+	// ── 동료 수비수 3D 마커 ──
+	/** 7개 수비 위치에 마커를 세운다 (본인 자리는 이름표만). 세션 시작 전 1회. */
+	void SpawnFielderMarkers();
+	void DestroyFielderMarkers();
+	/** 이름표가 플레이어를 향하도록 매 프레임 돌린다. */
+	void UpdateFielderLabels();
 
 	// ── AI 판단 코칭 ──
 	FWeaknessReport BuildBackupReport() const;
@@ -321,4 +389,8 @@ private:
 	/** 이번 시행의 코스메틱 타구 (판정에 관여하지 않음 — SpawnFlavorBall 참고). */
 	UPROPERTY(Transient)
 	TObjectPtr<ACatchBall> ActiveBall;
+
+	/** 동료 수비수 마커 (세션 내내 유지 — 시행마다 다시 세우지 않는다). */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AFielderMarker>> FielderMarkers;
 };

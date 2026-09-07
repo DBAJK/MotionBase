@@ -6,14 +6,14 @@
 namespace
 {
 	// 색 팔레트 (AModeSelectHUD 톤에 맞춤)
-	const FLinearColor PanelBg   (0.05f, 0.06f, 0.08f, 0.82f);
-	const FLinearColor PanelLine (1.00f, 0.62f, 0.20f, 0.90f); // 앰버 테두리
-	const FLinearColor ChipIdle  (0.14f, 0.16f, 0.20f, 0.90f);
-	const FLinearColor ChipOn    (1.00f, 0.62f, 0.20f, 0.95f); // 선택된 유형
-	const FLinearColor TextMain  (0.92f, 0.94f, 0.97f, 1.00f);
-	const FLinearColor TextDim   (0.55f, 0.60f, 0.66f, 1.00f);
-	const FLinearColor TextOnChip(0.05f, 0.06f, 0.08f, 1.00f);
-	const FLinearColor Good      (0.40f, 0.85f, 0.45f, 1.00f);
+	const FLinearColor CbPanelBg   (0.05f, 0.06f, 0.08f, 0.82f);
+	const FLinearColor CbPanelLine (1.00f, 0.62f, 0.20f, 0.90f); // 앰버 테두리
+	const FLinearColor CbChipIdle  (0.14f, 0.16f, 0.20f, 0.90f);
+	const FLinearColor CbChipOn    (1.00f, 0.62f, 0.20f, 0.95f); // 선택된 유형
+	const FLinearColor CbTextMain  (0.92f, 0.94f, 0.97f, 1.00f);
+	const FLinearColor CbTextDim   (0.55f, 0.60f, 0.66f, 1.00f);
+	const FLinearColor CbTextOnChip(0.05f, 0.06f, 0.08f, 1.00f);
+	const FLinearColor CbGood      (0.40f, 0.85f, 0.45f, 1.00f);
 
 	FString TypeLabel(ECatchBallType T)
 	{
@@ -73,15 +73,15 @@ void ACatchBallHUD::DrawHUD()
 	const float PanelX = (W - PanelW) * 0.5f;   // 상단 가운데
 	const float PanelY = 28.0f * S;
 
-	DrawPanel(PanelX, PanelY, PanelW, PanelH, PanelBg, PanelLine);
+	DrawPanel(PanelX, PanelY, PanelW, PanelH, CbPanelBg, CbPanelLine);
 
 	// 진행/성공 (패널 상단 줄)
 	const FString Progress = FString::Printf(TEXT("%d / %d"),
 		Pawn->GetPitchNumber(), Pawn->GetTotalPitches());
-	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 16.0f * S, TextMain, 1.1f * S);
+	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 16.0f * S, CbTextMain, 1.1f * S);
 
 	const FString SuccessStr = FString::Printf(TEXT("Caught  %d"), Pawn->GetSuccessCount());
-	DrawLabel(SuccessStr, PanelX + PanelW - 150.0f * S, PanelY + 16.0f * S, Good, 1.1f * S);
+	DrawLabel(SuccessStr, PanelX + PanelW - 150.0f * S, PanelY + 16.0f * S, CbGood, 1.1f * S);
 
 	// 타구 타입별 성공률 (측정 지표 ②) + 공 속도 배율 — 진행 줄 가운데.
 	{
@@ -100,7 +100,7 @@ void ACatchBallHUD::DrawHUD()
 		const FString Line = ByType.IsEmpty()
 			? FString::Printf(TEXT("speed x%.1f  ([ / ])"), Pawn->GetBallSpeedScale())
 			: FString::Printf(TEXT("%s      speed x%.1f"), *ByType, Pawn->GetBallSpeedScale());
-		DrawCentered(Line, PanelX + PanelW * 0.5f, PanelY + 18.0f * S, TextDim, 0.8f * S);
+		DrawCentered(Line, PanelX + PanelW * 0.5f, PanelY + 18.0f * S, CbTextDim, 0.8f * S);
 	}
 
 	// ── 유형 선택 칩 4개 (패널 하단 줄) ──
@@ -122,18 +122,18 @@ void ACatchBallHUD::DrawHUD()
 		const bool bOn = (Types[i] == Cur);
 		const float CX = AreaX + i * (ChipW + Gap);
 
-		DrawPanel(CX, ChipsY, ChipW, ChipH, bOn ? ChipOn : ChipIdle,
-			bOn ? ChipOn : FLinearColor(0.3f, 0.33f, 0.38f, 0.8f));
+		DrawPanel(CX, ChipsY, ChipW, ChipH, bOn ? CbChipOn : CbChipIdle,
+			bOn ? CbChipOn : FLinearColor(0.3f, 0.33f, 0.38f, 0.8f));
 
 		// 숫자키 + 이름
 		const FString Label = FString::Printf(TEXT("%d  %s"), i + 1, *TypeLabel(Types[i]));
 		DrawCentered(Label, CX + ChipW * 0.5f, ChipsY + 12.0f * S,
-			bOn ? TextOnChip : TextMain, 0.85f * S);
+			bOn ? CbTextOnChip : CbTextMain, 0.85f * S);
 	}
 
 	// ── 하단 조작 안내 ──
 	DrawCentered(TEXT("WASD move   Space catch   1-4 type   [ / ] ball speed   M exit"),
-		W * 0.5f, PanelY + PanelH + 12.0f * S, TextDim, 0.8f * S);
+		W * 0.5f, PanelY + PanelH + 12.0f * S, CbTextDim, 0.8f * S);
 
 	// ── 마지막 판정 결과 (있으면 중앙에 크게) ──
 	FString ResultLine;
@@ -162,7 +162,7 @@ void ACatchBallHUD::DrawHUD()
 		int32 i = 0;
 		while (i < Coaching.Len() && PY <= CoachMaxY)
 		{
-			DrawCentered(Coaching.Mid(i, MaxChars), W * 0.5f, PY, TextMain, 0.85f * S);
+			DrawCentered(Coaching.Mid(i, MaxChars), W * 0.5f, PY, CbTextMain, 0.85f * S);
 			PY += 26.0f * S;
 			i += MaxChars;
 		}

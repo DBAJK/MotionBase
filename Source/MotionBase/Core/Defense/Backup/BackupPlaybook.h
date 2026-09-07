@@ -76,4 +76,11 @@ public:
 
 	/** 영문 표시 이름 (3D 텍스트는 한글 폰트가 없어 영어로 표기). */
 	static FString PositionName(EFieldPosition Pos);
+
+	/**
+	 * 야구 스코어링 관례의 수비 번호 (1B=3, 2B=4, 3B=5, SS=6, LF=7, CF=8, RF=9).
+	 * 동료 수비수 마커의 등번호에 쓴다 — 실제 유니폼처럼 보이게 하는 디테일이자,
+	 * 뒤에서 봐도 누구인지 읽히는 표시.
+	 */
+	static int32 PositionNumber(EFieldPosition Pos);
 };

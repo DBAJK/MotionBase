@@ -3,6 +3,7 @@
 #include "Core/Defense/Backup/BackupJudge.h"
 #include "Core/Defense/Backup/BackupHUD.h"
 #include "Core/Defense/CatchBall/CatchBall.h"
+#include "Core/Defense/Backup/FielderMarker.h"
 #include "Core/MotionBaseGameMode.h"
 #include "Core/ModeManager.h"
 #include "MotionBase.h"
@@ -149,6 +150,9 @@ void ABackupPawn::BeginPlay()
 	RuleTable = UBackupPlaybook::BuildRuleTable();
 	RefillBags();
 
+	// 동료 마커는 Position 이 확정된 뒤에 세운다 (본인 자리를 알아야 이름표만 남길 수 있다).
+	SpawnFielderMarkers();
+
 	// 첫 배치 — VR 은 HMD 포즈가 아직 정확하지 않을 수 있지만, 없는 것보단 낫다.
 	// 실제 배치는 SpawnNextTrial 이 매 시행(첫 시행 포함) 다시 잡는다.
 	SnapToFieldingSpot();
@@ -168,6 +172,8 @@ void ABackupPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		ActiveBall->Destroy();
 		ActiveBall = nullptr;
 	}
+
+	DestroyFielderMarkers();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -215,7 +221,7 @@ void ABackupPawn::SpawnFlavorBall()
 	const float VZ = (ToTarget.Z / Flight) + 0.5f * G * Flight;
 	const FVector Velocity = Horiz.GetSafeNormal() * VHoriz + FVector(0.0f, 0.0f, VZ);
 
-	TSubclassOf<ACatchBall> Cls = BallClass ? BallClass : ACatchBall::StaticClass();
+	UClass* const Cls = BallClass ? BallClass.Get() : ACatchBall::StaticClass();
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
@@ -240,6 +246,19 @@ void ABackupPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	PlayerInputComponent->BindKey(EKeys::A, IE_Released, this, &ABackupPawn::OnLeftReleased);
 	PlayerInputComponent->BindKey(EKeys::D, IE_Pressed,  this, &ABackupPawn::OnRightPressed);
 	PlayerInputComponent->BindKey(EKeys::D, IE_Released, this, &ABackupPawn::OnRightReleased);
+
+	// 시야 회전 — Q/E 와 ←/→ 둘 다 받는다 (손 습관이 갈리는 자리라 양쪽 다 열어 둔다).
+	// ⚠️ BindAxisKey 는 이 프로젝트에서 안 먹는다(DefaultInput.ini 에 AxisMappings 가 없음)
+	//    — 그래서 WASD 와 같은 눌림/뗌 플래그 방식으로 맞춘다. 마우스 룩은 축 바인딩을
+	//    거치지 않고 TickPCLook 에서 GetInputMouseDelta 로 직접 읽는다.
+	PlayerInputComponent->BindKey(EKeys::Q, IE_Pressed,  this, &ABackupPawn::OnTurnLeftPressed);
+	PlayerInputComponent->BindKey(EKeys::Q, IE_Released, this, &ABackupPawn::OnTurnLeftReleased);
+	PlayerInputComponent->BindKey(EKeys::E, IE_Pressed,  this, &ABackupPawn::OnTurnRightPressed);
+	PlayerInputComponent->BindKey(EKeys::E, IE_Released, this, &ABackupPawn::OnTurnRightReleased);
+	PlayerInputComponent->BindKey(EKeys::Left,  IE_Pressed,  this, &ABackupPawn::OnTurnLeftPressed);
+	PlayerInputComponent->BindKey(EKeys::Left,  IE_Released, this, &ABackupPawn::OnTurnLeftReleased);
+	PlayerInputComponent->BindKey(EKeys::Right, IE_Pressed,  this, &ABackupPawn::OnTurnRightPressed);
+	PlayerInputComponent->BindKey(EKeys::Right, IE_Released, this, &ABackupPawn::OnTurnRightReleased);
 
 	PlayerInputComponent->BindKey(EKeys::M, IE_Pressed, this, &ABackupPawn::ReturnToModeSelect);
 
@@ -278,6 +297,13 @@ void ABackupPawn::SnapToFieldingSpot()
 	{
 		SetActorRotation(FRotator(0.0f, DesiredYaw, 0.0f));
 		SetActorLocation(FVector(Spot.X, Spot.Y, GroundW));
+
+		// 매 시행은 타자를 보는 준비 자세에서 시작한다 — 둘러보다 만 상하각을 그대로
+		// 들고 가면 하늘이나 발밑을 본 채로 큐가 뜬다. (좌우는 위 SetActorRotation 이 처리)
+		if (Camera)
+		{
+			Camera->SetRelativeRotation(FRotator::ZeroRotator);
+		}
 	}
 }
 
@@ -690,6 +716,10 @@ void ABackupPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// 시야 회전은 단계와 무관하게 항상 허용 — 시행 사이(결과 확인 중)에도 둘러볼 수 있어야
+	// 다음 시행의 배치를 눈에 익힌다.
+	TickPCLook(DeltaSeconds);
+
 	if (bVR)
 	{
 		// 패널을 플레이어 정면에 고정 배치(swimming 제거).
@@ -751,10 +781,14 @@ void ABackupPawn::Tick(float DeltaSeconds)
 		DrawDebugLine(GetWorld(), Base + FVector(-60, 0, 0), Base + FVector(-60, 0, 140), FColor(90, 90, 100), false, -1.0f, 0, 1.2f);
 	}
 
-	if (Phase == EBackupPhase::Live)
+	// 진행 중엔 중립색 후보만, 판정 뒤엔 정답 강조 — DrawZones 안에서 갈린다.
+	// (예전엔 Live 에서만 그렸는데, 그래서 정작 복기용 정답 공개가 없었다.)
+	if (CurrentTrial.CandidateZones.Num() > 0)
 	{
 		DrawZones();
 	}
+
+	UpdateFielderLabels();
 
 	if (bVR)
 	{
@@ -946,12 +980,23 @@ void ABackupPawn::DrawZones() const
 		return;
 	}
 
+	// 판정 전엔 어느 게 정답인지 드러내지 않는다 — 후보 전부 같은 색·같은 두께.
+	// 판정 후에만 정답을 초록으로 띄워 복기시킨다 (IsAnswerRevealed).
+	const bool bReveal = IsAnswerRevealed();
+	constexpr uint8 Neutral[3] = { 150, 156, 170 };
+
 	for (int32 i = 0; i < CurrentTrial.CandidateZones.Num(); ++i)
 	{
 		const FBackupZone& Z = CurrentTrial.CandidateZones[i];
 		const bool bCorrect = (i == CurrentTrial.CorrectCandidateIndex);
-		const FColor Col = bCorrect ? FColor(90, 220, 110) : FColor(90, 96, 110);
-		const float Thickness = bCorrect ? 3.0f : 1.2f;
+
+		FColor Col = FColor(Neutral[0], Neutral[1], Neutral[2]);
+		float Thickness = 1.6f;
+		if (bReveal)
+		{
+			Col = bCorrect ? FColor(90, 220, 110) : FColor(90, 96, 110);
+			Thickness = bCorrect ? 3.0f : 1.2f;
+		}
 
 		if (Z.Role == EBackupRole::CutoffRelay)
 		{
@@ -961,6 +1006,116 @@ void ABackupPawn::DrawZones() const
 		{
 			DrawDebugCircle(World, Z.Center + FVector(0, 0, 2), Z.RadiusCm, 32, Col, false, -1.0f, 0, Thickness,
 				FVector(1, 0, 0), FVector(0, 1, 0), false);
+		}
+	}
+}
+
+// ── PC 시야 조작 ──
+
+void ABackupPawn::TickPCLook(float DeltaSeconds)
+{
+	if (bVR)
+	{
+		return; // VR 은 고개를 돌리면 된다.
+	}
+
+	// 좌우 — 폰을 돌린다. WASD 가 폰 기준이라 시야와 이동 축이 함께 돌아간다.
+	float YawDelta = 0.0f;
+	if (bTurnLeft)  { YawDelta -= PCTurnSpeedDegPerSec * DeltaSeconds; }
+	if (bTurnRight) { YawDelta += PCTurnSpeedDegPerSec * DeltaSeconds; }
+
+	// 상하 — 카메라만. 마우스는 축 바인딩 없이 컨트롤러에서 직접 읽는다.
+	float PitchDelta = 0.0f;
+	if (PCMouseLookSensitivity > 0.0f)
+	{
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			float MouseX = 0.0f, MouseY = 0.0f;
+			PC->GetInputMouseDelta(MouseX, MouseY);
+			YawDelta += MouseX * PCMouseLookSensitivity;
+			// UE 관례상 마우스 Y 는 위로 밀면 +. 위를 보려면 pitch 가 + 여야 하므로 그대로 쓴다.
+			PitchDelta += (bPCInvertMouseY ? -MouseY : MouseY) * PCMouseLookSensitivity;
+		}
+	}
+
+	if (!FMath::IsNearlyZero(YawDelta))
+	{
+		AddActorWorldRotation(FRotator(0.0f, YawDelta, 0.0f));
+	}
+
+	if (Camera && !FMath::IsNearlyZero(PitchDelta))
+	{
+		const float NewPitch = FMath::Clamp(
+			Camera->GetRelativeRotation().Pitch + PitchDelta, -PCMaxPitchDeg, PCMaxPitchDeg);
+		Camera->SetRelativeRotation(FRotator(NewPitch, 0.0f, 0.0f));
+	}
+}
+
+// ── 동료 수비수 3D 마커 ──
+
+void ABackupPawn::SpawnFielderMarkers()
+{
+	DestroyFielderMarkers();
+
+	UWorld* World = GetWorld();
+	if (!World || !bShowFielderMarkers)
+	{
+		return;
+	}
+
+	UClass* const MarkerCls = FielderMarkerClass ? FielderMarkerClass.Get() : AFielderMarker::StaticClass();
+
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	Params.Owner = this;
+
+	for (EFieldPosition Pos : UBackupPlaybook::AllPositions())
+	{
+		const FVector Spot = Field.GetFieldingSpot(Pos);
+		const FVector Home = Field.GetBaseLocation(EBaseType::Home);
+		// 동료도 홈(타자) 쪽을 보고 서 있게 — 이름표는 매 프레임 따로 돌린다.
+		const FRotator Facing(0.0f, (Home - Spot).Rotation().Yaw, 0.0f);
+
+		AFielderMarker* Marker = World->SpawnActor<AFielderMarker>(
+			MarkerCls, FVector(Spot.X, Spot.Y, Field.GroundZ), Facing, Params);
+		if (!Marker)
+		{
+			continue;
+		}
+
+		Marker->Configure(Pos, UBackupPlaybook::PositionName(Pos),
+			UBackupPlaybook::PositionNumber(Pos), Pos == Position);
+		FielderMarkers.Add(Marker);
+	}
+}
+
+void ABackupPawn::DestroyFielderMarkers()
+{
+	for (TObjectPtr<AFielderMarker>& Marker : FielderMarkers)
+	{
+		if (IsValid(Marker))
+		{
+			Marker->Destroy();
+		}
+	}
+	FielderMarkers.Reset();
+}
+
+void ABackupPawn::UpdateFielderLabels()
+{
+	if (FielderMarkers.Num() == 0)
+	{
+		return;
+	}
+
+	// 눈높이 기준으로 돌려야 이름표가 정면으로 보인다 (GetPlayerXY 는 바닥 Z 라 그대로 쓰면 안 됨).
+	const FVector Eye = (bVR && Camera) ? Camera->GetComponentLocation() : GetActorLocation();
+
+	for (const TObjectPtr<AFielderMarker>& Marker : FielderMarkers)
+	{
+		if (IsValid(Marker))
+		{
+			Marker->FaceLabelTowards(Eye);
 		}
 	}
 }
