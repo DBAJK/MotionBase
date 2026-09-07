@@ -338,6 +338,14 @@ private:
 	bool  bPitchActive = false;   // 공이 날아가는 중 (스페이스바 대기)
 	bool  bSessionOver = false;
 	float IntervalTimer = 0.0f;   // 다음 공까지 대기 타이머
+
+	/**
+	 * 낙구지점 마커(바닥 원 + VR 공중 원)는 한 투구 내내 안 바뀌는 정적 정보다(위치·반경 고정).
+	 * 매 프레임 대신 이 주기로만 다시 그린다. 내 캐치 반경 원(글러브/발밑을 따라 움직임)은
+	 * 실시간 위치가 필요해서 대상에서 제외 — 계속 매 프레임 그린다.
+	 */
+	static constexpr float LandingMarkerRedrawIntervalSec = 0.5f;
+	float LandingMarkerValidUntilSec = 0.0f;
 	bool  bWaitingNext = false;
 
 	FCatchResult LastResult;
@@ -363,6 +371,14 @@ private:
 
 	/** VR 이동 — 컨트롤러 썸스틱/트랙패드로 포구 위치를 옮긴다 (걷기 대체). */
 	void TickVRLocomotion(float DeltaSeconds);
+
+	/**
+	 * TickVRLocomotion 이 매 틱 읽는 이동축 키 4개(제네릭/Vive × X/Y). 손(Side)이 세션 내내
+	 * 안 바뀌므로 BeginPlay 에서 한 번만 만들어 둔다 — 매 프레임 FString::Printf 로 FKey(내부
+	 * FName 조회)를 새로 만드는 비용을 없앤다.
+	 */
+	FKey LocomotionGenericXKey, LocomotionViveXKey;
+	FKey LocomotionGenericYKey, LocomotionViveYKey;
 
 	/** VR 상태 패널 내용 갱신 (bVR 일 때 매 틱). */
 	void RefreshVrPanel();

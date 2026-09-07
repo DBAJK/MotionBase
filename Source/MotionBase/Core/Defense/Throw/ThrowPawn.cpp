@@ -254,6 +254,9 @@ void AThrowPawn::SpawnNextTrial()
 	CurrentTrial.IdealPower     = DistanceToIdealPower(CurrentTrial.TargetDistance);
 	CurrentTrial.HitRadius      = HitRadius;
 
+	// 새 시행 = 목표 베이스가 바뀌었을 수 있다 — 저빈도 재호출 타이머를 무시하고 즉시 다시 그리게 한다.
+	BaseMarkerValidUntilSec = 0.0f;
+
 	// ② 급구(feed) — 잡아야 시계가 돈다. **내 정면**에서 가슴 높이로 날아온다.
 	//    (동료가 던져 주는 공이다. 이걸 잡는 순간부터 포구→송구 전환 시간이 측정된다.)
 	const float G = FMath::Abs(World->GetGravityZ());
@@ -673,10 +676,27 @@ float AThrowPawn::ThrowHandZ() const
 	return FloorZ() + 140.0f;
 }
 
-void AThrowPawn::DrawPredictedArc(float Power) const
+void AThrowPawn::DrawPredictedArc(float Power, bool bIsIdealArc) const
 {
 	UWorld* World = GetWorld();
 	if (!World || Power <= KINDA_SMALL_NUMBER) { return; }
+
+	// 저빈도 재호출: 파워가 실질적으로 안 바뀌었고 이전에 그린 선이 아직 안 사라졌으면 건너뛴다.
+	// (DrawDebug 라인은 Duration 만큼만 남으므로, 값이 그대로라고 아예 안 그리면 이전 선이
+	//  Duration 뒤에 사라져 버린다 — 그래서 "재호출 주기" 간격으로는 값이 같아도 다시 그려서
+	//  Duration 을 계속 갱신해준다. 대신 매 프레임(90~120Hz) 대신 초당 몇 번으로 줄어든다.)
+	float& LastPower = bIsIdealArc ? LastDrawnIdealPower : LastDrawnCurrentPower;
+	float& ValidUntilSec = bIsIdealArc ? IdealArcValidUntilSec : CurrentArcValidUntilSec;
+	const float Now = World->GetTimeSeconds();
+	const bool bPowerChanged = !FMath::IsNearlyEqual(Power, LastPower, 0.01f);
+	if (!bPowerChanged && Now < ValidUntilSec)
+	{
+		return;
+	}
+	LastPower = Power;
+	// Duration 에 여유를 둬 재호출 사이에 선이 깜빡이며 사라지지 않게 한다.
+	const float Duration = PredictedArcRedrawIntervalSec * 1.5f;
+	ValidUntilSec = Now + PredictedArcRedrawIntervalSec;
 
 	// 지금 파워로 던지면 그리는 포물선을 미리 보여준다 —
 	// "얼마나 세게 휘둘러야 저기까지 가는지"를 던지기 전에 눈으로 맞출 수 있게.
@@ -699,12 +719,12 @@ void AThrowPawn::DrawPredictedArc(float Power) const
 		{
 			// 착지 예상 지점에 원을 찍고 끝낸다.
 			const FVector Land(P.X, P.Y, Ground + 2.0f);
-			DrawDebugLine(World, Prev, Land, FColor(120, 200, 255), false, -1.0f, 0, 1.5f);
-			DrawDebugCircle(World, Land, 60.0f, 20, FColor(120, 200, 255), false, -1.0f, 0, 2.0f,
+			DrawDebugLine(World, Prev, Land, FColor(120, 200, 255), false, Duration, 0, 1.5f);
+			DrawDebugCircle(World, Land, 60.0f, 20, FColor(120, 200, 255), false, Duration, 0, 2.0f,
 				FVector(1, 0, 0), FVector(0, 1, 0), false);
 			return;
 		}
-		DrawDebugLine(World, Prev, P, FColor(120, 200, 255), false, -1.0f, 0, 1.5f);
+		DrawDebugLine(World, Prev, P, FColor(120, 200, 255), false, Duration, 0, 1.5f);
 		Prev = P;
 	}
 }
@@ -857,18 +877,26 @@ void AThrowPawn::Tick(float DeltaSeconds)
 	// 정답 파워(IdealPower)의 궤적도 함께 그려 "얼마나 더 세게" 를 눈으로 비교하게 한다.
 	if (Phase == EThrowPhase::Ready && !bSessionOver)
 	{
-		DrawPredictedArc(CurrentTrial.IdealPower);   // 목표(연한 파랑)
+		DrawPredictedArc(CurrentTrial.IdealPower, /*bIsIdealArc=*/true);   // 목표(연한 파랑)
 		if (CurrentPower > 0.01f)
 		{
-			DrawPredictedArc(CurrentPower);          // 지금 파워
+			DrawPredictedArc(CurrentPower, /*bIsIdealArc=*/false);          // 지금 파워
 		}
 	}
 
 	// ── 베이스 마커 — 네 베이스를 모두 그리고 목표만 강조한다 ──
 	// 그라운드 방향이 확정되기 전(첫 시행 대기 중)에는 그리지 않는다 — 임시 방향으로 깔았다가
 	// 첫 구에서 통째로 회전하면 "베이스가 순간이동했다"로 보인다.
-	if (bFieldAnchored && !bSessionOver && GetWorld())
+	//
+	// 위치·목표·HitRadius 모두 한 시행 내내 안 바뀌는 정적 정보라, 매 프레임 다시 그릴 필요가
+	// 없다 — 저빈도(BaseMarkerRedrawIntervalSec)로만 재호출하고 Duration 을 그보다 길게 줘서
+	// 사이 간격에도 계속 보이게 한다.
+	if (bFieldAnchored && !bSessionOver && GetWorld()
+		&& GetWorld()->GetTimeSeconds() >= BaseMarkerValidUntilSec)
 	{
+		const float Duration = BaseMarkerRedrawIntervalSec * 1.5f;
+		BaseMarkerValidUntilSec = GetWorld()->GetTimeSeconds() + BaseMarkerRedrawIntervalSec;
+
 		const EBaseType Bases[NumBases] =
 			{ EBaseType::First, EBaseType::Second, EBaseType::Third, EBaseType::Home };
 		for (int32 i = 0; i < NumBases; ++i)
@@ -879,15 +907,15 @@ void AThrowPawn::Tick(float DeltaSeconds)
 
 			// 베이스 판 (마름모 대신 사각 박스로 단순 표시).
 			DrawDebugBox(GetWorld(), T + FVector(0, 0, 3.0f), FVector(45.0f, 45.0f, 3.0f),
-				FQuat::Identity, Col, false, -1.0f, 0, bTarget ? 3.0f : 1.5f);
+				FQuat::Identity, Col, false, Duration, 0, bTarget ? 3.0f : 1.5f);
 
 			if (bTarget)
 			{
 				// 받는 사람 + 목표 zone.
 				DrawDebugCapsule(GetWorld(), T + FVector(0, 0, 88.0f), 88.0f, 34.0f,
-					FQuat::Identity, FColor::Red, false, -1.0f, 0, 3.0f);
+					FQuat::Identity, FColor::Red, false, Duration, 0, 3.0f);
 				DrawDebugCircle(GetWorld(), T + FVector(0, 0, 2.0f), CurrentTrial.HitRadius, 32,
-					FColor::Yellow, false, -1.0f, 0, 3.0f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+					FColor::Yellow, false, Duration, 0, 3.0f, FVector(1, 0, 0), FVector(0, 1, 0), false);
 			}
 		}
 	}

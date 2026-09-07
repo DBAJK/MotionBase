@@ -198,6 +198,14 @@ private:
 	float VrCooldown = 0.0f;   // 확정 직후 오선택 방지용 짧은 잠금
 	bool  bTriggerHeldPrev = false;   // 트리거 눌림 에지 검출용 (직전 프레임 상태)
 
+	/**
+	 * UpdateVRMenu 가 매 틱 읽는 트리거 키(제네릭/Vive). 손이 세션 내내 안 바뀌므로
+	 * InitVRMenu 에서 한 번만 만들어 둔다 — 매 프레임 FString::Printf 로 FKey 를 새로 만드는
+	 * 비용을 없앤다.
+	 */
+	FKey TriggerGenericKey;
+	FKey TriggerViveKey;
+
 	EStage Stage = EStage::Mode;
 
 	TArray<EGameModeId> MenuModes;

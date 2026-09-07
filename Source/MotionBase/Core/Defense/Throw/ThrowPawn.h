@@ -298,8 +298,30 @@ private:
 	/** 송구가 출발하는 손 높이 (월드 Z). */
 	float ThrowHandZ() const;
 
-	/** 송구 궤적 예측선을 그린다 (지금 파워로 던지면 어디로 가는지). */
-	void DrawPredictedArc(float Power) const;
+	/**
+	 * 송구 궤적 예측선을 그린다 (지금 파워로 던지면 어디로 가는지).
+	 * @param bIsIdealArc 목표(정답 파워) 궤적이면 true, 실시간 파워 궤적이면 false — 매 틱 둘 다
+	 *        호출되는데 서로 독립적으로 값이 바뀌므로 저빈도 재호출 캐시를 따로 둔다.
+	 */
+	void DrawPredictedArc(float Power, bool bIsIdealArc) const;
+
+	/** DrawPredictedArc 저빈도 재호출 주기(초) — 이 값이 지나기 전엔 파워가 그대로면 다시 안 그린다. */
+	static constexpr float PredictedArcRedrawIntervalSec = 0.15f;
+
+	/** 예측선 저빈도 재호출용 캐시(목표 파워 궤적). */
+	mutable float LastDrawnIdealPower = -1.0f;
+	mutable float IdealArcValidUntilSec = 0.0f;
+
+	/** 예측선 저빈도 재호출용 캐시(실시간 파워 궤적). */
+	mutable float LastDrawnCurrentPower = -1.0f;
+	mutable float CurrentArcValidUntilSec = 0.0f;
+
+	/**
+	 * 베이스 마커(4개 박스 + 목표 캡슐/원)는 시행 내내 안 바뀌는 정적 정보다.
+	 * 매 프레임 대신 이 주기로만 다시 그린다 (Duration 도 같이 늘려서 사이 간격을 덮는다).
+	 */
+	static constexpr float BaseMarkerRedrawIntervalSec = 0.5f;
+	float BaseMarkerValidUntilSec = 0.0f;
 
 	/** EBaseType → 집계 배열 인덱스. */
 	static int32 BaseIndexOf(EBaseType Base);
