@@ -119,8 +119,8 @@ void ABackupPawn::BeginPlay()
 
 	// 나가기 제스처 — 이동 게이트(트리거)를 쥔 채 팔을 크게 휘두를 수 있어 기본값보다 조인다.
 	// 시행이 진행 중인 동안(Live)에는 Tick 에서 진행을 동결한다.
-	ExitGesture.UpThreshold = 0.85f;
-	ExitGesture.HoldSec = 2.0f;
+	ExitGesture.UpThreshold = LiveExitUpThreshold;
+	ExitGesture.HoldSec     = LiveExitHoldSec;
 
 	if (VrPanel)
 	{
@@ -208,7 +208,15 @@ void ABackupPawn::SpawnFlavorBall()
 	const float DepthCm = ApproxZoneDepthCm(CurrentTrial.Play.BallZone, Field);
 	const FVector Home = Field.GetBaseLocation(EBaseType::Home);
 	const FVector TargetXY = Home + FRotator(0.0f, BearingDeg, 0.0f).RotateVector(FVector(DepthCm, 0.0f, 0.0f));
-	const FVector Target(TargetXY.X, TargetXY.Y, Field.GroundZ);
+	FVector Target(TargetXY.X, TargetXY.Y, Field.GroundZ);
+
+	// 정답이 커버/백업인 시행 = "이 공은 남이 처리한다" — 그런 공을 내 발밑에 떨어뜨리면
+	// 눈으로 보는 상황과 정답이 어긋난다. 타구를 실제 처리 야수 쪽으로 밀어낸다.
+	// (Hold 시행은 그대로 둔다 — 그쪽은 내 쪽으로 오는 게 맞는 신호다.)
+	if (!CurrentTrial.bIsHoldTrial)
+	{
+		Target = ClearBallFromMySpot(Target);
+	}
 
 	// 발사 지점 = 홈 플레이트 임팩트 높이 근방(타자가 방금 친 자리).
 	const FVector Launch = Home + FVector(0.0f, 0.0f, 120.0f);
@@ -232,6 +240,36 @@ void ABackupPawn::SpawnFlavorBall()
 		ActiveBall->SetTrailVisible(true);
 		ActiveBall->Launch(Velocity);
 	}
+}
+
+FVector ABackupPawn::ClearBallFromMySpot(const FVector& Target) const
+{
+	const FVector MySpot = Field.GetFieldingSpot(Position);
+	if (BallClearanceFromMeCm <= 0.0f || FVector::Dist2D(Target, MySpot) >= BallClearanceFromMeCm)
+	{
+		return Target; // 이미 충분히 떨어져 있다 — 저작한 타구 방향을 그대로 존중한다.
+	}
+
+	// 밀어낼 방향은 실제로 공을 처리하는 야수 쪽이 1순위다 — 그래야 타구가 "저 사람에게"
+	// 가는 것으로 읽혀, 내가 왜 베이스로 가야 하는지가 화면만 보고도 납득된다.
+	FVector Dir = FVector::ZeroVector;
+	const FBackupPlay& Play = CurrentTrial.Play;
+	if (Play.bHasThrowFrom && Play.ThrowFrom != Position)
+	{
+		Dir = (Field.GetFieldingSpot(Play.ThrowFrom) - MySpot).GetSafeNormal2D();
+	}
+	if (Dir.IsNearlyZero())
+	{
+		Dir = (Target - MySpot).GetSafeNormal2D(); // 처리 야수가 없으면 원래 방향으로 더 밀어낸다.
+	}
+	if (Dir.IsNearlyZero())
+	{
+		// 타구가 내 자리와 정확히 겹치는 극단적 경우 — 홈 반대쪽(더 깊은 쪽)으로 보낸다.
+		Dir = (MySpot - Field.GetBaseLocation(EBaseType::Home)).GetSafeNormal2D();
+	}
+
+	const FVector Pushed = Field.ClampToFairTerritory(MySpot + Dir * BallClearanceFromMeCm);
+	return FVector(Pushed.X, Pushed.Y, Field.GroundZ);
 }
 
 void ABackupPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -261,6 +299,8 @@ void ABackupPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	PlayerInputComponent->BindKey(EKeys::Right, IE_Released, this, &ABackupPawn::OnTurnRightReleased);
 
 	PlayerInputComponent->BindKey(EKeys::M, IE_Pressed, this, &ABackupPawn::ReturnToModeSelect);
+	// [R] 다시 하기 — 헤드셋 밖(데스크톱)에서도 세션을 이어 돌릴 수 있게. VR 은 종료 화면의 카드로.
+	PlayerInputComponent->BindKey(EKeys::R, IE_Pressed, this, &ABackupPawn::RestartSession);
 
 	// 타구 속도 조절 — [ 느리게 / ] 빠르게. 다음 시행부터 반영된다 (사용자가 요청한
 	// "타구가 날아오는 걸 느리게 볼 수 있게"를 만족시키는 손잡이 — CatchBallPawn 과 동일 패턴).
@@ -480,6 +520,18 @@ void ABackupPawn::FinishTrial(EBackupOutcome Outcome)
 void ABackupPawn::EndSession()
 {
 	bSessionOver = true;
+
+	// ── 여기서부터는 '나가는 길'을 최대한 열어 준다 ──
+	// 플레이 중 임계는 이 종목의 자연 동작(글러브 들기·와인드업 등)과 겹치지 않으려고
+	// 조여 둔 값이다. 세션이 끝나면 오발동시킬 동작이 없으므로 그대로 두면 어렵기만 하다.
+	ExitGesture.UpThreshold = 0.80f; // 수직에서 ±37°
+	ExitGesture.HoldSec     = 1.2f;
+	ExitGesture.HeldSec     = 0.0f;
+	EndMenu.Reset();
+	if (VrPanel)
+	{
+		VrPanel->RequestRecenter(); // 결과·선택 카드를 지금 보는 정면에 다시 잡는다.
+	}
 	RequestBackupFeedback();
 }
 
@@ -571,6 +623,25 @@ FWeaknessReport ABackupPawn::BuildBackupReport() const
 
 	R.Weaknesses.Sort([](const FWeakness& A, const FWeakness& B) { return A.Severity > B.Severity; });
 	return R;
+}
+
+void ABackupPawn::RestartSession()
+{
+	// 끝난 판을 먼저 확정 저장한다 — 안 하면 StartSession 이 누적을 비워 기록이 사라진다.
+	FlushSessionToSave();
+
+	// 종료 화면에서 풀어 뒀던 나가기 조건을 플레이용으로 다시 조이고, 카드를 내린다.
+	ExitGesture.UpThreshold = LiveExitUpThreshold;
+	ExitGesture.HoldSec     = LiveExitHoldSec;
+	ExitGesture.HeldSec     = 0.0f;
+	EndMenu.Reset();
+	if (VrPanel && bVR)
+	{
+		VrPanel->ShowBackCard(TEXT("EXIT - aim here & hold"), FColor(255, 190, 90));
+		VrPanel->RequestRecenter();
+	}
+
+	StartSession();
 }
 
 void ABackupPawn::FlushSessionToSave()
@@ -733,6 +804,25 @@ void ABackupPawn::Tick(float DeltaSeconds)
 			// 시행이 진행 중(Live)일 땐 나가기 제스처를 동결한다 — 백업 이동 중 팔이
 			// 위로 향할 수 있는데(스틱 조작 자세) 그게 나가기로 오인되면 세션이 날아간다.
 			const bool bGestureAllowed = (Phase != EBackupPhase::Live);
+			// 세션 종료 화면 — 패널 하단 카드를 겨눠 '다시 하기 / 메뉴로'를 고른다.
+			// 제스처보다 먼저 본다: 명시적으로 고른 선택이 우연한 자세보다 우선한다.
+			if (bSessionOver && VrPanel)
+			{
+				const int32 Chosen = EndMenu.Update(VrPanel, EndCardFirstRow, /*CardCount=*/2,
+					MoveController->GetComponentLocation(), MoveController->GetForwardVector(),
+					MoveController->IsTracked(), DeltaSeconds);
+				if (Chosen == 0)
+				{
+					RestartSession();
+					return; // 이번 프레임의 나머지 판정은 이전 세션 기준이라 건너뛴다.
+				}
+				if (Chosen == 1)
+				{
+					ReturnToModeSelect();
+					return; // 폰이 곧 교체된다 — 이 프레임 종료.
+				}
+			}
+
 			bool bExit = false;
 			ExitGesture.Update(MoveController->GetForwardVector(),
 				MoveController->IsTracked(), bGestureAllowed, DeltaSeconds, bExit);
@@ -1133,7 +1223,8 @@ void ABackupPawn::RefreshVrPanel()
 			FColor(150, 210, 255));
 
 		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
-		constexpr int32 MaxContentRows = 4;
+		//    종료 화면은 마지막 두 줄을 선택 카드에 내주므로 내용이 한 줄 줄어든다.
+		const int32 MaxContentRows = EndCardFirstRow;
 		int32 Row = 0;
 
 		const float AvgD = GetAverageDecisionSec();
@@ -1156,9 +1247,14 @@ void ABackupPawn::RefreshVrPanel()
 		}
 		VrPanel->HideRowsFrom(Row);
 
-		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended training"),
-			FColor(150, 156, 168));
-		VrPanel->SetHint(TEXT("Raise controller = menu"), FColor(110, 116, 128));
+		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
+		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
+		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
+		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("PLAY AGAIN")),   EndMenu.Color(0));
+		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("BACK TO MENU")), EndMenu.Color(1));
+		VrPanel->HideFooter();
+		VrPanel->HideBackCard();
+		VrPanel->SetHint(TEXT("aim the controller at a card and hold"), FColor(110, 116, 128));
 		return;
 	}
 

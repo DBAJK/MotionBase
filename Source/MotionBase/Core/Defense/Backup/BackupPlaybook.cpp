@@ -109,6 +109,31 @@ namespace
 		R.bRequireNoThrowFrom = true;
 		return R;
 	}
+	/** "내가 던지는 플레이엔 걸리지 않는다" 안전장치 — 블랭킷 규칙에 붙인다. */
+	FBackupAssignmentRule WithoutSelfThrow(FBackupAssignmentRule R)
+	{
+		R.bExcludeSelfThrow = true;
+		return R;
+	}
+	/** "번트엔 걸리지 않는다" 안전장치 — 내야 기본 로테이션 규칙에 붙인다. */
+	FBackupAssignmentRule WithoutBunt(FBackupAssignmentRule R)
+	{
+		R.bExcludeBunt = true;
+		return R;
+	}
+	FBackupAssignmentRule WithBallKind(FBackupAssignmentRule R, EBattedBallKind Kind)
+	{
+		R.bFilterBallKind = true;
+		R.BallKind = Kind;
+		return R;
+	}
+	/** BackUpBase 가 송구 목적지 대신 지정한 베이스를 받치게 한다. */
+	FBackupAssignmentRule BackingUpBase(FBackupAssignmentRule R, EBaseType Anchor)
+	{
+		R.bAnchorBaseOverride = true;
+		R.AnchorBase = Anchor;
+		return R;
+	}
 }
 
 TArray<FBackupPlay> UBackupPlaybook::BuildPlayTable()
@@ -173,10 +198,11 @@ TArray<FBackupPlay> UBackupPlaybook::BuildPlayTable()
 	P.Add(MakePlay(TEXT("GAP_CF_3B_DEEP"), EBattedBallZone::Center, EBattedBallKind::FlyBall, ERunnerState::First,
 		true, EFieldPosition::Center, EBaseType::Third, true,
 		TEXT("Deep drive off the wall in center, batter-runner digging for third"), TEXT("Runner on 1st")));
-	// 주: "좌익수 자신이 처리해 3루로 던지는" 대칭 플레이는 일부러 안 만든다 — 그러면
-	// "좌익수가 3루 뒤를 백업한다"는 블랭킷 규칙(아래 R11)이 좌익수 본인의 송구까지
-	// 백업 대상으로 착각하는 자기충돌이 생긴다 (Resolve 필터로는 "ThrowFrom ≠ 나" 를
-	// 표현할 수 없어, 아예 그런 플레이를 만들지 않는 쪽을 택했다).
+	// 주: "좌익수 자신이 처리해 3루로 던지는" 대칭 플레이는 여기 없다. 예전엔 그게
+	// **필수 회피책**이었다 — "좌익수가 3루 뒤를 백업한다"는 블랭킷 규칙이 좌익수 본인의
+	// 송구까지 백업 대상으로 착각하는데, Resolve 필터로 "ThrowFrom ≠ 나"를 표현할 수 없었다.
+	// 지금은 그 블랭킷 규칙들에 bExcludeSelfThrow 가 붙어 규칙 쪽에서 직접 막으므로,
+	// 필요하면 그런 플레이를 추가해도 안전하다 (아직 훈련 가치가 낮아 안 넣었을 뿐이다).
 
 	// ── 외야 안타/2루타 → 홈·2루 송구 중계 (1루수: 외야→내야 중계 커버 / 유격수: 좌·중견 중계) ──
 	P.Add(MakePlay(TEXT("RELAY_HOME_RF"), EBattedBallZone::RightField, EBattedBallKind::LineDrive, ERunnerState::Second,
@@ -191,6 +217,11 @@ TArray<FBackupPlay> UBackupPlaybook::BuildPlayTable()
 	P.Add(MakePlay(TEXT("FLY_LC_SS_CUTOFF"), EBattedBallZone::LeftCenter, EBattedBallKind::FlyBall, ERunnerState::First,
 		true, EFieldPosition::Center, EBaseType::Third, true,
 		TEXT("Ball drops in the left-center gap, relay throw going to third"), TEXT("Runner on 1st")));
+	// 위 좌중간 플레이의 좌우 대칭 — 우익수에게도 "내 갭을 중견수가 잡는" 상황이 있어야
+	// 갭 백업 규칙(BuildRuleTable 맨 아래)이 실제로 뽑힌다. 없으면 그 규칙은 죽은 데이터가 된다.
+	P.Add(MakePlay(TEXT("GAP_RC_CF_TO_3B"), EBattedBallZone::RightCenter, EBattedBallKind::FlyBall, ERunnerState::First,
+		true, EFieldPosition::Center, EBaseType::Third, true,
+		TEXT("Ball drops in the right-center gap, relay throw going to third"), TEXT("Runner on 1st")));
 	P.Add(MakePlay(TEXT("DOUBLE_LF_HOME"), EBattedBallZone::LeftLine, EBattedBallKind::LineDrive, ERunnerState::First,
 		true, EFieldPosition::Left, EBaseType::Home, true,
 		TEXT("Double into the left-field corner, relay throw going home"), TEXT("Runner on 1st scoring")));
@@ -219,22 +250,68 @@ TArray<FBackupAssignmentRule> UBackupPlaybook::BuildRuleTable()
 {
 	TArray<FBackupAssignmentRule> R;
 
-	// ── 1루 백업 (스펙: 2루수=비우측 송구, 우익수=일반) ──
+	// ══ 내야 기본 로테이션 — 땅볼이 나오면 매번 도는 임무 ══════════════════════════
+	//
+	// 예전엔 이 블록이 통째로 없었다. 번트·병살·도루·중계 같은 **특수 상황부터** 저작하는
+	// 바람에, 정작 야구에서 가장 자주 나오는 "평범한 내야 땅볼"에서는 7개 포지션 중 5개가
+	// Hold(= 내 일 아님)로 떨어졌다. 실제로는 전원이 각자 갈 곳이 있다.
+	//
+	// ⚠️ 전부 WithoutBunt 다. 번트는 1루수가 대시해 들어와 커버가 통째로 달라진다
+	//    (아래 번트 블록이 따로 담당한다).
+	// ⚠️ 전부 WithoutSelfThrow 다 — 공을 처리하는 본인은 이 로테이션에서 빠진다.
+
+	// 1루수: 송구를 받으러 베이스로. (예전엔 Hold 라 수비 위치에 그냥 서 있었다.)
+	R.Add(WithoutBunt(WithoutSelfThrow(WithThrowTo(
+		MakeCoverBase(EFieldPosition::First, EBaseType::First,
+			TEXT("Any throw to first is yours - get to the bag and give a target.")),
+		EBaseType::First))));
+
+	// 미들 인필더: 공을 처리하지 않은 쪽이 2루를 지킨다 (송구가 빠졌을 때 진루 저지).
+	// ⚠️ 여기가 "유격수 땅볼인데 2루수가 1루를 백업한다"였던 자리다. 1루 송구 백업은
+	//    우익수 담당이고(아래), 2루수의 실제 임무는 2루 커버다.
+	R.Add(WithoutBunt(WithThrowFrom(WithThrowTo(
+		MakeCoverBase(EFieldPosition::Second, EBaseType::Second,
+			TEXT("The shortstop is making the play - you have second base behind it.")),
+		EBaseType::First), EFieldPosition::Short)));
+	R.Add(WithoutBunt(WithThrowFrom(WithThrowTo(
+		MakeCoverBase(EFieldPosition::Second, EBaseType::Second,
+			TEXT("Third is making the play - you have second base behind it.")),
+		EBaseType::First), EFieldPosition::Third)));
+	// ⚠️ 유격수 쪽은 WithoutBunt 를 걸지 않는다 — 번트도 주자가 2루로 가므로 커버가 필요하고,
+	//    ThrowFrom 필터가 이미 "1루 쪽 번트"만 남기기 때문에 3루 쪽 번트와 섞이지 않는다.
 	R.Add(WithThrowFrom(WithThrowTo(
-		MakeBackUpBase(EFieldPosition::Second, TEXT("The throw to first is coming from the left side - get over and back it up.")),
-		EBaseType::First), EFieldPosition::Short));
+		MakeCoverBase(EFieldPosition::Short, EBaseType::Second,
+			TEXT("The second baseman is making the play - you have second base behind it.")),
+		EBaseType::First), EFieldPosition::Second));
 	R.Add(WithThrowFrom(WithThrowTo(
-		MakeBackUpBase(EFieldPosition::Second, TEXT("The throw to first is coming from third - get over and back it up.")),
-		EBaseType::First), EFieldPosition::Third));
-	R.Add(WithThrowTo(
+		MakeCoverBase(EFieldPosition::Short, EBaseType::Second,
+			TEXT("The first baseman is making the play - you have second base behind it.")),
+		EBaseType::First), EFieldPosition::First));
+
+	// 3루수: 3루를 비우지 않는다.
+	R.Add(WithoutSelfThrow(WithThrowTo(
+		MakeCoverBase(EFieldPosition::Third, EBaseType::Third,
+			TEXT("Stay home - third base is yours even when the play is going to first.")),
+		EBaseType::First)));
+
+	// 중견수: 2루 뒤를 받친다 (송구가 1루로 가도, 빠지면 주자가 노리는 건 2루다).
+	// 송구 목적지(1루)가 아닌 베이스를 받치는 케이스라 앵커를 규칙에서 지정한다.
+	R.Add(WithThrowTo(BackingUpBase(
+		MakeBackUpBase(EFieldPosition::Center, TEXT("Throw is going to first - drift in behind second in case it gets away.")),
+		EBaseType::Second), EBaseType::First));
+
+	// 우익수: 1루 뒤 백업 (번트 포함 — 1루 송구는 무조건 받친다).
+	R.Add(WithoutSelfThrow(WithThrowTo(
 		MakeBackUpBase(EFieldPosition::Right, TEXT("The right fielder backs up every throw to first base.")),
-		EBaseType::First));
+		EBaseType::First)));
 
 	// ── 1루 커버 (1루수 이탈 시 2루수가 대신 지킨다 — 핵심 시나리오) ──
-	R.Add(WithBallZone(
+	// 번트는 어느 쪽이든 1루수가 대시해 들어온다 → 1루 베이스는 2루수 몫이다.
+	// (예전엔 BallZone=BuntFirst 만 걸려 있어 3루 쪽 번트에서 1루가 비었다.)
+	R.Add(WithBallKind(
 		MakeCoverBase(EFieldPosition::Second, EBaseType::First,
-			TEXT("Once the first baseman leaves the bag, the second baseman covers first."), true),
-		EBattedBallZone::BuntFirst));
+			TEXT("Once the first baseman charges the bunt, the second baseman covers first."), true),
+		EBattedBallKind::Bunt));
 	R.Add(WithThrowFrom(WithThrowTo(
 		MakeCoverBase(EFieldPosition::Second, EBaseType::First,
 			TEXT("The first baseman is pulled off the bag - covering first is the second baseman's job."), true),
@@ -266,35 +343,75 @@ TArray<FBackupAssignmentRule> UBackupPlaybook::BuildRuleTable()
 	// 2루수 자신이 처리한 병살(DP_2B_FIELDS)·유격수 자신이 처리한 병살(DP_SS_FIELDS)은
 	// 위 규칙들이 "본인이 던지는 쪽"을 걸러내므로 그 위치만 자동으로 Hold 로 떨어진다.
 
-	R.Add(WithThrowTo(
+	// 유격수가 커버로 들어가면 2루수는 송구 뒤를 받친다 (빠지면 주자가 3루까지 간다).
+	R.Add(WithNoThrowFrom(WithThrowTo(
+		MakeBackUpBase(EFieldPosition::Second, TEXT("The shortstop takes the tag - you get behind the bag for the overthrow.")),
+		EBaseType::Second)));
+
+	R.Add(WithoutSelfThrow(WithThrowTo(
 		MakeBackUpBase(EFieldPosition::Center, TEXT("The center fielder backs up second base on steals and relay throws."), true),
-		EBaseType::Second));
+		EBaseType::Second)));
 
 	// ── 3루 커버/백업 (스펙: 3루수 3루 커버, 좌익수 3루 뒤 백업) ──
-	R.Add(WithThrowTo(
+	R.Add(WithoutSelfThrow(WithThrowTo(
 		MakeCoverBase(EFieldPosition::Third, EBaseType::Third,
 			TEXT("The third baseman takes the bag for the play.")),
-		EBaseType::Third));
-	R.Add(WithThrowTo(
+		EBaseType::Third)));
+	R.Add(WithoutSelfThrow(WithThrowTo(
 		MakeBackUpBase(EFieldPosition::Left, TEXT("The left fielder backs up throws to third.")),
-		EBaseType::Third));
+		EBaseType::Third)));
 
-	// ── 중계(cutoff) — 1루수: 외야→내야 전반 / 유격수: 좌·중견 방면 ──
+	// ══ 중계(cutoff) — **사이드별 관례** ═══════════════════════════════════════════
+	//
+	//   홈 송구 : 좌익수 발신 → 3루수 / 우익·중견 발신 → 1루수
+	//   3루 송구: 전부 유격수
+	//   2루 송구: 타구가 간 쪽 미들 인필더가 중계, 반대쪽이 베이스 커버
+	//
+	// ⚠️ 컷오프 배정은 팀·리그마다 다르게 가르치는 영역이다. 여기 있는 건 "사이드별"
+	//    관례이며, 바꾸려면 이 블록만 통째로 갈아끼우면 된다 (다른 규칙과 얽혀 있지 않다).
+
+	// ── 홈 송구 ──
 	R.Add(WithThrowTo(WithThrowFrom(
-		MakeCutoff(EFieldPosition::First, TEXT("On a throw from the right side to home, line up as the cutoff man.")),
+		MakeCutoff(EFieldPosition::First, TEXT("Throw home from right field - you are the cutoff man.")),
 		EFieldPosition::Right), EBaseType::Home));
 	R.Add(WithThrowTo(WithThrowFrom(
-		MakeCutoff(EFieldPosition::First, TEXT("On a throw from the right side to second, line up as the cutoff man.")),
-		EFieldPosition::Right), EBaseType::Second));
+		MakeCutoff(EFieldPosition::First, TEXT("Throw home from center field - you are the cutoff man.")),
+		EFieldPosition::Center), EBaseType::Home));
 	R.Add(WithThrowTo(WithThrowFrom(
-		MakeCutoff(EFieldPosition::First, TEXT("On a throw from the right side to third, trail as the safety cutoff.")),
-		EFieldPosition::Right), EBaseType::Third));
+		MakeCutoff(EFieldPosition::Third, TEXT("Throw home from left field - you are the cutoff man on that side.")),
+		EFieldPosition::Left), EBaseType::Home));
+	// 3루수가 컷오프로 나가면 3루가 빈다 — 유격수가 대신 지킨다.
 	R.Add(WithThrowTo(WithThrowFrom(
-		MakeCutoff(EFieldPosition::Short, TEXT("On a throw from center or left to third, the shortstop is the cutoff man.")),
+		MakeCoverBase(EFieldPosition::Short, EBaseType::Third,
+			TEXT("The third baseman is the cutoff on this one - you have third base.")),
+		EFieldPosition::Left), EBaseType::Home));
+
+	// ── 3루 송구 — 어느 외야수가 던지든 유격수가 중계 ──
+	R.Add(WithThrowTo(WithThrowFrom(
+		MakeCutoff(EFieldPosition::Short, TEXT("Throw going to third - the shortstop is the cutoff man.")),
 		EFieldPosition::Center), EBaseType::Third));
 	R.Add(WithThrowTo(WithThrowFrom(
-		MakeCutoff(EFieldPosition::Short, TEXT("On a throw from left to home, the shortstop is the cutoff man.")),
-		EFieldPosition::Left), EBaseType::Home));
+		MakeCutoff(EFieldPosition::Short, TEXT("Throw going to third - the shortstop is the cutoff man.")),
+		EFieldPosition::Left), EBaseType::Third));
+	R.Add(WithThrowTo(WithThrowFrom(
+		MakeCutoff(EFieldPosition::Short, TEXT("Throw going to third - the shortstop is the cutoff man.")),
+		EFieldPosition::Right), EBaseType::Third));
+
+	// ── 2루 송구 — 타구 쪽 미들 인필더가 중계, 반대쪽이 베이스 커버 ──
+	R.Add(WithThrowTo(WithThrowFrom(
+		MakeCutoff(EFieldPosition::Second, TEXT("Ball is on your side - go out as the relay man to second.")),
+		EFieldPosition::Right), EBaseType::Second));
+	R.Add(WithThrowTo(WithThrowFrom(
+		MakeCoverBase(EFieldPosition::Short, EBaseType::Second,
+			TEXT("The second baseman is going out for the relay - you have the bag.")),
+		EFieldPosition::Right), EBaseType::Second));
+	R.Add(WithThrowTo(WithThrowFrom(
+		MakeCutoff(EFieldPosition::Short, TEXT("Ball is on your side - go out as the relay man to second.")),
+		EFieldPosition::Left), EBaseType::Second));
+	R.Add(WithThrowTo(WithThrowFrom(
+		MakeCoverBase(EFieldPosition::Second, EBaseType::Second,
+			TEXT("The shortstop is going out for the relay - you have the bag.")),
+		EFieldPosition::Left), EBaseType::Second));
 
 	// ── 외야 사령탑 — 중견수가 코너 외야수 뒤를 받친다 (핵심 시나리오) ──
 	R.Add(WithThrowFrom(
@@ -305,6 +422,24 @@ TArray<FBackupAssignmentRule> UBackupPlaybook::BuildRuleTable()
 		MakeBackUpFielder(EFieldPosition::Center, EFieldPosition::Right,
 			TEXT("The center fielder is the outfield captain - back up the right fielder too."), true),
 		EFieldPosition::Right));
+
+	// ── 외야 갭 백업 — 내 갭의 타구를 옆 외야수가 처리하면, 먼 베이스가 아니라 그 뒤를 받친다 ──
+	//
+	// 이게 없으면 "좌중간 타구를 중견수가 잡는데 좌익수는 3루 뒤 백업"이 정답이 된다 (블랭킷
+	// 규칙 ThrowTo=Third 에 걸려서). 공이 바로 옆에 떨어졌는데 40m 떨어진 베이스로 달려가라는
+	// 뜻이라 야구로도 틀리고, 플레이어가 룰을 의심하게 되는 자리였다.
+	//
+	// 구체성 2(ThrowFrom + BallZone) > 블랭킷 1(ThrowTo) 이라 매칭이 확정적으로 이쪽을 이긴다
+	// — 동점이면 규칙 선언 순서에 좌우돼 취약해지므로, BallZone 까지 걸어 두는 게 핵심이다.
+	// 반대로 갭이 아닌 타구(중견 정면 등)에서는 이 규칙이 안 걸려 기존대로 베이스를 백업한다.
+	R.Add(WithBallZone(WithThrowFrom(
+		MakeBackUpFielder(EFieldPosition::Left, EFieldPosition::Center,
+			TEXT("The ball is in your gap and the center fielder is taking it - back him up, don't run to the bag."), true),
+		EFieldPosition::Center), EBattedBallZone::LeftCenter));
+	R.Add(WithBallZone(WithThrowFrom(
+		MakeBackUpFielder(EFieldPosition::Right, EFieldPosition::Center,
+			TEXT("The ball is in your gap and the center fielder is taking it - back him up, don't run to the bag."), true),
+		EFieldPosition::Center), EBattedBallZone::RightCenter));
 
 	return R;
 }
@@ -324,9 +459,21 @@ FBackupAssignmentRule UBackupPlaybook::Resolve(const TArray<FBackupAssignmentRul
 		if (Rule.bRequireNoThrowFrom && Play.bHasThrowFrom) { continue; }
 		if (Rule.bFilterBallZone && Rule.BallZone != Play.BallZone) { continue; }
 
+		if (Rule.bFilterBallKind && Rule.BallKind != Play.BallKind) { continue; }
+
+		// 안전장치: 내가 던지는 공을 내가 백업/커버한다는 말이 안 되는 매칭을 걷어낸다.
+		if (Rule.bExcludeSelfThrow && Play.bHasThrowFrom && Play.ThrowFrom == Position) { continue; }
+
+		// 안전장치: 번트는 커버가 통째로 달라진다 (1루수가 대시 → 1루는 2루수가 지킨다).
+		if (Rule.bExcludeBunt && Play.BallKind == EBattedBallKind::Bunt) { continue; }
+
+		// ⚠️ bExcludeSelfThrow 는 구체성에 넣지 않는다 — "더 구체적인 상황"이 아니라
+		//    "성립할 수 없는 경우를 걷어내는" 안전장치라서다 (BackupTypes.h 주석 참고).
+		//    넣으면 블랭킷 규칙이 세밀한 규칙과 같은 순위가 되어 매칭이 뒤집힌다.
 		const int32 Specificity =
 			(Rule.bFilterThrowTo ? 1 : 0) + (Rule.bFilterThrowFrom ? 1 : 0) +
-			(Rule.bFilterBallZone ? 1 : 0) + (Rule.bRequireNoThrowFrom ? 1 : 0);
+			(Rule.bFilterBallZone ? 1 : 0) + (Rule.bRequireNoThrowFrom ? 1 : 0) +
+			(Rule.bFilterBallKind ? 1 : 0);
 		if (Specificity > BestSpecificity)
 		{
 			BestSpecificity = Specificity;

@@ -84,8 +84,9 @@ void AVRBattingPawn::BeginPlay()
 
 	// 나가기 제스처: 타격 준비 자세(배트를 세움)와 겹치므로 가장 빡빡하게 잡는다.
 	// 수직에서 ±18° 이내로 3초 — 스탠스에서 배트를 이 정도로 곧게 세워 3초를 버티긴 어렵다.
-	ExitGesture.UpThreshold = 0.95f;
-	ExitGesture.HoldSec     = 3.0f;
+	// (세션이 끝나면 EndSession 에서 풀어준다 — 그땐 오발동시킬 스윙 자체가 없다.)
+	ExitGesture.UpThreshold = LiveExitUpThreshold;
+	ExitGesture.HoldSec     = LiveExitHoldSec;
 
 	// VR 상태 패널 자식 텍스트 생성 (한 번). 액션 모드라 요소를 눈높이로 모으고,
 	// 나가기용 '뒤로' 카드를 상시 띄운다 (배트를 겨눠 잠시 유지 = 나가기).
@@ -208,6 +209,15 @@ void AVRBattingPawn::HandlePitchThrown(EPitchType PitchType, FVector InPlateLoca
 	bPitchActive = true;
 	bAnalyzedThisPitch = false;
 
+	// 이 공이 세션의 몇 번째인지. 마지막 공이면 여기서 곧바로 자동 투구를 끈다 —
+	// 판정(AnalyzeSwingNow)은 도달 + PostContactDelaySec 뒤라서, 그때 끄면
+	// 그 사이에 투수가 다음 공을 이미 던져버린다.
+	++PitchIndex;
+	if (PitchIndex >= TotalPitches && PitchingZone)
+	{
+		PitchingZone->SetAutoPitch(false);
+	}
+
 	if (Bat)
 	{
 		Bat->BeginSwingCapture(InPlateLocation, InArrivalWorldTime);
@@ -315,6 +325,41 @@ void AVRBattingPawn::AnalyzeSwingNow()
 		SwingCount, *LastCall, LastHit.ExitVelocityMps, LastMetrics.PeakSpeedMps, LastSwingScore.TotalScore);
 }
 
+void AVRBattingPawn::EndSession()
+{
+	bSessionOver = true;
+
+	if (PitchingZone)
+	{
+		PitchingZone->SetAutoPitch(false); // 마지막 공에서 이미 껐지만, 재시작 경로를 위해 멱등하게.
+	}
+
+	// 세션 결과 + 약점·드릴·AI 코칭을 자동으로 띄운다 (수비 모드들과 같은 흐름).
+	// 트리거를 눌러야만 결과가 보이던 예전 동작은, 끝이 없는 세션이라 그랬던 것이다.
+	RequestCoaching();
+
+	// ── 여기서부터는 '나가는 길'을 최대한 열어 준다 ──
+	// 플레이 중 임계(수직 ±18°·3초)는 타자 준비 자세와 겹치지 않으려고 조인 값이다.
+	// 세션이 끝나면 오발동시킬 스윙이 없으므로 그대로 두면 불필요하게 어렵기만 하다.
+	ExitGesture.UpThreshold = 0.80f; // 수직에서 ±37°
+	ExitGesture.HoldSec     = 1.2f;
+	ExitGesture.HeldSec     = 0.0f;
+	EndMenu.Reset();
+
+	// 패널을 정면으로 다시 잡는다 — 플레이 중엔 투구 시야를 비우려고 42° 옆으로
+	// 비켜 놨는데, 이제 공이 안 오므로 옆에 둘 이유가 없고 카드를 겨누기만 어려워진다.
+	if (VrPanel)
+	{
+		VrPanel->RequestRecenter();
+	}
+
+	ShowResultText(FString::Printf(TEXT("SESSION OVER  %d / %d"), ContactCount, SwingCount),
+		FLinearColor(1.0f, 0.85f, 0.15f));
+
+	UE_LOG(LogMotionBase, Log, TEXT("[VRBatting] 세션 종료 — %d구 (스윙 %d · 컨택 %d · 헛스윙 %d · 지켜본 공 %d) 총점 %.1f"),
+		PitchIndex, SwingCount, ContactCount, WhiffCount, TakeCount, SessionScore.TotalScore);
+}
+
 void AVRBattingPawn::ReturnToModeSelect()
 {
 	if (AMotionBaseGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMotionBaseGameMode>() : nullptr)
@@ -374,6 +419,25 @@ void AVRBattingPawn::ResetSession()
 	LastCall.Reset();
 	SwingCount = ContactCount = HomeRunCount = HitCount = WhiffCount = TakeCount = 0;
 	MaxCarryDistanceM = SumCarryDistanceM = 0.0f;
+	PitchIndex = 0;
+	bSessionOver = false;
+	CoachingShowTimer = 0.0f;
+	CoachingText.Reset();
+	if (PitchingZone)
+	{
+		PitchingZone->SetAutoPitch(true); // 세션 종료로 멈춰 있던 투수를 다시 돌린다.
+	}
+
+	// 종료 화면에서 풀어 뒀던 나가기 조건을 플레이용으로 다시 조이고, 카드를 내린다.
+	ExitGesture.UpThreshold = LiveExitUpThreshold;
+	ExitGesture.HoldSec     = LiveExitHoldSec;
+	ExitGesture.HeldSec     = 0.0f;
+	EndMenu.Reset();
+	if (VrPanel)
+	{
+		VrPanel->ShowBackCard(TEXT("EXIT - aim bat here & hold"), FColor(255, 190, 90));
+		VrPanel->RequestRecenter();
+	}
 	LastReport = FWeaknessReport();
 	LastChronic = FChronicWeaknessReport();
 	LastDrills.Reset();
@@ -382,11 +446,16 @@ void AVRBattingPawn::ResetSession()
 
 bool AVRBattingPawn::GetSessionSummary(FSessionSummary& OutSummary) const
 {
-	// 결과 화면은 트리거로 리포트를 요청한 동안만 뜬다 — 타격은 끝이 정해진 종목이 아니라
-	// (연속 투구) "세션 종료" 시점이 따로 없기 때문. 요청 = 지금까지의 판을 보겠다는 뜻.
-	if (CoachingShowTimer <= 0.0f || SessionHistory.Num() == 0)
+	// 결과 화면이 뜨는 두 경우:
+	//   ① 세션 종료(TotalPitches 소진) — 끝났으므로 계속 떠 있는다.
+	//   ② 플레이 중 트리거로 "지금까지의 판"을 요청 — CoachingShowTimer 동안만.
+	if (!bSessionOver && CoachingShowTimer <= 0.0f)
 	{
 		return false;
+	}
+	if (SessionHistory.Num() == 0)
+	{
+		return false; // 휘두른 스윙이 하나도 없으면 그릴 성적이 없다.
 	}
 
 	OutSummary = FSessionSummary();
@@ -513,6 +582,12 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 		}
 	}
 
+	// 목표 구수를 다 던졌고 마지막 공의 판정까지 끝났으면 세션을 닫는다.
+	if (!bSessionOver && PitchIndex >= TotalPitches && !bPitchActive && bAnalyzedThisPitch)
+	{
+		EndSession();
+	}
+
 	// 결과 텍스트 표시 시간 카운트다운.
 	if (ResultTimer > 0.0f)
 	{
@@ -550,9 +625,11 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 	// (겨눔 판정이 카드 위치를 쓰므로 UpdateBackDwell 보다 먼저 자리를 잡는다.)
 	if (VrPanel && Camera)
 	{
-		const float SideYaw = (SessionStance == EBattingStance::Left)
-			? -PanelSideYawDeg   // 좌타(1루 쪽 타석) → 패널은 3루 쪽
-			: +PanelSideYawDeg;  // 우타(3루 쪽 타석) → 패널은 1루 쪽
+		// 세션이 끝나면 정면으로 되돌린다 — 더는 가릴 투구가 없고, 선택 카드는 정면이 편하다.
+		const float SideYaw = bSessionOver ? 0.0f
+			: ((SessionStance == EBattingStance::Left)
+				? -PanelSideYawDeg   // 좌타(1루 쪽 타석) → 패널은 3루 쪽
+				: +PanelSideYawDeg); // 우타(3루 쪽 타석) → 패널은 1루 쪽
 
 		VrPanel->UpdateComfortAnchor(Camera, UVRInfoPanel::DefaultDistanceCm,
 			UVRInfoPanel::DefaultHeightCm, /*RecenterDeg=*/55.0f, SideYaw);
@@ -565,6 +642,24 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 	//    (동결이라 투구 사이 틈에 배트를 세워 두면 정상적으로 나갈 수 있다.)
 	if (Bat)
 	{
+		// 세션 종료 화면 — 패널 하단 카드를 배트로 겨눠 '다시 하기 / 메뉴로'를 고른다.
+		// 제스처보다 먼저 본다: 명시적으로 고른 선택이 우연한 자세보다 우선한다.
+		if (bSessionOver && VrPanel)
+		{
+			const int32 Chosen = EndMenu.Update(VrPanel, EndCardFirstRow, /*CardCount=*/2,
+				Bat->GetBatTipWorldLocation(), Bat->GetAimForwardVector(), Bat->IsTracking(), DeltaSeconds);
+			if (Chosen == 0)
+			{
+				ResetSession(); // 같은 폰에서 새 세션 — 저장은 ResetSession 안에서 확정된다.
+				return;
+			}
+			if (Chosen == 1)
+			{
+				ReturnToModeSelect();
+				return; // 폰이 곧 교체된다 — 이 프레임 종료.
+			}
+		}
+
 		bool bExit = false;
 		ExitGesture.Update(Bat->GetAimForwardVector(), Bat->IsTracking(),
 			/*bAllowed=*/!bPitchActive, DeltaSeconds, bExit);
@@ -604,19 +699,22 @@ void AVRBattingPawn::RefreshVrPanel()
 		return;
 	}
 
-	// AI 운동 추천 오버레이 — 트리거로 요청한 뒤 잠시 코칭+드릴을 패널에 띄운다.
+	// AI 운동 추천 오버레이 — 세션이 끝났거나(상시), 플레이 중 트리거로 요청한 동안(한시) 띄운다.
 	// (한글 코칭은 KRFont 가 있으면 렌더된다. 없으면 데스크톱 로그로 확인.)
-	if (CoachingShowTimer > 0.0f)
+	if (bSessionOver || CoachingShowTimer > 0.0f)
 	{
 		// 헤드셋 안 결과 요약 — 데스크톱 미러는 ISessionResultView 로 전체 패널을 그리지만,
 		// 헤드셋에서는 3D 텍스트라 줄 수가 한정돼 핵심 숫자만 압축해 보여준다.
 		VrPanel->SetTitle(
-			FString::Printf(TEXT("Session result    score %.1f"), SessionScore.TotalScore),
+			bSessionOver
+				? FString::Printf(TEXT("Session over!  %d pitches    score %.1f"), TotalPitches, SessionScore.TotalScore)
+				: FString::Printf(TEXT("Session result    score %.1f"), SessionScore.TotalScore),
 			FColor(150, 210, 255));
 
 		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
 		//    핵심만 압축: 요약 1줄 + 코칭 2줄 + 드릴 1개. 전체 리포트는 데스크톱 결과 화면이 담당.
-		constexpr int32 MaxContentRows = 4;
+		//    세션이 끝난 화면은 마지막 두 줄을 선택 카드에 내주므로 내용이 한 줄 줄어든다.
+		const int32 MaxContentRows = bSessionOver ? EndCardFirstRow : 4;
 
 		int32 Row = 0;
 		if (Row < MaxContentRows)
@@ -640,6 +738,19 @@ void AVRBattingPawn::RefreshVrPanel()
 			VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
 		}
 		VrPanel->HideRowsFrom(Row);
+
+		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
+		// '뒤로' 카드는 내린다 — 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
+		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
+		if (bSessionOver)
+		{
+			VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("PLAY AGAIN")),   EndMenu.Color(0));
+			VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("BACK TO MENU")), EndMenu.Color(1));
+			VrPanel->HideFooter();
+			VrPanel->HideBackCard();
+			VrPanel->SetHint(TEXT("aim the bat at a card and hold   ( [R] / [M] )"), FColor(110, 116, 128));
+			return;
+		}
 
 		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended exercises"),
 			FColor(150, 156, 168));
@@ -723,7 +834,8 @@ void AVRBattingPawn::RefreshVrPanel()
 	else
 	{
 		VrPanel->SetHint(
-			FString::Printf(TEXT("Session: swings %d (contact %d · whiff %d) · HR %d · hits %d · takes %d | avg %.1f    ·    trigger = AI coaching · raise bat = exit   [M/R]"),
+			FString::Printf(TEXT("Pitch %d / %d · swings %d (contact %d · whiff %d) · HR %d · hits %d · takes %d | avg %.1f    ·    trigger = AI coaching · raise bat = exit   [M/R]"),
+				GetPitchNumber(), TotalPitches,
 				SwingCount, ContactCount, WhiffCount, HomeRunCount, HitCount, TakeCount, SessionScore.TotalScore),
 			FColor(110, 116, 128));
 	}

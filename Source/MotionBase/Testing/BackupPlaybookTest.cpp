@@ -90,9 +90,142 @@ bool FBackupPlaybookResolveTest::RunTest(const FString& Parameters)
 			static_cast<uint8>(R.Role), static_cast<uint8>(EBackupRole::Hold));
 	}
 
+	// ── 내야 기본 로테이션 — "유격수 정면 땅볼, 1루 송구" 한 판에서 7개 포지션 전부 ──
+	// 이 모드에서 가장 자주 나올 상황인데 예전엔 5개 포지션이 Hold 로 떨어졌다.
+	{
+		FBackupPlay Play;
+		Play.BallZone = EBattedBallZone::InfieldLeft;
+		Play.BallKind = EBattedBallKind::Grounder;
+		Play.bHasThrowFrom = true;
+		Play.ThrowFrom = EFieldPosition::Short;
+		Play.bHasThrowTo = true;
+		Play.ThrowTo = EBaseType::First;
+
+		auto Role = [&Rules, &Play](EFieldPosition Pos)
+		{
+			return static_cast<uint8>(UBackupPlaybook::Resolve(Rules, Play, Pos).Role);
+		};
+		auto Anchor = [&Rules, &Play](EFieldPosition Pos)
+		{
+			return static_cast<uint8>(UBackupPlaybook::Resolve(Rules, Play, Pos).AnchorBase);
+		};
+
+		TestEqual(TEXT("1루수는 1루 베이스 커버"), Role(EFieldPosition::First), static_cast<uint8>(EBackupRole::CoverBase));
+		TestEqual(TEXT("1루수 커버 대상 = 1루"), Anchor(EFieldPosition::First), static_cast<uint8>(EBaseType::First));
+
+		// 핵심 회귀: 예전엔 여기서 2루수가 "1루 뒤 백업"을 받았다.
+		TestEqual(TEXT("2루수는 2루 커버 (1루 백업 아님)"), Role(EFieldPosition::Second), static_cast<uint8>(EBackupRole::CoverBase));
+		TestEqual(TEXT("2루수 커버 대상 = 2루"), Anchor(EFieldPosition::Second), static_cast<uint8>(EBaseType::Second));
+
+		TestEqual(TEXT("유격수는 본인이 처리 - Hold"), Role(EFieldPosition::Short), static_cast<uint8>(EBackupRole::Hold));
+		TestEqual(TEXT("3루수는 3루 커버"), Role(EFieldPosition::Third), static_cast<uint8>(EBackupRole::CoverBase));
+		TestEqual(TEXT("3루수 커버 대상 = 3루"), Anchor(EFieldPosition::Third), static_cast<uint8>(EBaseType::Third));
+		TestEqual(TEXT("중견수는 2루 뒤 백업"), Role(EFieldPosition::Center), static_cast<uint8>(EBackupRole::BackUpBase));
+		TestEqual(TEXT("우익수는 1루 뒤 백업"), Role(EFieldPosition::Right), static_cast<uint8>(EBackupRole::BackUpBase));
+		TestEqual(TEXT("좌익수는 담당 없음 - Hold"), Role(EFieldPosition::Left), static_cast<uint8>(EBackupRole::Hold));
+	}
+
+	// 번트는 로테이션이 다르다 — 1루수가 대시하므로 1루 베이스는 2루수 몫.
+	{
+		FBackupPlay Play;
+		Play.BallZone = EBattedBallZone::BuntThird;
+		Play.BallKind = EBattedBallKind::Bunt;
+		Play.bHasThrowFrom = true;
+		Play.ThrowFrom = EFieldPosition::Third;
+		Play.bHasThrowTo = true;
+		Play.ThrowTo = EBaseType::First;
+
+		const FBackupAssignmentRule Second = UBackupPlaybook::Resolve(Rules, Play, EFieldPosition::Second);
+		TestEqual(TEXT("번트에선 2루수가 1루 커버"),
+			static_cast<uint8>(Second.Role), static_cast<uint8>(EBackupRole::CoverBase));
+		TestEqual(TEXT("번트 커버 대상 = 1루"),
+			static_cast<uint8>(Second.AnchorBase), static_cast<uint8>(EBaseType::First));
+
+		// 1루수는 대시해 들어가므로 베이스 커버 규칙에서 빠져야 한다.
+		TestEqual(TEXT("번트에선 1루수가 베이스 커버를 받지 않음"),
+			static_cast<uint8>(UBackupPlaybook::Resolve(Rules, Play, EFieldPosition::First).Role),
+			static_cast<uint8>(EBackupRole::Hold));
+	}
+
+	// 컷오프 사이드별 관례 — 좌익수 홈 송구는 3루수가 컷오프, 3루는 유격수가 커버.
+	{
+		FBackupPlay Play;
+		Play.BallZone = EBattedBallZone::LeftLine;
+		Play.BallKind = EBattedBallKind::LineDrive;
+		Play.bHasThrowFrom = true;
+		Play.ThrowFrom = EFieldPosition::Left;
+		Play.bHasThrowTo = true;
+		Play.ThrowTo = EBaseType::Home;
+
+		TestEqual(TEXT("좌익수 홈 송구 컷오프 = 3루수"),
+			static_cast<uint8>(UBackupPlaybook::Resolve(Rules, Play, EFieldPosition::Third).Role),
+			static_cast<uint8>(EBackupRole::CutoffRelay));
+
+		const FBackupAssignmentRule SS = UBackupPlaybook::Resolve(Rules, Play, EFieldPosition::Short);
+		TestEqual(TEXT("3루수가 나가면 유격수가 3루 커버"),
+			static_cast<uint8>(SS.Role), static_cast<uint8>(EBackupRole::CoverBase));
+		TestEqual(TEXT("커버 대상 = 3루"),
+			static_cast<uint8>(SS.AnchorBase), static_cast<uint8>(EBaseType::Third));
+	}
+
+	// 외야 갭 백업 — 좌중간 타구를 중견수가 처리하면, 좌익수는 3루 뒤 백업(블랭킷 규칙)이
+	// 아니라 중견수 뒤를 받쳐야 한다. 구체성 2(ThrowFrom+BallZone) > 1(ThrowTo) 로
+	// 확정적으로 이겨야 하는 자리 — 동점이 되면 선언 순서에 좌우돼 조용히 뒤집힌다.
+	{
+		FBackupPlay Play;
+		Play.BallZone = EBattedBallZone::LeftCenter;
+		Play.bHasThrowFrom = true;
+		Play.ThrowFrom = EFieldPosition::Center;
+		Play.bHasThrowTo = true;
+		Play.ThrowTo = EBaseType::Third;
+
+		const FBackupAssignmentRule R = UBackupPlaybook::Resolve(Rules, Play, EFieldPosition::Left);
+		TestEqual(TEXT("좌중간을 중견수가 잡으면 좌익수는 야수 백업"),
+			static_cast<uint8>(R.Role), static_cast<uint8>(EBackupRole::BackUpFielder));
+		TestEqual(TEXT("받치는 대상 = 중견수"),
+			static_cast<uint8>(R.AnchorFielder), static_cast<uint8>(EFieldPosition::Center));
+	}
+
+	// 반대로 **갭이 아닌** 3루 송구에서는 좌익수가 기존대로 3루 뒤를 백업해야 한다
+	// (갭 규칙이 블랭킷을 통째로 잡아먹으면 안 된다).
+	{
+		FBackupPlay Play;
+		Play.BallZone = EBattedBallZone::Center;
+		Play.bHasThrowFrom = true;
+		Play.ThrowFrom = EFieldPosition::Center;
+		Play.bHasThrowTo = true;
+		Play.ThrowTo = EBaseType::Third;
+
+		const FBackupAssignmentRule R = UBackupPlaybook::Resolve(Rules, Play, EFieldPosition::Left);
+		TestEqual(TEXT("갭이 아니면 좌익수는 3루 뒤 백업 유지"),
+			static_cast<uint8>(R.Role), static_cast<uint8>(EBackupRole::BackUpBase));
+	}
+
+	// bExcludeSelfThrow — 좌익수가 직접 처리해 3루로 던지는 상황에 "3루 뒤 백업" 블랭킷이
+	// 걸리면 자기 송구를 자기가 백업하는 자기충돌이다. 예전엔 그런 플레이를 안 만드는
+	// 회피책으로 막았고, 지금은 규칙 필터가 막는다.
+	{
+		FBackupPlay Play;
+		Play.BallZone = EBattedBallZone::LeftLine;
+		Play.bHasThrowFrom = true;
+		Play.ThrowFrom = EFieldPosition::Left;
+		Play.bHasThrowTo = true;
+		Play.ThrowTo = EBaseType::Third;
+
+		const FBackupAssignmentRule R = UBackupPlaybook::Resolve(Rules, Play, EFieldPosition::Left);
+		TestEqual(TEXT("좌익수 본인의 3루 송구를 본인이 백업하지 않음(Hold)"),
+			static_cast<uint8>(R.Role), static_cast<uint8>(EBackupRole::Hold));
+	}
+
 	// 매칭되는 규칙이 전혀 없어도 항상 유효한 값(Hold + 설명 문구)을 돌려줘야 한다.
+	// ⚠️ 기본 생성 FBackupPlay 를 쓰면 안 된다 — bHasThrowTo=true, ThrowTo=First 가 기본값이라
+	//    "1루로 송구가 가는 플레이"로 읽히고, 내야 기본 로테이션 규칙에 정상적으로 걸린다.
+	//    송구 자체가 없는 플레이를 만들어야 진짜 폴백 경로를 검증한다.
 	{
 		FBackupPlay EmptyPlay;
+		EmptyPlay.bHasThrowFrom = false;
+		EmptyPlay.bHasThrowTo   = false;
+
 		const FBackupAssignmentRule R = UBackupPlaybook::Resolve(Rules, EmptyPlay, EFieldPosition::Third);
 		TestEqual(TEXT("매칭 없으면 기본 Hold"), static_cast<uint8>(R.Role), static_cast<uint8>(EBackupRole::Hold));
 		TestFalse(TEXT("기본 Hold 도 설명 문구가 비어있지 않음"), R.Explain.IsEmpty());

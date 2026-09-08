@@ -174,6 +174,40 @@ struct FBackupAssignmentRule
 	UPROPERTY(BlueprintReadOnly)
 	bool bRequireNoThrowFrom = false;
 
+	/**
+	 * true 면 **내가 공을 처리하는 플레이(ThrowFrom == 내 포지션)에는 매칭되지 않는다.**
+	 *
+	 * 왜 별도 플래그인가: bFilterThrowFrom 은 "특정 포지션이 던졌을 때만"이라는 **양성 조건**이라
+	 * "나만 빼고 누구든"을 표현할 수 없다. 그게 없어서 외야 블랭킷 규칙(예: "좌익수는 3루 송구를
+	 * 전부 백업한다")이 **좌익수 본인의 송구까지 백업 대상으로 착각**했고, 지금까지는
+	 * "그런 플레이를 아예 저작하지 않는" 회피책으로 막아 왔다 (BuildPlayTable 주석 참고).
+	 * 이 플래그가 그 구멍을 규칙 쪽에서 직접 막는다.
+	 *
+	 * ⚠️ 구체성(specificity) 점수에는 **넣지 않는다.** 이건 "이 규칙이 더 구체적인 상황을 다룬다"가
+	 *    아니라 "이 규칙이 성립할 수 없는 경우를 걷어낸다"는 **안전장치**다. 점수에 넣으면 블랭킷
+	 *    규칙이 갑자기 세밀한 규칙과 같은 우선순위가 되어 매칭이 뒤집힌다.
+	 */
+	UPROPERTY(BlueprintReadOnly)
+	bool bExcludeSelfThrow = false;
+
+	/**
+	 * true 면 **번트 플레이에는 매칭되지 않는다.**
+	 *
+	 * 번트는 같은 "1루 송구"라도 커버가 통째로 달라진다 — 1루수가 대시해 들어오므로
+	 * 1루 베이스는 2루수가 지킨다. 그래서 "1루로 송구가 가면 1루수가 베이스를 지킨다" 같은
+	 * 내야 기본 로테이션 규칙은 번트에서 반드시 빠져야 한다.
+	 *
+	 * ⚠️ bExcludeSelfThrow 와 마찬가지로 구체성 점수에 넣지 않는다 — 안전장치이지 조건이 아니다.
+	 */
+	UPROPERTY(BlueprintReadOnly)
+	bool bExcludeBunt = false;
+
+	/** 타구 종류 필터 (번트 전용 규칙처럼 종류가 곧 조건인 경우). 구체성에 포함된다. */
+	UPROPERTY(BlueprintReadOnly)
+	bool bFilterBallKind = false;
+	UPROPERTY(BlueprintReadOnly)
+	EBattedBallKind BallKind = EBattedBallKind::Grounder;
+
 	UPROPERTY(BlueprintReadOnly)
 	bool bFilterBallZone = false;
 	UPROPERTY(BlueprintReadOnly)
@@ -185,6 +219,19 @@ struct FBackupAssignmentRule
 	/** CoverBase 전용 — 실제로 지키는 베이스 (송구 목적지와 다를 수 있음). */
 	UPROPERTY(BlueprintReadOnly)
 	EBaseType AnchorBase = EBaseType::First;
+
+	/**
+	 * BackUpBase 전용 — true 면 송구 목적지가 아니라 **AnchorBase 를 받친다.**
+	 *
+	 * 기본 BackUpBase 는 앵커를 Play.ThrowTo 에서 가져오는데, 그러면 "1루로 송구가 가는
+	 * 동안 중견수는 2루를 받친다" 같은 **송구와 무관한 베이스 백업**을 표현할 수 없다.
+	 * 내야 기본 로테이션에 꼭 필요해서 열어 둔 우회로다.
+	 *
+	 * 이 경우 백업 자리는 홈 반대쪽(외야 쪽)으로 잡는다 — 그 베이스로 오는 송구가 없으니
+	 * "송구 라인 뒤"라는 기준 자체가 없고, 실제로도 뒤에서 받치는 건 외야 쪽이다.
+	 */
+	UPROPERTY(BlueprintReadOnly)
+	bool bAnchorBaseOverride = false;
 
 	/** BackUpFielder 전용 — 누구의 뒤를 받치는지. */
 	UPROPERTY(BlueprintReadOnly)

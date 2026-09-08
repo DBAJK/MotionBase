@@ -7,6 +7,7 @@
 #include "Data/BodyPose.h"
 #include "Data/TrainingFeedback.h"
 #include "UI/VRExitGesture.h"
+#include "UI/VREndCardMenu.h"
 #include "BackupPawn.generated.h"
 
 class UCameraComponent;
@@ -131,7 +132,9 @@ protected:
 	FBaseballField Field;
 
 	// ── 설정값 ──
-	UPROPERTY(EditAnywhere, Category = "Backup")
+
+	/** 한 세션의 총 시행 수 (에디터/디테일 패널에서 조절). */
+	UPROPERTY(EditAnywhere, Category = "Backup", meta = (ClampMin = "1"))
 	int32 TotalTrials = 6; // VR 멀미 노출 축소 — 기본 10 아님 (설계 노트 참고).
 
 	/** 세션 안에서 "정답=제자리(Hold)" 시행이 나올 최소 비율. 무조건 뛰는 편법을 막는다. */
@@ -220,6 +223,21 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Backup|Ball", meta = (ClampMin = "0.4", ClampMax = "2.0"))
 	float BallSpeedScale = 0.8f; // 판단 훈련이라 기본을 CatchBall(1.0)보다 살짝 느긋하게.
 
+	/**
+	 * 커버/백업 시행에서 타구가 **내 수비 위치로부터 최소 이만큼은 떨어져** 떨어지게 한다 (cm).
+	 *
+	 * 왜 필요한가: 정답이 커버/백업이라는 건 "이 공은 남이 처리한다"는 뜻이다. 그런데 연출용
+	 * 타구가 내 발밑으로 날아오면 눈은 "네 공이야"라고 말하는데 정답은 "베이스로 가라"가 되어
+	 * 서로 어긋난다 — 플레이어가 룰을 의심하게 되는 자리다. 그래서 그런 시행에서는 타구를
+	 * 실제로 처리하는 야수 쪽으로 밀어낸다.
+	 *
+	 * ⚠️ Hold 시행(= 정답이 제자리 = 내가 처리하는 공)에는 적용하지 않는다. 그쪽은 오히려
+	 *    내 쪽으로 와야 맞다 — 그게 "이 공은 내 담당"이라는 신호다.
+	 * ⚠️ 판정(FBackupTrial)은 건드리지 않는다. 이건 순수 연출 보정이다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Backup|Ball", meta = (ClampMin = "0.0"))
+	float BallClearanceFromMeCm = 900.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Backup|Ball", meta = (ClampMin = "0.05", ClampMax = "0.5"))
 	float BallSpeedStep = 0.1f;
 
@@ -277,11 +295,21 @@ private:
 	/** 큐 시점에 이번 플레이의 대략적인 방향·깊이로 코스메틱 타구를 띄운다 (판정과 무관). */
 	void SpawnFlavorBall();
 
+	/**
+	 * 커버/백업 시행에서 타구 낙하점이 내 수비 위치에 너무 가까우면 밀어낸다.
+	 * 밀어내는 방향은 **실제로 공을 처리하는 야수 쪽** — 그래야 "저 사람 공이다"가 눈에 보인다.
+	 * (BallClearanceFromMeCm 주석 참고. 연출 전용 — 판정에는 영향 없음.)
+	 */
+	FVector ClearBallFromMySpot(const FVector& Target) const;
+
 	// ── 세션 진행 ──
 	void StartSession();
 	void SpawnNextTrial();
 	void FinishTrial(EBackupOutcome Outcome);
 	void EndSession();
+
+	/** 종료 화면의 PLAY AGAIN — 끝난 판을 저장하고 같은 폰에서 새 세션을 시작한다. */
+	void RestartSession();
 
 	/** 다음 플레이를 무반복 주머니에서 뽑는다 (Hold-비율 롤 포함). */
 	FBackupPlay DrawNextPlay();
@@ -385,6 +413,16 @@ private:
 	bool bHasPrevControllerLoc = false;
 
 	FVRExitGesture ExitGesture;
+
+	/** 세션 종료 화면의 선택 카드(PLAY AGAIN / BACK TO MENU) 겨눔 상태. */
+	FVREndCardMenu EndMenu;
+
+	/** 종료 화면에서 선택 카드가 놓이는 첫 행 인덱스 (그 위쪽은 결과 내용). */
+	static constexpr int32 EndCardFirstRow = 3;
+
+	/** 플레이 중 나가기 제스처 임계 — 이 종목의 자연 동작과 겹치지 않게 조인 값. */
+	static constexpr float LiveExitUpThreshold = 0.85f;
+	static constexpr float LiveExitHoldSec     = 2.0f;
 
 	/** 이번 시행의 코스메틱 타구 (판정에 관여하지 않음 — SpawnFlavorBall 참고). */
 	UPROPERTY(Transient)

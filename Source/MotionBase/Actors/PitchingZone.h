@@ -77,6 +77,21 @@ public:
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Pitch")
 	bool IsPitchInFlight() const { return State == EPitchState::Incoming; }
 
+	/**
+	 * 아무 공도 움직이지 않는 대기 상태인지 (투구·타구 모두 끝남).
+	 * 타자 폰이 "마지막 공까지 완전히 끝났다"를 판정해 세션을 닫는 데 쓴다 —
+	 * IsPitchInFlight() 만 보면 타구가 아직 날아가는 중(HitFlight)에 세션이 닫힌다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "MotionBase|Pitch")
+	bool IsIdle() const { return State == EPitchState::Idle; }
+
+	/**
+	 * 자동 투구 on/off. 타자 폰이 세션 목표 구수를 채우면 꺼서 다음 공을 막는다.
+	 * (끄면 Idle 에 머물고, 켜면 AutoPitchIntervalSec 뒤부터 다시 던진다.)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Pitch")
+	void SetAutoPitch(bool bEnabled) { bAutoPitch = bEnabled; }
+
 	/** 현재 투구의 도달 예정 시각 (월드 시간, 초). */
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Pitch")
 	float GetArrivalWorldTime() const { return ArrivalWorldTime; }

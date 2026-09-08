@@ -172,10 +172,21 @@ struct FBaseballField
 		{
 		case EBackupRole::BackUpBase:
 		{
-			const FVector Base = GetBaseLocation(Play.ThrowTo);
-			const FVector Origin = Play.bHasThrowFrom ? GetFieldingSpot(Play.ThrowFrom) : GetBaseLocation(EBaseType::Home);
+			// 어느 베이스를 받치나 — 보통은 송구 목적지, 규칙이 지정하면 그쪽(내야 기본 로테이션).
+			const EBaseType TargetBase = Rule.bAnchorBaseOverride ? Rule.AnchorBase : Play.ThrowTo;
+			const FVector Base = GetBaseLocation(TargetBase);
+
+			// 어느 쪽 "뒤"인가 — 송구가 그 베이스로 갈 땐 송구 라인의 연장선, 송구와 무관한
+			// 베이스를 받칠 땐(오버라이드) 홈 반대쪽 = 외야 쪽이 백업 자리다.
+			const bool bFromHome = Rule.bAnchorBaseOverride || !Play.bHasThrowFrom;
+			const FVector Origin = bFromHome ? GetBaseLocation(EBaseType::Home) : GetFieldingSpot(Play.ThrowFrom);
 			const FVector Dir = (Base - Origin).GetSafeNormal2D();
-			Z.Center = ClampToFairTerritory(Base + Dir * BackupDistanceCm);
+
+			// ⚠️ 페어 지역 클램프를 쓰지 않는다. 1루·3루는 정확히 45° 파울선 위에 있어서,
+			//    그 뒤로 물러난 자리는 **원래 파울 지역**이다 (1루 뒤 백업은 파울 라인 밖에 선다).
+			//    클램프를 걸면 베이스 쪽으로 끌려와 BackupDistanceCm 이 500→371cm 로 줄어든다
+			//    (BaseballFieldTest.ZoneGeometry 가 잡던 실패). 거리 상한만 지킨다.
+			Z.Center = ClampToFieldRadius(Base + Dir * BackupDistanceCm);
 			Z.RadiusCm = BackupRadiusCm;
 			break;
 		}
@@ -208,6 +219,18 @@ struct FBaseballField
 			break;
 		}
 		return Z;
+	}
+
+	/** 펜스 반경 안으로만 눌러 담는다 (파울 지역은 허용 — 베이스 뒤 백업 자리가 그쪽이다). */
+	FVector ClampToFieldRadius(const FVector& Point) const
+	{
+		const FVector2D XY(Point.X, Point.Y);
+		if (XY.Size() <= FenceRadiusCm)
+		{
+			return Point;
+		}
+		const FVector2D Capped = XY.GetSafeNormal() * FenceRadiusCm;
+		return FVector(Capped.X, Capped.Y, Point.Z);
 	}
 
 	/** 페어 지역(양쪽 파울선 45° 안, 펜스 반경 이내)으로 좌표를 눌러 담는다. */

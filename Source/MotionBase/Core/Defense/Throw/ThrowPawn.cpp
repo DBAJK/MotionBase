@@ -99,8 +99,8 @@ void AThrowPawn::BeginPlay()
 
 	// 나가기 제스처 — 송구 와인드업에서 팔이 위로 올라가므로 기본값보다 조인다.
 	// 시행이 진행 중인 동안(급구 대기/공 들고 있음/송구 중)에는 Tick 에서 진행을 동결한다.
-	ExitGesture.UpThreshold = 0.90f;
-	ExitGesture.HoldSec     = 2.0f;
+	ExitGesture.UpThreshold = LiveExitUpThreshold;
+	ExitGesture.HoldSec     = LiveExitHoldSec;
 
 	if (BallInHandMesh)
 	{
@@ -139,6 +139,8 @@ void AThrowPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent
 	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Pressed,  this, &AThrowPawn::OnSpacePressed);
 	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Released, this, &AThrowPawn::OnSpaceReleased);
 	PlayerInputComponent->BindKey(EKeys::M, IE_Pressed, this, &AThrowPawn::ReturnToModeSelect);
+	// [R] 다시 하기 — 헤드셋 밖(데스크톱)에서도 세션을 이어 돌릴 수 있게. VR 은 종료 화면의 카드로.
+	PlayerInputComponent->BindKey(EKeys::R, IE_Pressed, this, &AThrowPawn::RestartSession);
 
 	// HUD 교체 (빙의 후 여기서).
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
@@ -438,6 +440,18 @@ void AThrowPawn::FinishThrow(const FThrowResult& Result)
 void AThrowPawn::EndSession()
 {
 	bSessionOver = true;
+
+	// ── 여기서부터는 '나가는 길'을 최대한 열어 준다 ──
+	// 플레이 중 임계는 이 종목의 자연 동작(글러브 들기·와인드업 등)과 겹치지 않으려고
+	// 조여 둔 값이다. 세션이 끝나면 오발동시킬 동작이 없으므로 그대로 두면 어렵기만 하다.
+	ExitGesture.UpThreshold = 0.80f; // 수직에서 ±37°
+	ExitGesture.HoldSec     = 1.2f;
+	ExitGesture.HeldSec     = 0.0f;
+	EndMenu.Reset();
+	if (VrPanel)
+	{
+		VrPanel->RequestRecenter(); // 결과·선택 카드를 지금 보는 정면에 다시 잡는다.
+	}
 	RequestThrowFeedback();
 }
 
@@ -589,6 +603,25 @@ FWeaknessReport AThrowPawn::BuildThrowReport() const
 
 	R.Weaknesses.Sort([](const FWeakness& A, const FWeakness& B) { return A.Severity > B.Severity; });
 	return R;
+}
+
+void AThrowPawn::RestartSession()
+{
+	// 끝난 판을 먼저 확정 저장한다 — 안 하면 StartSession 이 누적을 비워 기록이 사라진다.
+	FlushSessionToSave();
+
+	// 종료 화면에서 풀어 뒀던 나가기 조건을 플레이용으로 다시 조이고, 카드를 내린다.
+	ExitGesture.UpThreshold = LiveExitUpThreshold;
+	ExitGesture.HoldSec     = LiveExitHoldSec;
+	ExitGesture.HeldSec     = 0.0f;
+	EndMenu.Reset();
+	if (VrPanel && bVR)
+	{
+		VrPanel->ShowBackCard(TEXT("EXIT - aim here & hold"), FColor(255, 190, 90));
+		VrPanel->RequestRecenter();
+	}
+
+	StartSession();
 }
 
 void AThrowPawn::FlushSessionToSave()
@@ -761,6 +794,25 @@ void AThrowPawn::Tick(float DeltaSeconds)
 			// 시행이 도는 동안엔 동결 — 급구를 받으려 손을 들거나 와인드업으로 팔이 올라간
 			// 자세를 나가기로 오인하지 않게. 판정이 끝난 뒤(Done) 틈에서만 진행이 쌓인다.
 			const bool bGestureAllowed = (Phase == EThrowPhase::Done) || bSessionOver;
+			// 세션 종료 화면 — 패널 하단 카드를 겨눠 '다시 하기 / 메뉴로'를 고른다.
+			// 제스처보다 먼저 본다: 명시적으로 고른 선택이 우연한 자세보다 우선한다.
+			if (bSessionOver && VrPanel)
+			{
+				const int32 Chosen = EndMenu.Update(VrPanel, EndCardFirstRow, /*CardCount=*/2,
+					ThrowController->GetComponentLocation(), ThrowController->GetForwardVector(),
+					ThrowController->IsTracked(), DeltaSeconds);
+				if (Chosen == 0)
+				{
+					RestartSession();
+					return; // 이번 프레임의 나머지 판정은 이전 세션 기준이라 건너뛴다.
+				}
+				if (Chosen == 1)
+				{
+					ReturnToModeSelect();
+					return; // 폰이 곧 교체된다 — 이 프레임 종료.
+				}
+			}
+
 			bool bExit = false;
 			ExitGesture.Update(ThrowController->GetForwardVector(),
 				ThrowController->IsTracked(), bGestureAllowed, DeltaSeconds, bExit);
@@ -905,7 +957,8 @@ void AThrowPawn::RefreshVrPanel()
 
 		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
 		//    요약 1줄 + 코칭 2줄 + 드릴 1개로 압축. 전체 리포트는 데스크톱 결과 화면이 담당.
-		constexpr int32 MaxContentRows = 4;
+		//    종료 화면은 마지막 두 줄을 선택 카드에 내주므로 내용이 한 줄 줄어든다.
+		const int32 MaxContentRows = EndCardFirstRow;
 		int32 Row = 0;
 		const float AvgT = GetAverageTransferSec();
 		VrPanel->SetRow(Row++, FString::Printf(TEXT("avg %.0f km/h    transfer %s"),
@@ -925,9 +978,14 @@ void AThrowPawn::RefreshVrPanel()
 		}
 		VrPanel->HideRowsFrom(Row);
 
-		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended exercises"),
-			FColor(150, 156, 168));
-		VrPanel->SetHint(TEXT("Raise controller = menu"), FColor(110, 116, 128));
+		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
+		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
+		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
+		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("PLAY AGAIN")),   EndMenu.Color(0));
+		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("BACK TO MENU")), EndMenu.Color(1));
+		VrPanel->HideFooter();
+		VrPanel->HideBackCard();
+		VrPanel->SetHint(TEXT("aim the controller at a card and hold"), FColor(110, 116, 128));
 		return;
 	}
 

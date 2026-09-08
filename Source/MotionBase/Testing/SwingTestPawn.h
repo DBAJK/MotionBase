@@ -39,8 +39,17 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
-	/** ISessionResultView — [F] 로 결과를 띄운 상태면 요약을 채워 HUD 가 그리게 한다. */
+	/** ISessionResultView — [F] 요청 또는 세션 종료로 결과가 떠 있으면 요약을 채워 HUD 가 그리게 한다. */
 	virtual bool GetSessionSummary(FSessionSummary& OutSummary) const override;
+
+	/** 이 세션에서 던지는 총 투구 수. */
+	int32 GetTotalPitches() const { return TotalPitches; }
+
+	/** 현재 몇 번째 공인지 (1-based, 표시용). */
+	int32 GetPitchNumber() const { return FMath::Clamp(PitchIndex, 1, TotalPitches); }
+
+	/** 목표 구수를 다 채워 세션이 닫혔는지. */
+	bool IsSessionOver() const { return bSessionOver; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -76,8 +85,21 @@ protected:
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "SwingTest")
 	TObjectPtr<APitchingZone> PitchingZone;
 
+	/**
+	 * 한 세션의 총 투구 수. 이 수를 채우면 투구를 멈추고 결과·추천 화면으로 넘어간다.
+	 *
+	 * **스윙 수가 아니라 투구 수**로 센다 — 안 치고 흘려보낸 공([Space] 미입력)도 한 구다.
+	 * 안 그러면 가만히 있는 플레이어에게서 세션이 끝나지 않는다. (AVRBattingPawn 과 같은 기준.)
+	 * 타석(볼카운트)은 이 구수 안에서 돌다가, 마지막 공에서 진행 중이면 그대로 종료된다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "SwingTest", meta = (ClampMin = "1"))
+	int32 TotalPitches = 10;
+
 	void SimulateSwing();
 	void ResetSession();
+
+	/** 목표 구수를 다 채웠을 때 세션을 닫는다 (투구 정지 + 결과·추천 표시). */
+	void EndSession();
 
 	/**
 	 * 현재까지의 스윙들을 한 세션 기록으로 저장 슬롯에 flush 한다 (ModeManager 경유).
@@ -136,6 +158,13 @@ private:
 	EPitchType CurrentPitchType = EPitchType::Fastball;
 	bool bSwungThisPitch = false;
 	bool bCurrentPitchIsStrike = false; // 이번 공이 존을 통과하는지
+
+	// ── 세션 진행 ──
+	/** 지금까지 던진 공 수 (흘려보낸 공 포함). TotalPitches 에 도달하면 세션 종료. */
+	int32 PitchIndex = 0;
+
+	/** 세션 종료됨 — 투구가 멈추고 결과 화면이 계속 떠 있는 상태 ([R] 로 재시작). */
+	bool bSessionOver = false;
 
 	// ── 볼카운트 / 타석 판정 ──
 	int32 Balls = 0;
