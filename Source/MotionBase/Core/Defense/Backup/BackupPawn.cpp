@@ -2,6 +2,7 @@
 #include "Core/Defense/Backup/BackupPlaybook.h"
 #include "Core/Defense/Backup/BackupJudge.h"
 #include "Core/Defense/Backup/BackupHUD.h"
+#include "Core/Defense/Backup/BackupGameState.h"
 #include "Core/Defense/CatchBall/CatchBall.h"
 #include "Core/Defense/Backup/FielderMarker.h"
 #include "Core/MotionBaseGameMode.h"
@@ -24,6 +25,36 @@
 
 namespace
 {
+	// ── LLM 프롬프트용 영문 라벨 ──
+	// UEnum::GetValueAsString 을 쓰지 않는 이유: "EBackupRole::CutoffRelay" 같은 식별자가
+	// 그대로 나가면 코치 문장에 코드 이름이 섞인다. 야구 용어로 읽히는 문구를 따로 둔다.
+	// (시스템 프롬프트가 설명하는 네 가지 job 과 표현을 맞춰 놓았다.)
+	FString RoleLabel(EBackupRole Role)
+	{
+		switch (Role)
+		{
+		case EBackupRole::BackUpBase:    return TEXT("back up a base");
+		case EBackupRole::CoverBase:     return TEXT("cover a base");
+		case EBackupRole::CutoffRelay:   return TEXT("cut off / relay the throw");
+		case EBackupRole::BackUpFielder: return TEXT("back up a fielder");
+		case EBackupRole::Hold:
+		default:                         return TEXT("hold your spot");
+		}
+	}
+
+	FString OutcomeLabel(EBackupOutcome Outcome)
+	{
+		switch (Outcome)
+		{
+		case EBackupOutcome::Covered:    return TEXT("CORRECT");
+		case EBackupOutcome::TooSlow:    return TEXT("right direction but arrived too late");
+		case EBackupOutcome::WrongZone:  return TEXT("went to the wrong place");
+		case EBackupOutcome::NoStart:    return TEXT("never moved");
+		case EBackupOutcome::FalseStart: return TEXT("moved when the right answer was to stay put");
+		default:                         return TEXT("unknown");
+		}
+	}
+
 	// TextRender 는 자동 줄바꿈이 없다 → 글자수로 하드 랩 (다른 폰들과 동일 패턴).
 	TArray<FString> WrapBackupPanel(const FString& In, int32 MaxCharsPerLine, int32 MaxLines)
 	{
@@ -159,6 +190,7 @@ void ABackupPawn::BeginPlay()
 
 	FeedbackService = NewObject<UAIFeedbackService>(this);
 	FeedbackService->OnFeedbackReady.AddDynamic(this, &ABackupPawn::HandleCoachingReady);
+	FeedbackService->OnPlayExplanationReady.AddDynamic(this, &ABackupPawn::HandlePlayExplanationReady);
 
 	StartSession();
 }
@@ -166,6 +198,12 @@ void ABackupPawn::BeginPlay()
 void ABackupPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	FlushSessionToSave();
+
+	// 등록을 풀지 않으면 협동에서 "전원 보고"가 영영 안 차서 세션이 멈춘다.
+	if (ABackupGameState* GS = GetOwningGameState())
+	{
+		GS->UnregisterPawn(this);
+	}
 
 	if (IsValid(ActiveBall))
 	{
@@ -377,10 +415,38 @@ void ABackupPawn::StartSession()
 
 	Phase = EBackupPhase::Done; // 첫 시행 전까지는 "진행 중"이 아니다.
 
-	// 첫 시행은 한 박자 뒤에 — VR 은 BeginPlay 시점에 HMD 포즈가 아직 안 들어와
-	// 배치를 정확히 못 잡는다. 플레이어에게도 준비할 틈이 된다.
+	// ⚠️ 첫 시행 예약은 여기서 하지 않는다 — 진행권은 GameState 에 있다.
+	//    (첫 시행을 한 박자 늦추는 이유는 그대로다: VR 은 BeginPlay 시점에 HMD 포즈가
+	//     아직 안 들어와 배치를 정확히 못 잡고, 플레이어에게도 준비할 틈이 필요하다.
+	//     그 지연값 FirstTrialDelaySec 은 등록 때 GameState 에 넘긴다.)
 	bWaitingNext = true;
-	IntervalTimer = FMath::Max(FirstTrialDelaySec, 0.2f);
+
+	// GameState 에 등록 — 첫 등록 폰이 세션을 개시한다. 이미 진행 중인 세션에 뒤늦게
+	// 합류하면(협동) 현재 시행부터 같이 뛴다.
+	ABackupGameState* GS = GetBackupGameState();
+
+	// ⚠️ **혼자 하는 경우가 절대 깨지면 안 된다.** GameState 를 못 찾으면(다른 GameMode 를
+	//    쓰는 맵, World Settings 오버라이드, 스폰 실패 등) 예전처럼 이 폰이 직접 시행을
+	//    진행한다. 협동 기능은 "여러 대가 실제로 붙었을 때만" 얹히는 것이지,
+	//    그게 없으면 드릴이 안 돌아가는 구조가 되어선 안 된다.
+	bLocalSessionFallback = (GS == nullptr);
+
+	if (GS)
+	{
+		GS->RegisterPawn(this, TotalTrials, FirstTrialDelaySec, IntervalBetweenTrials);
+
+		// ⚠️ **등록 뒤에** 읽어야 한다 — 첫 등록은 GameState 의 시리얼을 0 으로 되돌리므로,
+		//    등록 전 값을 잡아두면 기준이 어긋난다(드릴에 재진입할 때 실제로 발생).
+		//    진행 중인 세션에 뒤늦게 합류한 경우엔 현재 시행을 건너뛰고 다음 시행부터
+		//    참여하게 되는데, 이미 절반쯤 지난 시행에 끼어드는 것보다 이쪽이 맞다.
+		LastSeenTrialSerial = GS->GetTrialSerial();
+	}
+	else
+	{
+		UE_LOG(LogMotionBase, Warning,
+			TEXT("[Backup] BackupGameState 가 없다 — 폰이 직접 진행하는 단독 모드로 돈다(협동 불가)."));
+		IntervalTimer = FMath::Max(FirstTrialDelaySec, 0.2f);
+	}
 }
 
 void ABackupPawn::RefillBags()
@@ -397,11 +463,11 @@ void ABackupPawn::RefillBags()
 	}
 }
 
-FBackupPlay ABackupPawn::DrawNextPlay()
+int32 ABackupPawn::DrawSoloPlayIndex()
 {
 	if (PlayTable.Num() == 0)
 	{
-		return FBackupPlay();
+		return INDEX_NONE;
 	}
 
 	// HoldTrialFraction 확률로 전체 주머니(=Hold 로 풀릴 수도 있는 플레이 포함)에서 뽑는다.
@@ -416,16 +482,93 @@ FBackupPlay ABackupPawn::DrawNextPlay()
 	TArray<int32>& Bag = bWantHold ? AllBag : EligibleBag;
 	if (Bag.Num() == 0)
 	{
-		return PlayTable[0]; // 저작 데이터가 비정상적으로 빈 극단적 경우의 안전망.
+		return 0; // 저작 데이터가 비정상적으로 빈 극단적 경우의 안전망.
 	}
 
 	const int32 Pick = FMath::RandRange(0, Bag.Num() - 1);
 	const int32 PlayIdx = Bag[Pick];
 	Bag.RemoveAtSwap(Pick);
-	return PlayTable[PlayIdx];
+	return PlayIdx;
 }
 
-void ABackupPawn::SpawnNextTrial()
+ABackupGameState* ABackupPawn::GetBackupGameState() const
+{
+	return GetWorld() ? GetWorld()->GetGameState<ABackupGameState>() : nullptr;
+}
+
+ABackupGameState* ABackupPawn::GetOwningGameState() const
+{
+	// 단독 모드로 시작했으면 GameState 가 지금 존재하더라도 이 폰의 진행 주체가 아니다
+	// (등록된 적이 없으므로 보고해봤자 아무도 받지 않는다).
+	return bLocalSessionFallback ? nullptr : GetBackupGameState();
+}
+
+void ABackupPawn::TryAttachToLateGameState()
+{
+	if (!bLocalSessionFallback)
+	{
+		return;
+	}
+
+	ABackupGameState* GS = GetBackupGameState();
+	if (!GS)
+	{
+		return; // 아직도 없다 — 단독 모드 계속.
+	}
+
+	// 뒤늦게 붙는다. 진행 중이던 시행은 버리고 GameState 의 시행 흐름을 따른다 —
+	// 어차피 단독 진행분은 다른 참가자와 상황이 다르므로 이어 붙일 수 없다.
+	UE_LOG(LogMotionBase, Warning,
+		TEXT("[Backup] GameState 가 뒤늦게 나타났다 — 단독 모드에서 GameState 진행으로 전환한다."));
+
+	bLocalSessionFallback = false;
+	bWaitingNext = true;
+	GS->RegisterPawn(this, TotalTrials, FirstTrialDelaySec, IntervalBetweenTrials);
+	LastSeenTrialSerial = GS->GetTrialSerial();
+}
+
+void ABackupPawn::SyncFromGameState()
+{
+	// 진행 주체 판정은 한 곳에서만 — 단독 모드면 여기 오면 안 되고, 와도 아무것도 안 한다.
+	ABackupGameState* GS = GetOwningGameState();
+	if (!GS)
+	{
+		return;
+	}
+
+	// 표시용 값은 GameState 를 정본으로 삼는다 — HUD/패널 코드는 그대로 두고 여기서만 채운다.
+	TotalTrials  = GS->GetTotalTrials();
+	TrialIndex   = GS->GetTrialIndex();
+	bWaitingNext = GS->IsWaitingNext();
+
+	// 새 시행 신호. 같은 플레이가 연달아 나와도 시리얼이 바뀌므로 놓치지 않는다.
+	const int32 Serial = GS->GetTrialSerial();
+	if (Serial != LastSeenTrialSerial)
+	{
+		LastSeenTrialSerial = Serial;
+		const int32 PlayIndex = GS->GetCurrentPlayIndex();
+		if (PlayTable.IsValidIndex(PlayIndex))
+		{
+			// 이전 시행이 아직 Live 인데 새 시행이 오는 경우 = 서버의 하드 타임아웃이
+			// 나를 기다리다 지쳐 넘어간 것(헤드셋을 벗었거나 멈춘 상황). 그 시행은 결과
+			// 없이 버려진다 — 여기서 FinishTrial 을 부르면 진행 중인 서버 전이와 얽힌다.
+			if (Phase == EBackupPhase::Live)
+			{
+				UE_LOG(LogMotionBase, Warning,
+					TEXT("[Backup] 이전 시행이 끝나기 전에 다음 시행이 시작됐다 — 결과 없이 넘어간다."));
+			}
+			SpawnNextTrial(PlayIndex);
+		}
+	}
+
+	// 세션 종료는 한 번만 처리한다 (EndSession 이 저장·AI 요청을 건다).
+	if (GS->IsSessionOver() && !bSessionOver)
+	{
+		EndSession();
+	}
+}
+
+void ABackupPawn::SpawnNextTrial(int32 PlayIndex)
 {
 	// 실내 드리프트가 시행마다 누적된다 — 매번 다시 스냅한다 (설계 노트).
 	SnapToFieldingSpot();
@@ -436,8 +579,14 @@ void ABackupPawn::SpawnNextTrial()
 	}
 	ActiveBall = nullptr;
 
-	const FBackupPlay Play = DrawNextPlay();
+	// 플레이는 GameState 가 정한 **인덱스**로 온다. 정답은 여기서 **내 포지션 기준으로**
+	// 로컬 계산한다 — 같은 타구라도 사람마다 정답이 다르므로 복제할 값이 아니다.
+	const FBackupPlay Play = PlayTable.IsValidIndex(PlayIndex) ? PlayTable[PlayIndex] : FBackupPlay();
 	CurrentTrial = UBackupPlaybook::BuildTrial(Field, RuleTable, Position, Play);
+
+	// 해설 미리 받기 — 정답은 지금 확정됐고, 플레이어가 뛰는 동안 응답이 도착한다.
+	// (표시는 판정 후에만 — IsAnswerRevealed 기준이라 정답이 미리 새지 않는다.)
+	PrepareExplanationForCurrentTrial();
 	SpawnFlavorBall(); // 코스메틱 — 판정(큐 시점부터 이미 시작됨)에는 영향 없음.
 
 	Phase = EBackupPhase::Live;
@@ -445,7 +594,9 @@ void ABackupPawn::SpawnNextTrial()
 	CueXY = GetPlayerXY();
 
 	// 선출발 방지 — 큐 시점에 이미 게이트가 눌려 있으면, 한 번 뗄 때까지 이동을 무효화한다.
-	bGateLatchedAtCue = IsGateCurrentlyHeld();
+	// 저하 상태에선 "스틱을 밀고 있음"이 게이트이므로, 래치도 같은 정의를 써야 한다 —
+	// IsGateCurrentlyHeld() 를 쓰면 저하 후엔 항상 false 가 되어 선출발이 뚫린다.
+	bGateLatchedAtCue = IsMoveIntentHeld();
 	bGateEverReleased = !bGateLatchedAtCue;
 
 	GateElapsedSec = 0.0f;
@@ -477,6 +628,9 @@ void ABackupPawn::FinishTrial(EBackupOutcome Outcome)
 	Result.DecisionTimeSec = bHeadingCommitted ? PendingDecisionTimeSec : -1.0f;
 	Result.ArrivalTimeSec = Elapsed;
 	Result.bKeyScenario = CurrentTrial.CorrectZone.bKeyScenario;
+	Result.Role = CurrentTrial.CorrectZone.Role;
+	Result.Situation = CurrentTrial.Play.Situation;
+	Result.bHoldTrial = CurrentTrial.bIsHoldTrial;
 
 	const float StraightLine = FVector::Dist2D(CueXY, CurrentTrial.CorrectZone.RepresentativePoint());
 	Result.PathEfficiency = FBackupJudge::PathEfficiency(StraightLine, AccumulatedPathCm);
@@ -505,15 +659,28 @@ void ABackupPawn::FinishTrial(EBackupOutcome Outcome)
 	UE_LOG(LogMotionBase, Log, TEXT("[Backup] 판정: %s  판단 %.2fs  경로효율 %.0f%%"),
 		*UEnum::GetValueAsString(Outcome), Result.DecisionTimeSec, Result.PathEfficiency * 100.0f);
 
-	++TrialIndex;
-	if (TrialIndex >= TotalTrials)
+	// 시행 진행권은 GameState 에 있다 — 내 시행이 끝났다고 보고만 한다.
+	// 협동이면 전원이 보고해야 다음으로 넘어가고(먼저 끝낸 사람은 나머지를 지켜본다),
+	// 혼자면 등록 폰이 1개뿐이라 즉시 다음 시행이 예약된다(= 기존 동작 그대로).
+	// TrialIndex 증가·세션 종료 판단은 전부 GameState 쪽으로 옮겼다 — 여기서 같이
+	// 올리면 두 개의 진행권이 생겨 협동에서 시행 번호가 어긋난다.
+	if (ABackupGameState* GS = GetOwningGameState())
 	{
-		EndSession();
+		GS->ReportTrialFinished(this);
 	}
 	else
 	{
-		bWaitingNext = true;
-		IntervalTimer = IntervalBetweenTrials;
+		// GameState 가 없는 비정상 상황의 안전망 — 예전 로컬 진행 방식으로 계속 돈다.
+		++TrialIndex;
+		if (TrialIndex >= TotalTrials)
+		{
+			EndSession();
+		}
+		else
+		{
+			bWaitingNext = true;
+			IntervalTimer = IntervalBetweenTrials;
+		}
 	}
 }
 
@@ -621,6 +788,59 @@ FWeaknessReport ABackupPawn::BuildBackupReport() const
 	}
 	R.Notes.Add(FString::Printf(TEXT("Position: %s"), *UBackupPlaybook::PositionName(Position)));
 
+	// ── 역할별 분해 ──
+	// 정답률 하나로는 편중이 안 보인다. "백업은 되는데 중계(cutoff)를 못 선다"는 정답률이
+	// 같아도 완전히 다른 처방이라, 역할을 코칭이 볼 수 있는 축으로 따로 내보낸다.
+	{
+		struct FRoleTally { int32 Correct = 0; int32 Total = 0; };
+		TMap<EBackupRole, FRoleTally> ByRole;
+		for (const FBackupResult& Res : SessionResults)
+		{
+			FRoleTally& T = ByRole.FindOrAdd(Res.Role);
+			++T.Total;
+			if (Res.IsSuccess()) { ++T.Correct; }
+		}
+
+		FString Breakdown;
+		for (const TPair<EBackupRole, FRoleTally>& Pair : ByRole)
+		{
+			if (!Breakdown.IsEmpty()) { Breakdown += TEXT(", "); }
+			Breakdown += FString::Printf(TEXT("%s %d/%d"),
+				*RoleLabel(Pair.Key), Pair.Value.Correct, Pair.Value.Total);
+		}
+		if (!Breakdown.IsEmpty())
+		{
+			R.Notes.Add(FString::Printf(TEXT("Correct by job type: %s"), *Breakdown));
+		}
+	}
+
+	// ── 시행별 상세 ──
+	// 지금까지는 집계 숫자만 나가서 코칭이 "6개 중 4개 맞았다" 수준을 못 벗어났다.
+	// **어떤 상황에서 무엇을 틀렸는지**가 있어야 조언이 쓸모 있어진다 —
+	// 시스템 프롬프트는 이미 "which cases were missed"를 인용하라고 요구하고 있었는데,
+	// 정작 그 데이터가 안 실려 있었다.
+	for (int32 i = 0; i < SessionResults.Num(); ++i)
+	{
+		const FBackupResult& Res = SessionResults[i];
+
+		FString Line = FString::Printf(TEXT("Case %d: \"%s\" - job: %s - %s"),
+			i + 1,
+			Res.Situation.IsEmpty() ? TEXT("(situation not recorded)") : *Res.Situation,
+			*RoleLabel(Res.Role),
+			*OutcomeLabel(Res.Outcome));
+
+		if (Res.DecisionTimeSec >= 0.0f)
+		{
+			Line += FString::Printf(TEXT(", started moving after %.1fs"), Res.DecisionTimeSec);
+		}
+		if (Res.PathEfficiency >= 0.0f && Res.PathEfficiency < 0.85f && !Res.bHoldTrial)
+		{
+			// 낮을 때만 싣는다 — 잘 간 경로까지 전부 실으면 프롬프트가 잡음으로 덮인다.
+			Line += FString::Printf(TEXT(", wandered (route efficiency %.0f%%)"), Res.PathEfficiency * 100.0f);
+		}
+		R.Notes.Add(Line);
+	}
+
 	R.Weaknesses.Sort([](const FWeakness& A, const FWeakness& B) { return A.Severity > B.Severity; });
 	return R;
 }
@@ -642,6 +862,14 @@ void ABackupPawn::RestartSession()
 	}
 
 	StartSession();
+
+	// 진행권이 GameState 에 있으므로 재시작도 거기서 걸어야 한다 — 협동에선 한 사람이
+	// PLAY AGAIN 을 누르면 판 전체가 새로 시작된다(의도된 동작).
+	if (ABackupGameState* GS = GetOwningGameState())
+	{
+		GS->RequestRestart();
+		LastSeenTrialSerial = GS->GetTrialSerial();
+	}
 }
 
 void ABackupPawn::FlushSessionToSave()
@@ -674,7 +902,7 @@ void ABackupPawn::RequestBackupFeedback()
 	{
 		CoachingText = TEXT("Requesting AI coaching...");
 		bAwaitingCoaching = true;
-		FeedbackService->RequestBackupCoaching(Report, LastDrills);
+		FeedbackService->RequestBackupCoaching(Report, LastDrills, Chronic);
 	}
 	else
 	{
@@ -684,6 +912,64 @@ void ABackupPawn::RequestBackupFeedback()
 
 	UE_LOG(LogMotionBase, Log, TEXT("[Backup] 코칭 요청: 정답 %d/%d, 약점 %d개"),
 		SuccessCount, TotalTrials, Report.Weaknesses.Num());
+}
+
+void ABackupPawn::PrepareExplanationForCurrentTrial()
+{
+	CurrentAIExplain.Reset();
+	CurrentExplainKey.Reset();
+
+	// Hold 시행은 "아무 일도 없다"가 정답이라 확장 해설이 오히려 군더더기다.
+	if (CurrentTrial.bIsHoldTrial || CurrentTrial.Play.PlayId.IsNone())
+	{
+		return;
+	}
+
+	// 같은 (플레이 × 포지션)이면 상황이 같으므로 해설도 같다 — 캐시 키가 성립한다.
+	CurrentExplainKey = FString::Printf(TEXT("%s|%s"),
+		*CurrentTrial.Play.PlayId.ToString(), *UBackupPlaybook::PositionName(Position));
+
+	UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr;
+	if (MM && MM->TryGetPlayExplanation(CurrentExplainKey, CurrentAIExplain))
+	{
+		return; // 이미 받아둔 해설 — 호출 없음(부스 반복 시연에서 여기로 대부분 수렴한다).
+	}
+
+	if (!FeedbackService || !FeedbackService->IsConfigured())
+	{
+		return; // 키 없음 — 저작 해설로 간다.
+	}
+
+	FBackupExplainRequest Req;
+	Req.CacheKey        = CurrentExplainKey;
+	Req.PositionName    = UBackupPlaybook::PositionName(Position);
+	Req.Situation       = CurrentTrial.Play.Situation;
+	Req.RunnerText      = CurrentTrial.Play.RunnerText;
+	Req.JobText         = RoleLabel(CurrentTrial.CorrectZone.Role);
+	Req.AuthoredExplain = CurrentTrial.CorrectZone.Explain;
+
+	FeedbackService->RequestPlayExplanation(Req);
+}
+
+void ABackupPawn::HandlePlayExplanationReady(bool bSuccess, const FString& CacheKey, const FString& Explanation)
+{
+	if (!bSuccess || Explanation.IsEmpty())
+	{
+		return; // 저작 해설이 이미 화면에 있다 — 아무것도 안 해도 된다.
+	}
+
+	// 캐시는 키와 무관하게 채운다. 늦게 온 응답이라도 다음 세션에서는 즉시 쓸 수 있다.
+	if (UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
+	{
+		MM->CachePlayExplanation(CacheKey, Explanation);
+	}
+
+	// ⚠️ 표시는 **지금 그 시행일 때만.** 응답이 늦어 다음 시행으로 넘어갔으면 키가 달라지고,
+	//    그대로 붙이면 지금 화면의 상황과 다른 해설이 정답 설명인 척 나간다.
+	if (CacheKey == CurrentExplainKey)
+	{
+		CurrentAIExplain = Explanation;
+	}
 }
 
 void ABackupPawn::HandleCoachingReady(bool bSuccess, const FString& Text)
@@ -761,6 +1047,56 @@ bool ABackupPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) c
 }
 
 // ── 매 프레임 ──
+
+bool ABackupPawn::ReadVRStickAxes(float& OutX, float& OutY) const
+{
+	OutX = 0.0f;
+	OutY = 0.0f;
+	if (!bVR || !MoveController)
+	{
+		return false;
+	}
+
+	const APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		return false;
+	}
+
+	const FName Hand = MoveController->MotionSource;
+	const TCHAR* Side = (Hand == FName(TEXT("Left"))) ? TEXT("Left") : TEXT("Right");
+
+	// Vive 트랙패드는 두 이름 중 하나로 잡힌다 — 둘 다 읽어 절댓값이 큰 쪽을 쓴다
+	// (다른 VR 폰들과 동일 패턴).
+	auto ReadAxis = [PC, Side](const TCHAR* Generic, const TCHAR* ViveName) -> float
+	{
+		const float A = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("MotionController_%s_%s"), Side, Generic)));
+		const float B = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("Vive_%s_%s"), Side, ViveName)));
+		return (FMath::Abs(B) > FMath::Abs(A)) ? B : A;
+	};
+
+	OutX = ReadAxis(TEXT("Thumbstick_X"), TEXT("Trackpad_X"));
+	OutY = ReadAxis(TEXT("Thumbstick_Y"), TEXT("Trackpad_Y"));
+	return true;
+}
+
+bool ABackupPawn::IsMoveIntentHeld() const
+{
+	if (!bVR || bGateRequired)
+	{
+		return IsGateCurrentlyHeld();
+	}
+
+	// 저하 상태: 스틱을 밀고 있는 것 자체가 이동 의도다.
+	// 문턱은 TickTrial 의 게이트 성립 조건과 **같은 값**이어야 한다 — 다르면 큐 래치와
+	// 실제 이동 판정이 어긋나 선출발 방지가 반 프레임씩 새는 상태가 된다.
+	float X = 0.0f, Y = 0.0f;
+	if (!ReadVRStickAxes(X, Y))
+	{
+		return false;
+	}
+	return FMath::Max(FMath::Abs(X), FMath::Abs(Y)) >= FMath::Max(StickDeadzone, FirstFrameAxisFloor);
+}
 
 bool ABackupPawn::IsGateCurrentlyHeld() const
 {
@@ -850,14 +1186,31 @@ void ABackupPawn::Tick(float DeltaSeconds)
 		TickTrial(DeltaSeconds);
 	}
 
-	if (bWaitingNext && !bSessionOver)
+	// 시행 교체·세션 종료는 GameState 가 정한다 — 여기선 그 변화를 따라간다.
+	// (두 곳에서 세면 협동에서 시행이 어긋난다.)
+	if (bLocalSessionFallback)
 	{
-		IntervalTimer -= DeltaSeconds;
-		if (IntervalTimer <= 0.0f)
+		// GameState 가 뒤늦게 생겼는지 매 프레임 확인한다 — 생겼으면 그쪽으로 넘긴다.
+		// (넘어가면 이 프레임부터 아래 로컬 카운트다운 대신 GameState 흐름을 따른다.)
+		TryAttachToLateGameState();
+	}
+
+	if (bLocalSessionFallback)
+	{
+		// GameState 가 없는 단독 모드 — 예전 그대로 폰이 직접 센다.
+		if (bWaitingNext && !bSessionOver)
 		{
-			bWaitingNext = false;
-			SpawnNextTrial();
+			IntervalTimer -= DeltaSeconds;
+			if (IntervalTimer <= 0.0f)
+			{
+				bWaitingNext = false;
+				SpawnNextTrial(DrawSoloPlayIndex());
+			}
 		}
+	}
+	else
+	{
+		SyncFromGameState();
 	}
 
 	// 정지 프레임(rest frame) — VR 멀미 완화. 폰 루트 기준 고정된 링 + 기둥 2개.
@@ -922,49 +1275,72 @@ void ABackupPawn::TryCommitHeading()
 void ABackupPawn::TickTrial(float DeltaSeconds)
 {
 	// ── 게이트 + 축 입력 ──
-	bool bGateHeld = IsGateCurrentlyHeld();
+	bool bGateHeld = false;
 	FVector2D MoveDir = FVector2D::ZeroVector; // 이미 월드 XY 축으로 정렬된 단위(이하) 벡터.
 
-	if (bGateHeld)
+	if (bVR)
 	{
-		if (bVR)
+		// 축을 게이트보다 **먼저**, 게이트 성립과 무관하게 읽는다 — 자동 저하 판정이
+		// "트리거는 안 잡히는데 스틱은 움직이고 있다"를 관측해야 하기 때문.
+		float AxisX = 0.0f, AxisY = 0.0f;
+		const bool bHasAxis = ReadVRStickAxes(AxisX, AxisY);
+		const float RawMag = FMath::Max(FMath::Abs(AxisX), FMath::Abs(AxisY));
+
+		const bool bGatePressed = IsGateCurrentlyHeld();
+		if (bGatePressed)
 		{
-			if (const APlayerController* PC = Cast<APlayerController>(GetController()))
+			bGateEverObserved = true;
+		}
+
+		// 자동 저하 — 트리거가 한 번도 안 잡혔는데 스틱만 GateProbeSec 이상 들어오면
+		// 게이트 요구를 내린다. (트리거 키가 이 런타임에서 미등록일 때의 탈출구.)
+		if (bGateRequired && !bGateEverObserved && bHasAxis && RawMag >= StickDeadzone)
+		{
+			AxisWithoutGateSec += DeltaSeconds;
+			if (AxisWithoutGateSec >= GateProbeSec)
 			{
-				const FName Hand = MoveController ? MoveController->MotionSource : FName(TEXT("Right"));
-				const TCHAR* Side = (Hand == FName(TEXT("Left"))) ? TEXT("Left") : TEXT("Right");
-
-				// Vive 트랙패드는 두 이름 중 하나로 잡힌다 — 둘 다 읽어 절댓값이 큰 쪽을 쓴다
-				// (다른 VR 폰들과 동일 패턴).
-				auto ReadAxis = [PC, Side](const TCHAR* Generic, const TCHAR* ViveName) -> float
-				{
-					const float A = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("MotionController_%s_%s"), Side, Generic)));
-					const float B = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("Vive_%s_%s"), Side, ViveName)));
-					return (FMath::Abs(B) > FMath::Abs(A)) ? B : A;
-				};
-
-				float AxisX = ReadAxis(TEXT("Thumbstick_X"), TEXT("Trackpad_X"));
-				float AxisY = ReadAxis(TEXT("Thumbstick_Y"), TEXT("Trackpad_Y"));
-
-				// 게이트를 막 쥔 첫 프레임은 트랙패드 최초 접촉 노이즈가 있을 수 있어
-				// 더 높은 문턱을 쓴다 (그 뒤로는 일반 데드존).
-				const float Floor = (GateElapsedSec <= KINDA_SMALL_NUMBER) ? FirstFrameAxisFloor : StickDeadzone;
-				if (FMath::Abs(AxisX) < Floor) { AxisX = 0.0f; }
-				if (FMath::Abs(AxisY) < Floor) { AxisY = 0.0f; }
-
-				FVector2D Local(AxisY, AxisX); // 앞뒤=X, 좌우=Y (다른 VR 폰들과 동일 축 관례).
-				if (Local.SizeSquared() > 1.0f) { Local.Normalize(); }
-
-				// 머리가 보는 방향 기준 → 월드 축으로 변환.
-				if (Camera && !Local.IsNearlyZero())
-				{
-					const float HeadYaw = Camera->GetComponentRotation().Yaw;
-					const FVector Rotated = FRotator(0.0f, HeadYaw, 0.0f).RotateVector(FVector(Local.X, Local.Y, 0.0f));
-					MoveDir = FVector2D(Rotated.X, Rotated.Y);
-				}
+				bGateRequired = false;
+				UE_LOG(LogMotionBase, Warning,
+					TEXT("[Backup] 이동 게이트(MotionController_*_Trigger) 미검출 %.1fs — 스틱 단독 이동으로 저하."),
+					AxisWithoutGateSec);
 			}
 		}
-		else
+
+		// 저하 상태에선 "스틱을 밀고 있다"가 곧 게이트다. 아래 로직(선출발 래치·Hold 시행
+		// 오출발·게이트 누적 시간)은 전부 이 플래그를 "이동 의도가 있는가"로 읽으므로
+		// 정의만 바꿔주면 의미가 그대로 보존된다.
+		//
+		// ⚠️ 단, 저하되면 "버튼을 눌러야만 이동"이라는 드리프트 방어가 통째로 사라진다.
+		//    트랙패드를 스치기만 해도 Hold 시행이 FalseStart 로 깎일 수 있으므로, 게이트
+		//    성립 문턱만은 데드존이 아니라 더 높은 FirstFrameAxisFloor 를 쓴다 —
+		//    방향 계산용 데드존(아래)보다 엄격해야 스침과 의도를 가를 수 있다.
+		const float DegradedGateFloor = FMath::Max(StickDeadzone, FirstFrameAxisFloor);
+		bGateHeld = bGateRequired ? bGatePressed : (RawMag >= DegradedGateFloor);
+
+		if (bGateHeld && bHasAxis)
+		{
+			// 게이트를 막 쥔 첫 프레임은 트랙패드 최초 접촉 노이즈가 있을 수 있어
+			// 더 높은 문턱을 쓴다 (그 뒤로는 일반 데드존).
+			const float Floor = (GateElapsedSec <= KINDA_SMALL_NUMBER) ? FirstFrameAxisFloor : StickDeadzone;
+			if (FMath::Abs(AxisX) < Floor) { AxisX = 0.0f; }
+			if (FMath::Abs(AxisY) < Floor) { AxisY = 0.0f; }
+
+			FVector2D Local(AxisY, AxisX); // 앞뒤=X, 좌우=Y (다른 VR 폰들과 동일 축 관례).
+			if (Local.SizeSquared() > 1.0f) { Local.Normalize(); }
+
+			// 머리가 보는 방향 기준 → 월드 축으로 변환.
+			if (Camera && !Local.IsNearlyZero())
+			{
+				const float HeadYaw = Camera->GetComponentRotation().Yaw;
+				const FVector Rotated = FRotator(0.0f, HeadYaw, 0.0f).RotateVector(FVector(Local.X, Local.Y, 0.0f));
+				MoveDir = FVector2D(Rotated.X, Rotated.Y);
+			}
+		}
+	}
+	else
+	{
+		bGateHeld = IsGateCurrentlyHeld();
+		if (bGateHeld)
 		{
 			FVector Local = FVector::ZeroVector;
 			if (bMoveFwd)   Local.X += 1.0f;
@@ -1243,7 +1619,7 @@ void ABackupPawn::RefreshVrPanel()
 		for (const FTrainingDrill& D : LastDrills)
 		{
 			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
+			VrPanel->SetRow(Row++, D.CompactLabel(), FColor(255, 200, 120));
 		}
 		VrPanel->HideRowsFrom(Row);
 
@@ -1264,29 +1640,55 @@ void ABackupPawn::RefreshVrPanel()
 		FColor(228, 233, 244));
 
 	VrPanel->SetRow(0, CurrentTrial.Play.Situation, FColor(150, 200, 255));
-	VrPanel->SetRow(1, CurrentTrial.Play.RunnerText, FColor(150, 156, 168));
+
+	FString Outcome; FLinearColor OColor;
+	const bool bHasOutcome = GetLastOutcomeText(Outcome, OColor);
 
 	const float Live = GetLiveDecisionSec();
 	if (Live >= 0.0f)
 	{
+		// 진행 중: 상황(0) · 주자(1) · 판단 시간(2).
+		VrPanel->SetRow(1, CurrentTrial.Play.RunnerText, FColor(150, 156, 168));
 		VrPanel->SetRow(2, FString::Printf(TEXT("deciding...  %.1fs"), Live),
 			(Live > Field.TargetDecisionSec) ? FColor(230, 130, 90) : FColor(90, 220, 110));
 		VrPanel->HideRowsFrom(3);
 	}
+	else if (bHasOutcome)
+	{
+		// ⚠️ 해설을 푸터에 붙이지 않는다. 푸터는 한 줄이라 AI 확장 해설(1~2문장)이 잘린다.
+		//    판정이 끝나면 주자·판단시간 줄은 역할이 끝났으므로(플레이 중 내내 보고 있었다)
+		//    행 1~3 을 통째로 해설에 내준다. 컴팩트 패널은 4행(0~3)까지만 안전하다.
+		const TArray<FString> Lines = WrapBackupPanel(GetLastExplainText(), /*MaxCharsPerLine=*/34, /*MaxLines=*/3);
+		int32 Row = 1;
+		for (const FString& L : Lines)
+		{
+			VrPanel->SetRow(Row++, L, FColor(190, 200, 215));
+		}
+		VrPanel->HideRowsFrom(Row);
+	}
 	else
 	{
+		VrPanel->SetRow(1, CurrentTrial.Play.RunnerText, FColor(150, 156, 168));
 		VrPanel->HideRowsFrom(2);
 	}
 
-	FString Outcome; FLinearColor OColor;
-	if (GetLastOutcomeText(Outcome, OColor))
+	if (bHasOutcome)
 	{
-		const FString Explain = GetLastExplainText();
-		VrPanel->SetFooter(Explain.IsEmpty() ? Outcome : (Outcome + TEXT("  ") + Explain), OColor.ToFColor(true));
+		// 푸터엔 판정 결과만 — 짧고 색으로 구분되는 값이라 한 줄에 맞는다.
+		VrPanel->SetFooter(Outcome, OColor.ToFColor(true));
 	}
 	else
 	{
-		VrPanel->SetFooter(TEXT("Hold the move button and go to your backup spot"), FColor(150, 156, 168));
+		// 저하됐으면 조용히 넘어가지 않는다 — 조작법이 바뀌었다는 사실을 그 자리에서 알린다.
+		if (IsGateDegraded())
+		{
+			VrPanel->SetFooter(TEXT("Trigger not detected - stick only. Push the stick to move."),
+				FColor(255, 190, 90));
+		}
+		else
+		{
+			VrPanel->SetFooter(TEXT("Hold the move button and go to your backup spot"), FColor(150, 156, 168));
+		}
 	}
 
 	if (ExitGesture.IsHolding())

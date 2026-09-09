@@ -3,6 +3,7 @@
 #include "Core/ModeSelectPawn.h"
 #include "Core/ModeManager.h"
 #include "Analysis/WeaknessDetector.h"
+#include "Scoring/ScoringService.h"
 #include "Data/SessionSummary.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
@@ -234,6 +235,10 @@ void AModeSelectHUD::DrawHUD()
 	// 타이틀 왼쪽 앰버 액센트 바
 	DrawRect(Accent, ContentX, TitleY + TitleH * 0.08f, 6.0f * S, TitleH * 0.84f);
 	DrawText(Title, TextTitle, ContentX + 24.0f * S, TitleY, FontLarge, TitleScale);
+
+	// ── 종합 점수 (오른쪽 컬럼) ──
+	// 워터마크가 있던 빈 영역을 쓴다. 메뉴(왼쪽 컬럼)와 겹치지 않는다.
+	DrawOverallScore(W * 0.615f, H * 0.145f, FMath::Min(W * 0.30f, 420.0f * S), S, FontLarge, FontBody);
 
 	// 부제는 단계(모드/난이도/타석/수비종목)에 따라 폰이 정한다.
 	const FString Subtitle = SelectPawn->GetHeaderSubtitle().ToString();
@@ -726,4 +731,115 @@ void AModeSelectHUD::DrawSessionResult(const FSessionSummary& Sum)
 	HintX += DrawKeyHint(TEXT("R"), TEXT("다시"), HintX, FooterY, S, FontBody);
 	HintX += DrawKeyHint(TEXT("M"), TEXT("모드 선택"), HintX, FooterY, S, FontBody);
 	HintX += DrawKeyHint(TEXT("F"), TEXT("분석 갱신"), HintX, FooterY, S, FontBody);
+}
+
+void AModeSelectHUD::DrawOverallScore(float X, float Y, float PanelW, float S, UFont* FontLarge, UFont* FontBody)
+{
+	UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr;
+	if (!MM)
+	{
+		return;
+	}
+
+	// ⚠️ 여기서 ComputeOverall 을 직접 부르지 않는다 — DrawHUD 는 매 프레임 돌고
+	//    ComputeOverall 은 저장 이력 전체를 4번 훑으며 카테고리 배열도 매번 할당한다.
+	//    ModeManager 가 이력 버전으로 캐시하므로, 세션이 저장된 뒤 첫 호출에서만 계산된다.
+	const FOverallScore& Overall = MM->GetOverallScore();
+
+	float TW = 0.0f, TH = 0.0f;
+
+	// ── 카드 배경 ──
+	// ⚠️ 이 자리는 구장 워터마크와 겹친다(워터마크 중심 W*0.79, 반지름 H*0.27). 알파가 낮아도
+	//    파울선·베이스 사각형이 점수 글자를 관통해 읽기 나쁘다. 배경 카드를 깔아 뒤를 가린다.
+	//    위치를 옮겨 피하는 방법도 있지만, 카드를 두면 해상도·종횡비가 바뀌어도 안전하고
+	//    종합 점수가 하나의 덩어리로 읽혀 정보 구조도 더 분명해진다.
+	//
+	// 높이는 아래 레이아웃과 **같은 상수로** 미리 계산한다 (레이아웃을 바꾸면 여기도 같이).
+	const float TotalScale = 2.2f * S;
+	float TotalW = 0.0f, TotalH = 0.0f;
+	GetTextSize(TEXT("00"), TotalW, TotalH, FontLarge, TotalScale);
+
+	const float Pad = 18.0f * S;
+	const float CardH = Overall.bValid
+		? (30.0f * S + TotalH + 6.0f * S + 24.0f * S
+			+ (Overall.bUncalibrated ? 22.0f * S : 0.0f)
+			+ 8.0f * S + 2.0f * 42.0f * S + 4.0f * S
+			+ Overall.Categories.Num() * 21.0f * S)
+		: (30.0f * S + 26.0f * S);
+
+	DrawRect(FLinearColor(0.03f, 0.05f, 0.09f, 0.72f), X - Pad, Y - Pad * 0.6f, PanelW + Pad * 2.0f, CardH + Pad);
+	DrawOutlineRect(X - Pad, Y - Pad * 0.6f, PanelW + Pad * 2.0f, CardH + Pad,
+		FLinearColor(1.0f, 1.0f, 1.0f, 0.08f), FMath::Max(1.0f * S, 1.0f));
+
+	float y = Y;
+
+	DrawText(TEXT("종합"), Accent, X, y, FontBody, 0.95f * S);
+	y += 30.0f * S;
+
+	if (!Overall.bValid)
+	{
+		// 기록이 없을 때 0 점을 띄우지 않는다 — "0점"과 "아직 안 함"은 완전히 다른 말이다.
+		DrawText(TEXT("기록 없음 — 아무 종목이나 시작하세요"), TextSecondary, X, y, FontBody, 0.85f * S);
+		return;
+	}
+
+	// 대표 숫자 = 실시한 종목 기준 100점 환산.
+	const FString TotalStr = FString::Printf(TEXT("%.0f"), Overall.Total);
+	DrawText(TotalStr, TextTitle, X, y, FontLarge, 2.2f * S);
+	GetTextSize(TotalStr, TW, TH, FontLarge, 2.2f * S);
+	DrawText(TEXT("/ 100"), TextSecondary, X + TW + 10.0f * S, y + TH * 0.45f, FontBody, 0.9f * S);
+	y += TH + 6.0f * S;
+
+	// 완료도 — 총점이 "왜 이 숫자인지"를 설명하는 값이라 총점 바로 밑에 붙인다.
+	DrawText(FString::Printf(TEXT("완료 %d / %d 종목  ·  실시 종목 기준 환산"),
+		Overall.PlayedCount, Overall.CategoryCount), TextSecondary, X, y, FontBody, 0.8f * S);
+	y += 24.0f * S;
+
+	if (Overall.bUncalibrated)
+	{
+		// ⚠️ 반드시 남긴다 — 100점 만점은 정밀해 보이지만 기준 상수는 아직 실측 보정 전이다.
+		DrawText(TEXT("* 점수 기준 미보정 — 참고용"), Notice, X, y, FontBody, 0.75f * S);
+		y += 22.0f * S;
+	}
+	y += 8.0f * S;
+
+	// 공격/수비 소계 (절대 점수 — 각 50 만점).
+	auto DrawSubtotal = [&](const TCHAR* Label, float Points, float MaxPoints, const FLinearColor& Color)
+	{
+		DrawText(FString::Printf(TEXT("%s  %.1f / %.0f"), Label, Points, MaxPoints),
+			TextPrimary, X, y, FontBody, 0.88f * S);
+		y += 20.0f * S;
+
+		const float BarW = PanelW;
+		const float BarH = 8.0f * S;
+		DrawRect(FLinearColor(1.0f, 1.0f, 1.0f, 0.10f), X, y, BarW, BarH);
+		const float Ratio = (MaxPoints > KINDA_SMALL_NUMBER) ? FMath::Clamp(Points / MaxPoints, 0.0f, 1.0f) : 0.0f;
+		DrawRect(Color, X, y, BarW * Ratio, BarH);
+		y += BarH + 14.0f * S;
+	};
+
+	DrawSubtotal(TEXT("공격"), Overall.OffensePoints, Overall.OffenseMaxPoints, Accent);
+	DrawSubtotal(TEXT("수비"), Overall.DefensePoints, Overall.DefenseMaxPoints,
+		FLinearColor(0.36f, 0.62f, 1.0f, 0.9f));
+
+	// 종목별 — 미실시는 "—" 로. 무엇을 더 하면 되는지가 한눈에 보여야 다음 종목으로 간다.
+	y += 4.0f * S;
+	for (const FOverallCategoryScore& Cat : Overall.Categories)
+	{
+		const bool bPlayed = Cat.bPlayed;
+		const FLinearColor Col = bPlayed ? TextSecondary : FLinearColor(0.45f, 0.48f, 0.53f, 1.0f);
+
+		FString Line;
+		if (bPlayed)
+		{
+			Line = FString::Printf(TEXT("%s   %.0f   (%s)"), *Cat.DisplayName, Cat.BestScore,
+				*UModeManager::GetDifficultyDisplayName(Cat.BestDifficulty).ToString());
+		}
+		else
+		{
+			Line = FString::Printf(TEXT("%s   —   미실시"), *Cat.DisplayName);
+		}
+		DrawText(Line, Col, X + 4.0f * S, y, FontBody, 0.82f * S);
+		y += 21.0f * S;
+	}
 }

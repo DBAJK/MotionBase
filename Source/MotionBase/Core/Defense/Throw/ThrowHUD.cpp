@@ -1,6 +1,7 @@
 ﻿#include "Core/Defense/Throw/ThrowHUD.h"
 #include "Core/Defense/Throw/ThrowPawn.h"
 #include "Engine/Canvas.h"
+#include "HeadMountedDisplayFunctionLibrary.h"
 #include "Engine/Engine.h"
 
 namespace
@@ -41,6 +42,14 @@ void AThrowHUD::DrawCentered(const FString& Text, float CenterX, float Y, const 
 void AThrowHUD::DrawHUD()
 {
 	Super::DrawHUD();
+
+	// ⚠️ VR(HMD)에서는 이 평면 Canvas HUD 를 그리지 않는다 — ModeSelectHUD 와 같은 이유.
+	// Canvas 는 스테레오에서 눈마다 다른 위치로 찍혀 좌/우가 어긋나고, 월드 패널(UVRInfoPanel)과
+	// 겹쳐 어지럽다. 헤드셋 안 UI 는 폰의 VrPanel 이 전담한다 (이 HUD 는 PC 시연/검증 전용).
+	if (UHeadMountedDisplayFunctionLibrary::IsHeadMountedDisplayEnabled())
+	{
+		return;
+	}
 
 	AThrowPawn* Pawn = Cast<AThrowPawn>(GetOwningPawn());
 	if (!Pawn || !Canvas)

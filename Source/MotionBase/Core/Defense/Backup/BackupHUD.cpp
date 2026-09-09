@@ -2,6 +2,7 @@
 #include "Core/Defense/Backup/BackupPawn.h"
 #include "Core/Defense/Backup/BackupPlaybook.h"
 #include "Engine/Canvas.h"
+#include "HeadMountedDisplayFunctionLibrary.h"
 #include "Engine/Engine.h"
 
 namespace
@@ -135,6 +136,14 @@ void ABackupHUD::DrawHUD()
 {
 	Super::DrawHUD();
 
+	// ⚠️ VR(HMD)에서는 이 평면 Canvas HUD 를 그리지 않는다 — ModeSelectHUD 와 같은 이유.
+	// Canvas 는 스테레오에서 눈마다 다른 위치로 찍혀 좌/우가 어긋나고, 월드 패널(UVRInfoPanel)과
+	// 겹쳐 어지럽다. 헤드셋 안 UI 는 폰의 VrPanel 이 전담한다 (이 HUD 는 PC 시연/검증 전용).
+	if (UHeadMountedDisplayFunctionLibrary::IsHeadMountedDisplayEnabled())
+	{
+		return;
+	}
+
 	ABackupPawn* Pawn = Cast<ABackupPawn>(GetOwningPawn());
 	if (!Pawn || !Canvas)
 	{
@@ -188,7 +197,19 @@ void ABackupHUD::DrawHUD()
 	{
 		const float ResultY = MapCenterY + MapRadius + 24.0f * S;
 		DrawCentered(Outcome, W * 0.5f, ResultY, OColor, 1.4f * S);
-		DrawCentered(Pawn->GetLastExplainText(), W * 0.5f, ResultY + 36.0f * S, TextDim, 0.8f * S);
+
+		// 해설은 규칙 테이블의 한 줄일 수도, AI 가 확장한 1~2문장일 수도 있다 —
+		// 한 줄로 그리면 후자가 화면 밖으로 잘린다. 글자수로 하드 랩한다.
+		{
+			const FString Explain = Pawn->GetLastExplainText();
+			constexpr int32 ExplainChars = 88;
+			float EY = ResultY + 36.0f * S;
+			for (int32 i = 0; i < Explain.Len(); i += ExplainChars)
+			{
+				DrawCentered(Explain.Mid(i, ExplainChars), W * 0.5f, EY, TextDim, 0.8f * S);
+				EY += 22.0f * S;
+			}
+		}
 	}
 
 	// ── 세션 종료 시 AI 판단 코칭 ──

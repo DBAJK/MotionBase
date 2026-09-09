@@ -38,7 +38,7 @@
 | `Source/MotionBase/AI/` | `UAIFeedbackService` — UE HTTP 기반 생성형 AI 피드백 (확장) |
 | `Content/` | 맵·Blueprint·Input·UI 에셋 (에디터에서 작성) |
 
-## 개발 우선순위 (1인 · 12주)
+## 개발 우선순위 (2인 · 12주)
 
 1. **MVP**: UE 셋업 + Vive 연동 + `타격` + `반응속도` + 로컬 저장
 2. `수비` + `베이스 러닝` (LiDAR 전신 추적)

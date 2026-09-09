@@ -97,8 +97,15 @@ public:
 	/** 마지막 판정 결과 문구/색. 표시할 게 있으면 true. */
 	bool GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) const;
 
-	/** 마지막 시행의 정답 해설 (영문). */
-	FString GetLastExplainText() const { return CurrentTrial.CorrectZone.Explain; }
+	/**
+	 * 마지막 시행의 정답 해설 (영문).
+	 * AI 확장 해설이 도착해 있으면 그걸, 아니면 규칙 테이블의 저작 한 줄을 돌려준다 —
+	 * **화면이 비는 경우는 없다.** (키 없음·네트워크 실패·응답 지연 전부 저작 해설로 수렴)
+	 */
+	FString GetLastExplainText() const
+	{
+		return CurrentAIExplain.IsEmpty() ? CurrentTrial.CorrectZone.Explain : CurrentAIExplain;
+	}
 
 	/** 탑다운 미니맵 그리기에 필요한 것들 (BackupHUD 가 읽는다). */
 	const FBaseballField& GetField() const { return Field; }
@@ -108,6 +115,9 @@ public:
 	/** 세션 종료 후 AI 판단 코칭 문구. */
 	const FString& GetCoachingText() const { return CoachingText; }
 	const TArray<FTrainingDrill>& GetRecommendedDrills() const { return LastDrills; }
+
+	/** 트리거를 못 잡아 스틱 단독 이동으로 저하됐는지 — 패널/HUD 경고용. */
+	bool IsGateDegraded() const { return bVR && !bGateRequired; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -173,6 +183,19 @@ protected:
 	/** 이동 게이트로 볼 트리거 임계값. */
 	UPROPERTY(EditAnywhere, Category = "Backup|VR", meta = (ClampMin = "0.1", ClampMax = "1.0"))
 	float GateTriggerThreshold = 0.6f;
+
+	/**
+	 * 게이트 자동 저하 문턱(초). 트리거가 **한 번도** 안 잡히는데 스틱 입력만 이 시간만큼
+	 * 누적되면 게이트 요구를 내리고 스틱 단독 이동으로 전환한다.
+	 *
+	 * ⚠️ 편의 기능이 아니라 안전장치다. 이 프로젝트는 순수 OpenXR 이라 런타임/컨트롤러
+	 *    조합에 따라 트리거가 `MotionController_*_Trigger` 이름으로 안 올라올 수 있다.
+	 *    저하가 없으면 그 순간 플레이어는 "화면은 멀쩡한데 한 발짝도 못 움직이는" 상태가
+	 *    되어 드릴 자체가 성립하지 않는다. 대신 조용히 넘어가지 않고 패널에 경고를 띄운다 —
+	 *    입력이 깨졌다는 사실은 표면화되어야 튜닝 대상이 된다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Backup|VR", meta = (ClampMin = "1.0"))
+	float GateProbeSec = 4.0f;
 
 	/** PC 이동 속도 (cm/s). VR 은 Field.MoveSpeedCms 를 쓴다(제한 시간 파생과 같은 값이어야 공정). */
 	UPROPERTY(EditAnywhere, Category = "Backup")
@@ -303,16 +326,54 @@ private:
 	FVector ClearBallFromMySpot(const FVector& Target) const;
 
 	// ── 세션 진행 ──
+	// ⚠️ **진행권은 이 폰이 아니라 ABackupGameState 에 있다.** 협동 멀티플레이에서 전원이
+	//    같은 타구를 같은 순간에 봐야 하기 때문. 이 폰은 (a) 시행 시리얼이 바뀌면 그 플레이로
+	//    자기 시행을 시작하고, (b) 자기 시행이 끝나면 보고할 뿐이다.
+	//    싱글플레이에서도 같은 경로로 돈다(스탠드얼론은 HasAuthority()==true).
 	void StartSession();
-	void SpawnNextTrial();
+
+	/** GameState 가 정한 플레이 인덱스로 내 시행을 시작한다. */
+	void SpawnNextTrial(int32 PlayIndex);
+
 	void FinishTrial(EBackupOutcome Outcome);
 	void EndSession();
 
 	/** 종료 화면의 PLAY AGAIN — 끝난 판을 저장하고 같은 폰에서 새 세션을 시작한다. */
 	void RestartSession();
 
-	/** 다음 플레이를 무반복 주머니에서 뽑는다 (Hold-비율 롤 포함). */
-	FBackupPlay DrawNextPlay();
+	/** 이 월드의 백업 GameState. 없으면 nullptr (다른 모드에서 스폰된 비정상 상황). */
+	class ABackupGameState* GetBackupGameState() const;
+
+	/**
+	 * **이 폰의 시행 진행을 실제로 맡고 있는** GameState. 단독 모드면 nullptr.
+	 *
+	 * ⚠️ 진행 주체 판단은 반드시 이 함수 하나만 쓴다. 예전엔 Tick 이 래치된
+	 *    bLocalSessionFallback 으로, FinishTrial 은 GetBackupGameState() 조회로 갈라져
+	 *    있었다. GameState 가 BeginPlay 이후에 나타나면(클라이언트 복제 지연 등) 두 경로가
+	 *    엇갈려 — Tick 은 로컬 타이머를 기다리는데 FinishTrial 은 등록도 안 된 GameState 에
+	 *    보고만 하고 타이머를 안 걸어 — **시행 1회 후 아무 에러 없이 영구 정지했다.**
+	 */
+	class ABackupGameState* GetOwningGameState() const;
+
+	/**
+	 * 단독 모드로 시작했는데 GameState 가 뒤늦게 나타났으면 그쪽으로 넘긴다.
+	 * (클라이언트에서 GameState 복제가 BeginPlay 보다 늦는 경우의 복구 경로.)
+	 */
+	void TryAttachToLateGameState();
+
+	/** GameState 의 복제 상태를 로컬 표시용 값(TrialIndex/bSessionOver 등)에 반영한다. */
+	void SyncFromGameState();
+
+public:
+	/**
+	 * **혼자 플레이할 때만** 쓰는 편향 추첨 — 내 포지션에서 할 일이 있는 플레이를 우선하되
+	 * HoldTrialFraction 확률로 전체 주머니에서 뽑는다. GameState 가 등록 폰이 하나일 때
+	 * 이 함수에 위임한다(협동에선 전체 테이블에서 그냥 뽑는다 — 설계 노트 참고).
+	 * @return PlayTable 인덱스. 테이블이 비었으면 INDEX_NONE.
+	 */
+	int32 DrawSoloPlayIndex();
+
+private:
 	void RefillBags();
 
 	/** 플레이어를 자기 수비 위치로 되돌리고 홈을 보게 한다 (매 시행 재적용 — 실내 드리프트 보정). */
@@ -326,6 +387,20 @@ private:
 
 	/** 지금 이동 게이트(VR 트리거 / PC WASD)가 눌려 있는지 — 부수효과 없이 순수 조회만. */
 	bool IsGateCurrentlyHeld() const;
+
+	/**
+	 * VR 스틱/트랙패드 축 원시값(데드존 적용 전)을 읽는다. 컨트롤러/PC 가 없으면 false.
+	 *
+	 * 게이트 성립 여부와 **독립적으로** 읽을 수 있어야 한다 — 자동 저하 판정이
+	 * "트리거는 안 잡히는데 스틱은 움직이고 있다"를 관측해야 하기 때문.
+	 */
+	bool ReadVRStickAxes(float& OutX, float& OutY) const;
+
+	/**
+	 * 지금 "이동 의도"가 있는지 — 정상 상태엔 트리거, 저하 상태엔 스틱 밀림.
+	 * 선출발 방지 래치가 저하 상태에서도 같은 의미로 동작하게 하는 단일 정의다.
+	 */
+	bool IsMoveIntentHeld() const;
 
 	/** 이동 개시(1단계) 커밋 시도 — 조건이 차면 방향 판정까지 끝낸다. */
 	void TryCommitHeading();
@@ -352,6 +427,21 @@ private:
 	UFUNCTION()
 	void HandleCoachingReady(bool bSuccess, const FString& Text);
 
+	// ── AI 플레이 해설 (판정이 아니라 설명) ──
+
+	/**
+	 * 이번 시행의 해설을 준비한다. 캐시에 있으면 즉시, 없으면 요청을 건다.
+	 *
+	 * ⚠️ **시행이 끝날 때가 아니라 시작할 때 부른다(prefetch).** 정답은 BuildTrial 시점에
+	 *    이미 확정돼 있으므로 미리 물어볼 수 있고, 플레이어가 뛰는 2~10초 동안 응답이
+	 *    도착한다. 판정 후에 요청하면 결과 표시(3초)를 왕복 지연이 잡아먹는다.
+	 *    표시는 IsAnswerRevealed() 이후에만 일어나므로 정답이 미리 새지 않는다.
+	 */
+	void PrepareExplanationForCurrentTrial();
+
+	UFUNCTION()
+	void HandlePlayExplanationReady(bool bSuccess, const FString& CacheKey, const FString& Explanation);
+
 	/** VR 상태 패널 갱신. */
 	void RefreshVrPanel();
 
@@ -372,6 +462,30 @@ private:
 
 	int32 TrialIndex = 0;
 	int32 SuccessCount = 0;
+
+	/**
+	 * 마지막으로 처리한 GameState 시행 시리얼. 이 값과 달라지면 새 시행으로 본다.
+	 * -1 로 시작해 "아직 아무 시행도 못 봤음"을 나타낸다 (시리얼은 0부터 시작).
+	 */
+	int32 LastSeenTrialSerial = -1;
+
+	/**
+	 * GameState 를 못 찾아 이 폰이 직접 시행을 진행하는 중인가.
+	 *
+	 * 협동 기능은 여러 대가 실제로 붙었을 때만 얹히는 것이고, **혼자 하는 경우는 어떤
+	 * 경우에도 깨지면 안 된다.** GameState 스폰이 실패하거나 다른 GameMode 를 쓰는 맵에서
+	 * 열려도 드릴은 예전 방식 그대로 돌아야 한다.
+	 */
+	bool bLocalSessionFallback = false;
+
+	/** 이번 시행의 AI 해설. 비어 있으면 저작 해설로 표시된다. */
+	FString CurrentAIExplain;
+
+	/**
+	 * 이번 시행의 해설 캐시 키. 응답이 늦게 와서 이미 다음 시행으로 넘어갔다면 키가
+	 * 달라지므로 버린다 — **안 버리면 틀린 상황의 해설이 붙는다.**
+	 */
+	FString CurrentExplainKey;
 	bool  bSessionOver = false;
 	bool  bWaitingNext = false;
 	float IntervalTimer = 0.0f;
@@ -382,6 +496,13 @@ private:
 	bool  bGateLatchedAtCue = false; // 큐 시점에 이미 게이트가 눌려 있었다 — 한 번 떼야 인정.
 	bool  bGateEverReleased = false;
 	float GateElapsedSec = 0.0f;    // 큐 이후 게이트가 눌려 있던 누적 시간.
+
+	// ── 게이트 자동 저하 상태 ──
+	// 세션 단위로 유지한다(시행마다 리셋 금지) — 한 번 저하됐으면 남은 시행 내내 유지돼야
+	// 하고, 프로브 누적도 시행 경계에서 끊기면 GateProbeSec 을 영영 못 채운다.
+	bool  bGateRequired = true;      // false = 트리거 없이 스틱만으로 이동.
+	bool  bGateEverObserved = false; // 트리거가 한 번이라도 잡힌 적 있는가.
+	float AxisWithoutGateSec = 0.0f; // 게이트 없이 스틱만 들어온 누적 시간.
 	float DisplacedCm = 0.0f;       // 큐 이후 누적 순 변위(직선 거리).
 	float AccumulatedPathCm = 0.0f; // 큐 이후 실제 이동한 경로 길이(직선 아님 — 헤맨 만큼 커짐).
 	bool  bHeadingCommitted = false;

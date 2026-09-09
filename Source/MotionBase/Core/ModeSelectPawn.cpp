@@ -99,6 +99,11 @@ void AModeSelectPawn::BeginPlay()
 	MenuDifficulties = UModeManager::GetMenuDifficulties();
 	MenuStances = UModeManager::GetMenuStances();
 
+	// ⚠️ 종합 점수를 여기서 계산해 두면 **항상 한 세션 뒤처진다.** 폰 교체는 새 폰을 먼저
+	//    스폰(=이 BeginPlay)하고 옛 폰을 나중에 파괴하는데, 방금 끝낸 세션의 저장은 그 옛
+	//    폰의 EndPlay 에서 일어나기 때문이다. 그래서 계산 시점을 잡아두지 않고, 그릴 때
+	//    ModeManager 의 캐시(이력 버전으로 무효화됨)를 읽는다.
+
 	// 수비 세부 종목 3개 (포구 / 송구 / 백업 위치 판단). 풋워크·반응속도는 제외.
 	DefenseDrills = {
 		FText::FromString(TEXT("포구")),
@@ -796,7 +801,52 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 
 		VrPanel->SetRow(i, Label, MsRowColor(bAvail, bHovered, Progress));
 	}
-	VrPanel->HideRowsFrom(RowCount);
+	// ── 종합 점수 (모드 단계에서만) ──
+	// 모드 목록이 3행뿐이라 MaxRows(6) 중 3~5행이 비어 있다. 그 자리를 쓴다.
+	// 평면 HUD 의 종합 패널은 VR 에서 아예 안 그려지므로(Canvas 는 스테레오에서 어긋난다)
+	// 헤드셋 안에서도 같은 정보를 보려면 여기 얹는 수밖에 없다.
+	//
+	// ⚠️ 영어로 쓴다 — /Game/Fonts/KRFont 에셋이 아직 없어 VR 패널에서 한글이 네모로 나온다.
+	//    폰트가 들어오면 한글로 바꾸면 된다.
+	const UModeManager* OverallMM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr;
+	const FOverallScore& Overall = OverallMM ? OverallMM->GetOverallScore() : CachedOverall;
+
+	int32 ExtraRow = RowCount;
+	if (Stage == EStage::Mode && ExtraRow < UVRInfoPanel::MaxRows)
+	{
+		if (!Overall.bValid)
+		{
+			VrPanel->SetRow(ExtraRow++, TEXT("Overall  -  no records yet"), FColor(110, 116, 128));
+		}
+		else
+		{
+			VrPanel->SetRow(ExtraRow++, FString::Printf(TEXT("Overall  %.0f / 100   (%d/%d done)"),
+				Overall.Total, Overall.PlayedCount, Overall.CategoryCount),
+				FColor(255, 200, 120));
+
+			// 종목별 한 줄 — 약칭이라 4개가 한 행에 들어간다. 미실시는 "-".
+			if (ExtraRow < UVRInfoPanel::MaxRows)
+			{
+				FString ByCat;
+				for (const FOverallCategoryScore& Cat : Overall.Categories)
+				{
+					if (!ByCat.IsEmpty()) { ByCat += TEXT(" "); }
+					ByCat += Cat.bPlayed
+						? FString::Printf(TEXT("%s %.0f"), *Cat.ShortNameEn, Cat.BestScore)
+						: FString::Printf(TEXT("%s -"), *Cat.ShortNameEn);
+				}
+				VrPanel->SetRow(ExtraRow++, ByCat, FColor(150, 156, 168));
+			}
+
+			// 미보정 경고는 평면 HUD 와 같은 이유로 여기서도 반드시 띄운다 —
+			// 100점 만점은 정밀해 보이지만 기준 상수는 아직 실측 보정 전이다.
+			if (Overall.bUncalibrated && ExtraRow < UVRInfoPanel::MaxRows)
+			{
+				VrPanel->SetRow(ExtraRow++, TEXT("* score baseline uncalibrated"), FColor(230, 150, 90));
+			}
+		}
+	}
+	VrPanel->HideRowsFrom(ExtraRow);
 
 	// 뒤로 카드 (모드 단계 외에서만).
 	if (Stage != EStage::Mode)

@@ -14,6 +14,7 @@
 #include "Core/Defense/CatchBall/CatchBallPawn.h"
 #include "Core/Defense/Throw/ThrowPawn.h"
 #include "Core/Defense/Backup/BackupPawn.h"
+#include "Core/Defense/Backup/BackupGameState.h"
 #include "AI/AICoachingPawn.h"
 
 AMotionBaseGameMode::AMotionBaseGameMode()
@@ -23,6 +24,11 @@ AMotionBaseGameMode::AMotionBaseGameMode()
 	// 시작 화면부터 진입. 모드 선택 후 폰을 교체한다.
 	DefaultPawnClass = AModeSelectPawn::StaticClass();
 	HUDClass = AModeSelectHUD::StaticClass();
+
+	// 백업 드릴의 시행 진행권을 쥐는 GameState.
+	// ⚠️ 레벨 이동 없이 폰만 갈아끼우는 구조라 GameState 는 모드와 무관하게 하나뿐이다 —
+	//    다른 모드에선 등록되는 폰이 없어 그냥 놀고 있는다(부작용 없음).
+	GameStateClass = ABackupGameState::StaticClass();
 }
 
 TSubclassOf<APawn> AMotionBaseGameMode::GetPawnClassForMode(EGameModeId Mode) const

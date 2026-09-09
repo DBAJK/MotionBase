@@ -5,6 +5,7 @@
 #include "Data/MotionBaseTypes.h"
 #include "Data/ScoreResult.h"
 #include "Data/SessionResult.h"
+#include "Data/OverallScore.h"
 #include "ModeManager.generated.h"
 
 class UMotionBaseSaveGame;
@@ -107,6 +108,48 @@ public:
 	/** 저장된 전체 세션 기록 (오래된→최신 순, append 순서). */
 	const TArray<FSessionResult>& GetHistory() const;
 
+	// ── AI 플레이 해설 캐시 ──
+	// (플레이 × 포지션) 조합은 상황이 고정이라 해설도 항상 같다. 한 번 받아두면 재사용할 수
+	// 있어서, 부스에서 하루 종일 반복 시연해도 같은 조합에 다시 과금되지 않는다.
+	//
+	// ⚠️ 왜 폰이나 AI 서비스가 아니라 여기인가: 둘 다 드릴을 나가면 파괴된다. 이 서브시스템은
+	//    GameInstance 수명이라 폰 교체·모드 전환을 넘어 살아남는다. **SetActiveMode 의
+	//    세션 초기화가 이 캐시를 건드리면 안 된다** — 세션과 무관한 자산이다.
+	//    (앱을 재시작하면 비워진다. 디스크 영속은 필요해지면 그때.)
+
+	/**
+	 * 종합 점수(공격 50 + 수비 50)의 종목 정의 목록.
+	 *
+	 * ⚠️ **여기가 유일한 작성 지점이다.** 종목 식별자("Catch"/"Throw"/"BackupMove")는 저장에
+	 *    남는 값이고 이 클래스가 정본(GetDefenseDrillIdName)을 쥐고 있다. 다른 파일에서
+	 *    리터럴로 복사해 두면 ID 가 바뀔 때 조용히 어긋난다 — 실제로 "Backup" →
+	 *    "BackupMove" 변경 때 AI 코칭 화면이 그렇게 깨졌다.
+	 *
+	 * 배분: 공격(타격) 50, 수비 3종목 각 50/3. 균등 배분인 이유는 가중치를 임의로 두면
+	 * 근거를 댈 수 없기 때문 — 실측 후 조정하려면 이 함수만 고치면 된다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Mode")
+	static TArray<FOverallCategoryDef> BuildOverallCategories();
+
+	/**
+	 * 공격 50 + 수비 50 = 100점 종합. **이력이 바뀔 때만 다시 계산한다.**
+	 *
+	 * ⚠️ 호출부가 직접 ComputeOverall 을 부르지 않게 하려고 여기 둔다. 두 가지를 동시에 막는다:
+	 *   1) **오래된 값**: 세션 저장(FinalizeSession)은 드릴 폰의 EndPlay 에서 일어나는데,
+	 *      폰 교체는 **새 폰을 먼저 스폰**하고 옛 폰을 나중에 파괴한다. 그래서 메뉴 폰이
+	 *      BeginPlay 에서 미리 계산해 두면 **방금 끝낸 세션이 빠진 값**을 들고 있게 된다.
+	 *      여기서 버전으로 무효화하면, 저장이 끝난 뒤 처음 읽는 시점에 최신값이 나온다.
+	 *   2) **매 프레임 재계산**: HUD 는 DrawHUD 에서 읽는데, ComputeOverall 은 저장 이력
+	 *      전체를 4번 훑고 카테고리 배열도 매번 할당한다. 부스 하루치 이력이면 무시 못 한다.
+	 */
+	const FOverallScore& GetOverallScore() const;
+
+	/** 캐시에 있으면 true 와 함께 해설을 돌려준다. */
+	bool TryGetPlayExplanation(const FString& Key, FString& OutText) const;
+
+	/** 해설을 캐시에 넣는다. 빈 문자열은 무시한다(실패 응답을 캐싱하지 않기 위함). */
+	void CachePlayExplanation(const FString& Key, const FString& Text);
+
 	/**
 	 * 특정 모드의 역대 최고 총점. 기록이 없으면 음수(-1)를 돌려준다 —
 	 * "첫 기록"과 "0점"을 구분해야 UI 가 '신기록' 표시를 낼 수 있다.
@@ -207,6 +250,19 @@ private:
 	/** 세션 내 누적 결과 (저장/피드백 입력). */
 	UPROPERTY()
 	TArray<FScoreResult> SessionResults;
+
+	/**
+	 * AI 플레이 해설 캐시 ("<PlayId>|<Position>" → 해설).
+	 * ⚠️ 세션 상태가 아니다 — SetActiveMode 에서 절대 비우지 말 것.
+	 */
+	TMap<FString, FString> PlayExplanationCache;
+
+	// ── 종합 점수 캐시 ──
+	// 이력이 바뀔 때마다 HistoryVersion 을 올리고, 캐시가 그보다 오래됐을 때만 다시 계산한다.
+	// mutable 인 이유: GetOverallScore() 는 논리적으로 읽기 연산이라 const 로 두는 게 맞다.
+	int32 HistoryVersion = 0;
+	mutable int32 CachedOverallVersion = -1;
+	mutable FOverallScore CachedOverall;
 
 	/** 현재 세션 시작 시각. SetActiveMode 진입 시점에 찍어 FinalizeSession 에서 쓴다. */
 	FDateTime SessionStartedAt = FDateTime();

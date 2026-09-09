@@ -43,9 +43,12 @@ namespace
 		{
 		case EGameModeId::Batting: return TEXT("Batting");
 		case EGameModeId::Defense:
-			if (Drill == FName(TEXT("Catch")))  { return TEXT("Fielding - Catch"); }
-			if (Drill == FName(TEXT("Throw")))  { return TEXT("Fielding - Throw"); }
-			if (Drill == FName(TEXT("Backup"))) { return TEXT("Fielding - Backup"); }
+			// ⚠️ 리터럴로 비교하지 않는다 — 저장되는 종목 ID 는 UModeManager 가 정본이고,
+			//    실제로 index 2 가 "Backup" → "BackupMove" 로 바뀌었을 때 여기가 함께
+			//    안 고쳐져서 백업 세션이 조용히 "Fielding" 으로 떨어진 적이 있다.
+			if (Drill == UModeManager::GetDefenseDrillIdName(0)) { return TEXT("Fielding - Catch"); }
+			if (Drill == UModeManager::GetDefenseDrillIdName(1)) { return TEXT("Fielding - Throw"); }
+			if (Drill == UModeManager::GetDefenseDrillIdName(2)) { return TEXT("Fielding - Backup"); }
 			return TEXT("Fielding");
 		default: return TEXT("Training");
 		}
@@ -151,9 +154,15 @@ void AAICoachingPawn::BuildRecommendation()
 
 		if (FocusMode == EGameModeId::Defense)
 		{
-			if (FocusDrill == FName(TEXT("Throw")))       { FeedbackService->RequestThrowCoaching(FocusReport, Drills); }
-			else if (FocusDrill == FName(TEXT("Backup"))) { FeedbackService->RequestBackupCoaching(FocusReport, Drills); }
-			else                                          { FeedbackService->RequestCatchCoaching(FocusReport, Drills); }
+			// 수비도 만성 추세를 함께 넘긴다 — 바로 위에서 이미 분석해 둔 값이고(FocusChronic),
+			// 리뷰 화면은 애초에 "이력을 읽는 화면"이라 추세를 빼면 존재 이유가 반쯤 사라진다.
+			// ⚠️ 종목 ID 는 UModeManager 가 정본이다. 리터럴 "Backup" 과 비교하던 코드가
+			//    ID 가 "BackupMove" 로 바뀐 뒤에도 남아 있어서, **백업 리뷰가 포구 코치
+			//    프롬프트로 떨어지고 있었다** — 판단 훈련에 체력 처방을 하는 조합이라
+			//    Backup 프롬프트가 존재하는 이유 자체를 무력화한다.
+			if (FocusDrill == UModeManager::GetDefenseDrillIdName(1))      { FeedbackService->RequestThrowCoaching(FocusReport, Drills, FocusChronic); }
+			else if (FocusDrill == UModeManager::GetDefenseDrillIdName(2)) { FeedbackService->RequestBackupCoaching(FocusReport, Drills, FocusChronic); }
+			else                                                           { FeedbackService->RequestCatchCoaching(FocusReport, Drills, FocusChronic); }
 		}
 		else
 		{
@@ -261,7 +270,7 @@ void AAICoachingPawn::RefreshPanel()
 	for (const FTrainingDrill& D : Drills)
 	{
 		if (Row >= MaxContentRows) { break; }
-		VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
+		VrPanel->SetRow(Row++, D.CompactLabel(), FColor(255, 200, 120));
 	}
 	VrPanel->HideRowsFrom(Row);
 

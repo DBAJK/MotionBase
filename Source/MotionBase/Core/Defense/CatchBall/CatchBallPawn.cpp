@@ -522,7 +522,7 @@ void ACatchBallPawn::RequestCatchFeedback()
 	{
 		CoachingText = TEXT("Requesting AI coaching...");
 		bAwaitingCoaching = true;
-		FeedbackService->RequestCatchCoaching(Report, LastDrills);
+		FeedbackService->RequestCatchCoaching(Report, LastDrills, Chronic);
 	}
 	else
 	{
@@ -1044,7 +1044,7 @@ void ACatchBallPawn::RefreshVrPanel()
 		for (const FTrainingDrill& D : LastDrills)
 		{
 			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
+			VrPanel->SetRow(Row++, D.CompactLabel(), FColor(255, 200, 120));
 		}
 		VrPanel->HideRowsFrom(Row);
 

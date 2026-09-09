@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "Data/MotionBaseTypes.h"
+#include "Data/OverallScore.h"
 #include "ModeSelectPawn.generated.h"
 
 class UCameraComponent;
@@ -216,6 +217,15 @@ private:
 	bool  bTriggerHeldPrev = false;   // 트리거 눌림 에지 검출용 (직전 프레임 상태)
 
 	EStage Stage = EStage::Mode;
+
+	/**
+	 * ModeManager 를 못 찾았을 때 쓰는 빈 종합 점수 (bValid=false → "no records yet").
+	 *
+	 * ⚠️ 진짜 값은 UModeManager::GetOverallScore() 가 이력 버전으로 캐시한다. 예전엔 이 폰의
+	 *    BeginPlay 에서 계산했는데, 폰 교체가 **새 폰을 먼저 스폰하고 옛 폰을 나중에 파괴**하고
+	 *    세션 저장은 그 옛 폰의 EndPlay 에서 일어나므로 **항상 한 세션 뒤처진 값**이 잡혔다.
+	 */
+	FOverallScore CachedOverall;
 
 	TArray<EGameModeId> MenuModes;
 	TArray<EDifficultyLevel> MenuDifficulties;

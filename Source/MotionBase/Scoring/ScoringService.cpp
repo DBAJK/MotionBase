@@ -201,3 +201,92 @@ FScoreResult UScoringService::ScoreSession(const TArray<FSwingMetrics>& History,
 
 	return R;
 }
+
+FOverallScore UScoringService::ComputeOverall(const TArray<FSessionResult>& History,
+	const TArray<FOverallCategoryDef>& Categories, const FOverallScoreConfig& Config)
+{
+	FOverallScore Out;
+	Out.CategoryCount = Categories.Num();
+
+	float PlayedMaxPoints = 0.0f; // 실시한 종목들의 만점 합 — 100 환산의 분모.
+	bool  bAnyUncalibrated = false;
+
+	for (const FOverallCategoryDef& Def : Categories)
+	{
+		FOverallCategoryScore Cat;
+		Cat.DisplayName = Def.DisplayName;
+		Cat.ShortNameEn = Def.ShortNameEn;
+		Cat.MaxPoints   = Def.MaxPoints;
+		Cat.bIsOffense  = Def.bIsOffense;
+
+		// 이 종목의 세션 중 (난이도 계수 적용 후) 최고점을 찾는다.
+		for (const FSessionResult& S : History)
+		{
+			if (S.Mode != Def.Mode)
+			{
+				continue;
+			}
+			// DrillId 가 지정된 칸(수비 세부 종목)은 정확히 일치해야 한다.
+			// NAME_None 인 칸(타격)은 종목 구분이 없으므로 모드만 본다.
+			if (!Def.DrillId.IsNone() && S.DrillId != Def.DrillId)
+			{
+				continue;
+			}
+			if (!S.Average.bValid)
+			{
+				continue; // 시도 부족·헛스윙 등으로 점수가 성립하지 않은 세션.
+			}
+
+			const EDifficultyLevel Level = static_cast<EDifficultyLevel>(
+				FMath::Clamp(S.DifficultyLevel, 0, static_cast<int32>(EDifficultyLevel::Pro)));
+
+			const float Raw = S.Average.TotalScore;
+			// 계수를 곱한 뒤 상한으로 clamp — Beginner 는 상한에 못 닿고, Pro 는 더 쉽게 닿는다.
+			const float Adjusted = FMath::Clamp(Raw * Config.MultiplierFor(Level), 0.0f, Config.MaxCategoryScore);
+
+			if (!Cat.bPlayed || Adjusted > Cat.BestScore)
+			{
+				Cat.bPlayed        = true;
+				Cat.BestScore      = Adjusted;
+				Cat.RawBestScore   = Raw;
+				Cat.BestDifficulty = Level;
+			}
+
+			bAnyUncalibrated |= S.Average.bUncalibrated;
+		}
+
+		if (Cat.bPlayed)
+		{
+			const float Denom = FMath::Max(Config.MaxCategoryScore, KINDA_SMALL_NUMBER);
+			Cat.EarnedPoints = (Cat.BestScore / Denom) * Cat.MaxPoints;
+
+			PlayedMaxPoints += Cat.MaxPoints;
+			++Out.PlayedCount;
+			Out.RawTotal += Cat.EarnedPoints;
+		}
+
+		if (Def.bIsOffense)
+		{
+			Out.OffenseMaxPoints += Cat.MaxPoints;
+			Out.OffensePoints    += Cat.EarnedPoints;
+		}
+		else
+		{
+			Out.DefenseMaxPoints += Cat.MaxPoints;
+			Out.DefensePoints    += Cat.EarnedPoints;
+		}
+
+		Out.Categories.Add(Cat);
+	}
+
+	Out.bValid = (Out.PlayedCount > 0);
+	Out.bUncalibrated = bAnyUncalibrated;
+
+	// 미실시 종목은 분모에서도 빠진다 — 한 종목만 한 사람도 그 종목 기준의 정당한 점수를 받는다.
+	// (전 종목을 하면 PlayedMaxPoints 가 100 이 되어 Total == RawTotal.)
+	Out.Total = (PlayedMaxPoints > KINDA_SMALL_NUMBER)
+		? (Out.RawTotal / PlayedMaxPoints) * 100.0f
+		: 0.0f;
+
+	return Out;
+}

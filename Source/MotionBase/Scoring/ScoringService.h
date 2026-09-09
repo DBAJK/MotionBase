@@ -4,6 +4,8 @@
 #include "Data/SwingMetrics.h"
 #include "Data/ScoreResult.h"
 #include "Data/MotionBaseTypes.h"
+#include "Data/SessionResult.h"
+#include "Data/OverallScore.h"
 #include "ScoringService.generated.h"
 
 /**
@@ -152,6 +154,24 @@ public:
 	/** 수비 세션 집계 → 총점 = 성공률 × 100. 시도가 0이면 bValid=false. */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Scoring")
 	static FScoreResult ScoreDefenseSession(int32 SuccessCount, int32 AttemptCount);
+
+	/**
+	 * 저장 이력 전체 → 공격 50 + 수비 50 = 100점 종합.
+	 *
+	 * 규칙 (전부 의도적으로 정한 것이라 바꿀 때 주의):
+	 *  - **종목별 최고점**을 쓴다. 한 번 망친 판이 종합을 계속 깎지 않게 하고 재도전 동기를 준다.
+	 *  - **난이도 계수**를 곱한 뒤 종목 상한으로 clamp — Beginner 는 만점에 도달할 수 없고,
+	 *    Pro 는 더 낮은 원점수로 도달한다.
+	 *  - **미실시 종목은 0 이 아니라 제외**하고 실시한 종목 기준으로 100 환산한다
+	 *    (절대 점수가 필요하면 FOverallScore::RawTotal).
+	 *  - 유효하지 않은 세션(bValid=false)은 무시한다.
+	 *
+	 * @param Categories 집계할 종목 정의. **UModeManager::BuildOverallCategories() 로 만들 것** —
+	 *                   종목 식별자를 여기서 새로 적으면 저장 ID 가 바뀔 때 조용히 어긋난다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Scoring")
+	static FOverallScore ComputeOverall(const TArray<FSessionResult>& History,
+		const TArray<FOverallCategoryDef>& Categories, const FOverallScoreConfig& Config);
 
 	/** 정확도 축 (0~1): 타이밍 가우시안 감쇠 × 컨택 거리 감쇠. */
 	static float EvalAccuracy(const FSwingMetrics& M, const FScoringConfig& Config);

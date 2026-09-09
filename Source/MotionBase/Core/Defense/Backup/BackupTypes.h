@@ -369,5 +369,21 @@ struct FBackupResult
 	UPROPERTY(BlueprintReadOnly)
 	bool bKeyScenario = false;
 
+	/**
+	 * 이 시행에서 내가 맡았어야 할 역할. 집계에 **꼭 필요하다** — 정답률만으로는
+	 * "백업은 되는데 중계(cutoff)를 못 선다" 같은 편중이 안 보인다. 역할마다 가르치는
+	 * 내용이 달라서 코칭 문장이 갈려야 하는 축이다.
+	 */
+	UPROPERTY(BlueprintReadOnly)
+	EBackupRole Role = EBackupRole::Hold;
+
+	/** 이 시행의 상황 문구 ("우전 안타, 3루 송구" 등). 어떤 상황을 틀렸는지 짚기 위한 것. */
+	UPROPERTY(BlueprintReadOnly)
+	FString Situation;
+
+	/** 정답이 "제자리 유지"였던 시행인가. Hold 는 성공/실패의 의미가 다르다. */
+	UPROPERTY(BlueprintReadOnly)
+	bool bHoldTrial = false;
+
 	bool IsSuccess() const { return Outcome == EBackupOutcome::Covered; }
 };
