@@ -1,4 +1,5 @@
 #include "Core/ModeManager.h"
+#include "Scoring/ScoringService.h"
 #include "MotionBase.h"
 #include "Save/MotionBaseSaveGame.h"
 #include "Kismet/GameplayStatics.h"
@@ -149,6 +150,12 @@ bool UModeManager::FinalizeSession(const FScoreResult& SessionAverage, const FWe
 	SaveData->History.Add(MoveTemp(Session));
 	PersistSaveData();
 
+	// 종합 점수 캐시 무효화 — 이력이 바뀐 유일한 지점이다.
+	// ⚠️ 이게 없으면 메뉴 화면이 **방금 끝낸 세션이 빠진 종합**을 계속 보여준다.
+	//    (폰 교체는 새 폰을 먼저 스폰하고 옛 폰을 나중에 파괴하는데, 저장은 그 옛 폰의
+	//     EndPlay 에서 일어난다 — 즉 메뉴 폰이 먼저 읽고 저장이 나중에 된다.)
+	++HistoryVersion;
+
 	UE_LOG(LogMotionBase, Log, TEXT("ModeManager: 세션 저장 (mode=%s%s 시도 %d 평균 %.1f) — 누적 %d건"),
 		*GetModeIdName(ActiveMode).ToString(),
 		ActiveDrill.IsNone() ? TEXT("") : *FString::Printf(TEXT("/%s"), *ActiveDrill.ToString()),
@@ -164,6 +171,67 @@ const TArray<FSessionResult>& UModeManager::GetHistory() const
 {
 	static const TArray<FSessionResult> Empty;
 	return SaveData ? SaveData->History : Empty;
+}
+
+TArray<FOverallCategoryDef> UModeManager::BuildOverallCategories()
+{
+	TArray<FOverallCategoryDef> Out;
+
+	auto Add = [&Out](EGameModeId Mode, FName DrillId, const TCHAR* Name, const TCHAR* ShortEn,
+		float MaxPoints, bool bOffense)
+	{
+		FOverallCategoryDef D;
+		D.Mode        = Mode;
+		D.DrillId     = DrillId;
+		D.DisplayName = Name;
+		D.ShortNameEn = ShortEn;
+		D.MaxPoints   = MaxPoints;
+		D.bIsOffense  = bOffense;
+		Out.Add(D);
+	};
+
+	// 공격 50 — 타격은 세부 종목이 없으므로 DrillId 는 None(모드만으로 매칭).
+	Add(EGameModeId::Batting, NAME_None, TEXT("타격"), TEXT("Bat"), 50.0f, /*bOffense=*/true);
+
+	// 수비 50 을 3종목 균등 배분. GetDefenseDrillIdName 이 정본이라 리터럴을 쓰지 않는다.
+	constexpr float DefenseEach = 50.0f / 3.0f;
+	Add(EGameModeId::Defense, GetDefenseDrillIdName(0), TEXT("포구"),      TEXT("Catch"), DefenseEach, false);
+	Add(EGameModeId::Defense, GetDefenseDrillIdName(1), TEXT("송구"),      TEXT("Throw"), DefenseEach, false);
+	Add(EGameModeId::Defense, GetDefenseDrillIdName(2), TEXT("백업 판단"), TEXT("Bkup"),  DefenseEach, false);
+
+	return Out;
+}
+
+const FOverallScore& UModeManager::GetOverallScore() const
+{
+	if (CachedOverallVersion != HistoryVersion)
+	{
+		CachedOverall = UScoringService::ComputeOverall(
+			GetHistory(), BuildOverallCategories(), FOverallScoreConfig());
+		CachedOverallVersion = HistoryVersion;
+	}
+	return CachedOverall;
+}
+
+bool UModeManager::TryGetPlayExplanation(const FString& Key, FString& OutText) const
+{
+	if (const FString* Found = PlayExplanationCache.Find(Key))
+	{
+		OutText = *Found;
+		return true;
+	}
+	return false;
+}
+
+void UModeManager::CachePlayExplanation(const FString& Key, const FString& Text)
+{
+	// 빈 문자열은 캐싱하지 않는다 — 실패 응답을 캐싱하면 그 조합은 앱을 재시작할 때까지
+	// 영영 저작 해설로만 나오고, 네트워크가 돌아와도 다시 시도하지 않는다.
+	if (Key.IsEmpty() || Text.IsEmpty())
+	{
+		return;
+	}
+	PlayExplanationCache.Add(Key, Text);
 }
 
 float UModeManager::GetBestTotalScore(EGameModeId Mode) const

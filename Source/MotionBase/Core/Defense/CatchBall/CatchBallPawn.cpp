@@ -109,8 +109,8 @@ void ACatchBallPawn::BeginPlay()
 	// 나가기 제스처를 이 종목에 맞게 조인다.
 	// 뜬공을 기다리는 자세 = 글러브를 위로 들고 대기 = 기본값(37°/1.5s)과 정확히 겹친다.
 	// 거의 수직(±23°)으로 2.5초를 요구하고, 공이 날아오는 동안에는 Tick 에서 아예 끈다.
-	ExitGesture.UpThreshold = 0.92f;
-	ExitGesture.HoldSec     = 2.5f;
+	ExitGesture.UpThreshold = LiveExitUpThreshold;
+	ExitGesture.HoldSec     = LiveExitHoldSec;
 	if (GloveMesh)
 	{
 		GloveMesh->SetVisibility(bVR); // 글러브는 VR 에서만 보인다.
@@ -156,6 +156,8 @@ void ACatchBallPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 
 	PlayerInputComponent->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ACatchBallPawn::OnCatchPressed);
 	PlayerInputComponent->BindKey(EKeys::M, IE_Pressed, this, &ACatchBallPawn::ReturnToModeSelect);
+	// [R] 다시 하기 — 헤드셋 밖(데스크톱)에서도 세션을 이어 돌릴 수 있게. VR 은 종료 화면의 카드로.
+	PlayerInputComponent->BindKey(EKeys::R, IE_Pressed, this, &ACatchBallPawn::RestartSession);
 
 	// 타구 유형 선택 — 숫자 1~4. 누른 순간부터 다음 공에 반영된다.
 	PlayerInputComponent->BindKey(EKeys::One,   IE_Pressed, this, &ACatchBallPawn::SelectGround);
@@ -341,6 +343,18 @@ void ACatchBallPawn::FinishPitch(const FCatchResult& Result)
 void ACatchBallPawn::EndSession()
 {
 	bSessionOver = true;
+
+	// ── 여기서부터는 '나가는 길'을 최대한 열어 준다 ──
+	// 플레이 중 임계는 이 종목의 자연 동작(글러브 들기·와인드업 등)과 겹치지 않으려고
+	// 조여 둔 값이다. 세션이 끝나면 오발동시킬 동작이 없으므로 그대로 두면 어렵기만 하다.
+	ExitGesture.UpThreshold = 0.80f; // 수직에서 ±37°
+	ExitGesture.HoldSec     = 1.2f;
+	ExitGesture.HeldSec     = 0.0f;
+	EndMenu.Reset();
+	if (VrPanel)
+	{
+		VrPanel->RequestRecenter(); // 결과·선택 카드를 지금 보는 정면에 다시 잡는다.
+	}
 	StatusLine = FString::Printf(TEXT("Session over!  Caught %d / %d    (M: back to menu)"),
 		SuccessCount, TotalPitches);
 
@@ -443,6 +457,25 @@ FWeaknessReport ACatchBallPawn::BuildCatchReport() const
 	return R;
 }
 
+void ACatchBallPawn::RestartSession()
+{
+	// 끝난 판을 먼저 확정 저장한다 — 안 하면 StartSession 이 누적을 비워 기록이 사라진다.
+	FlushSessionToSave();
+
+	// 종료 화면에서 풀어 뒀던 나가기 조건을 플레이용으로 다시 조이고, 카드를 내린다.
+	ExitGesture.UpThreshold = LiveExitUpThreshold;
+	ExitGesture.HoldSec     = LiveExitHoldSec;
+	ExitGesture.HeldSec     = 0.0f;
+	EndMenu.Reset();
+	if (VrPanel && bVR)
+	{
+		VrPanel->ShowBackCard(TEXT("EXIT - aim glove here & hold"), FColor(255, 190, 90));
+		VrPanel->RequestRecenter();
+	}
+
+	StartSession();
+}
+
 void ACatchBallPawn::FlushSessionToSave()
 {
 	UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr;
@@ -489,7 +522,7 @@ void ACatchBallPawn::RequestCatchFeedback()
 	{
 		CoachingText = TEXT("Requesting AI coaching...");
 		bAwaitingCoaching = true;
-		FeedbackService->RequestCatchCoaching(Report, LastDrills);
+		FeedbackService->RequestCatchCoaching(Report, LastDrills, Chronic);
 	}
 	else
 	{
@@ -651,6 +684,25 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 			// 공이 날아오는 동안(bPitchActive)에는 진행을 동결한다 — 뜬공을 잡으려고
 			// 글러브를 들고 기다리는 자세가 나가기로 오인되면 세션이 통째로 날아간다.
 			// (리셋이 아니라 동결이라, 투구 사이 틈에 계속 들고 있으면 정상적으로 나갈 수 있다.)
+			// 세션 종료 화면 — 패널 하단 카드를 겨눠 '다시 하기 / 메뉴로'를 고른다.
+			// 제스처보다 먼저 본다: 명시적으로 고른 선택이 우연한 자세보다 우선한다.
+			if (bSessionOver && VrPanel)
+			{
+				const int32 Chosen = EndMenu.Update(VrPanel, EndCardFirstRow, /*CardCount=*/2,
+					GloveController->GetComponentLocation(), GloveController->GetForwardVector(),
+					GloveController->IsTracked(), DeltaSeconds);
+				if (Chosen == 0)
+				{
+					RestartSession();
+					return; // 이번 프레임의 나머지 판정은 이전 세션 기준이라 건너뛴다.
+				}
+				if (Chosen == 1)
+				{
+					ReturnToModeSelect();
+					return; // 폰이 곧 교체된다 — 이 프레임 종료.
+				}
+			}
+
 			bool bExit = false;
 			ExitGesture.Update(GloveController->GetForwardVector(),
 				GloveController->IsTracked(), /*bAllowed=*/!bPitchActive, DeltaSeconds, bExit);
@@ -960,7 +1012,8 @@ void ACatchBallPawn::RefreshVrPanel()
 
 		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
 		//    타입 성공률 1줄 + 코칭 2줄 + 드릴 1개로 압축. 전체 리포트는 데스크톱 결과 화면이 담당.
-		constexpr int32 MaxContentRows = 4;
+		//    종료 화면은 마지막 두 줄을 선택 카드에 내주므로 내용이 한 줄 줄어든다.
+		const int32 MaxContentRows = EndCardFirstRow;
 		int32 Row = 0;
 
 		// 타구 타입별 성공률 — AI 문장보다 먼저, 근거 숫자를 눈으로 확인할 수 있게.
@@ -991,13 +1044,18 @@ void ACatchBallPawn::RefreshVrPanel()
 		for (const FTrainingDrill& D : LastDrills)
 		{
 			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, FString::Printf(TEXT("- %s"), *D.Name), FColor(255, 200, 120));
+			VrPanel->SetRow(Row++, D.CompactLabel(), FColor(255, 200, 120));
 		}
 		VrPanel->HideRowsFrom(Row);
 
-		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended exercises"),
-			FColor(150, 156, 168));
-		VrPanel->SetHint(TEXT("Raise glove = menu"), FColor(110, 116, 128));
+		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
+		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
+		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
+		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("PLAY AGAIN")),   EndMenu.Color(0));
+		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("BACK TO MENU")), EndMenu.Color(1));
+		VrPanel->HideFooter();
+		VrPanel->HideBackCard();
+		VrPanel->SetHint(TEXT("aim the glove at a card and hold"), FColor(110, 116, 128));
 		return;
 	}
 

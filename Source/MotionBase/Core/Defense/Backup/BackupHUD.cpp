@@ -2,6 +2,7 @@
 #include "Core/Defense/Backup/BackupPawn.h"
 #include "Core/Defense/Backup/BackupPlaybook.h"
 #include "Engine/Canvas.h"
+#include "HeadMountedDisplayFunctionLibrary.h"
 #include "Engine/Engine.h"
 
 namespace
@@ -21,6 +22,8 @@ namespace
 	const FLinearColor MapPlayer  (0.30f, 0.75f, 1.00f, 1.00f);
 	const FLinearColor MapCorrect (0.40f, 0.90f, 0.47f, 1.00f);
 	const FLinearColor MapOther   (0.55f, 0.60f, 0.66f, 0.55f);
+	// 판정 전에 후보 존을 전부 같은 색으로 그릴 때 쓴다 (정답을 미리 알려주지 않기 위해).
+	const FLinearColor MapNeutral (0.72f, 0.76f, 0.84f, 0.85f);
 }
 
 void ABackupHUD::DrawPanel(float X, float Y, float W, float H, const FLinearColor& Fill, const FLinearColor& Border)
@@ -86,20 +89,21 @@ void ABackupHUD::DrawMinimap(ABackupPawn* Pawn, float CenterX, float CenterY, fl
 		const FLinearColor Col = bSelf ? MapPosSelf : MapPosIdle;
 		const float S = bSelf ? 5.0f : 3.0f;
 		DrawRect(Col, P.X - S, P.Y - S, S * 2.0f, S * 2.0f);
-		if (bSelf)
-		{
-			DrawCentered(UBackupPlaybook::PositionName(Pos), P.X, P.Y + 6.0f, Col, 0.6f);
-		}
+		// 동료 이름도 같이 띄운다 — 정답 강조를 걷어낸 지금은 "누가 어디 있나"가 판단 근거다.
+		DrawCentered(UBackupPlaybook::PositionName(Pos), P.X, P.Y + S + 2.0f, Col, bSelf ? 0.6f : 0.5f);
 	}
 
-	// 방향 판단 후보 존 (정답=초록 강조, 나머지=흐림). CutoffRelay 는 선분으로.
+	// 방향 판단 후보 존. 판정 전에는 전부 중립색 — 정답을 미리 알려주면 판단 훈련이
+	// 아니라 "초록 원 따라가기"가 된다. 판정이 끝난 뒤에만 정답=초록으로 공개해 복기시킨다.
+	// (월드 존 DrawZones 와 같은 기준: ABackupPawn::IsAnswerRevealed)
+	const bool bReveal = Pawn->IsAnswerRevealed();
 	const FBackupTrial& Trial = Pawn->GetCurrentTrial();
 	for (int32 i = 0; i < Trial.CandidateZones.Num(); ++i)
 	{
 		const FBackupZone& Z = Trial.CandidateZones[i];
 		const bool bCorrect = (i == Trial.CorrectCandidateIndex);
-		const FLinearColor Col = bCorrect ? MapCorrect : MapOther;
-		const float Thick = bCorrect ? 2.5f : 1.0f;
+		const FLinearColor Col = bReveal ? (bCorrect ? MapCorrect : MapOther) : MapNeutral;
+		const float Thick = bReveal ? (bCorrect ? 2.5f : 1.0f) : 1.4f;
 
 		if (Z.Role == EBackupRole::CutoffRelay)
 		{
@@ -131,6 +135,14 @@ void ABackupHUD::DrawMinimap(ABackupPawn* Pawn, float CenterX, float CenterY, fl
 void ABackupHUD::DrawHUD()
 {
 	Super::DrawHUD();
+
+	// ⚠️ VR(HMD)에서는 이 평면 Canvas HUD 를 그리지 않는다 — ModeSelectHUD 와 같은 이유.
+	// Canvas 는 스테레오에서 눈마다 다른 위치로 찍혀 좌/우가 어긋나고, 월드 패널(UVRInfoPanel)과
+	// 겹쳐 어지럽다. 헤드셋 안 UI 는 폰의 VrPanel 이 전담한다 (이 HUD 는 PC 시연/검증 전용).
+	if (UHeadMountedDisplayFunctionLibrary::IsHeadMountedDisplayEnabled())
+	{
+		return;
+	}
 
 	ABackupPawn* Pawn = Cast<ABackupPawn>(GetOwningPawn());
 	if (!Pawn || !Canvas)
@@ -185,7 +197,19 @@ void ABackupHUD::DrawHUD()
 	{
 		const float ResultY = MapCenterY + MapRadius + 24.0f * S;
 		DrawCentered(Outcome, W * 0.5f, ResultY, OColor, 1.4f * S);
-		DrawCentered(Pawn->GetLastExplainText(), W * 0.5f, ResultY + 36.0f * S, TextDim, 0.8f * S);
+
+		// 해설은 규칙 테이블의 한 줄일 수도, AI 가 확장한 1~2문장일 수도 있다 —
+		// 한 줄로 그리면 후자가 화면 밖으로 잘린다. 글자수로 하드 랩한다.
+		{
+			const FString Explain = Pawn->GetLastExplainText();
+			constexpr int32 ExplainChars = 88;
+			float EY = ResultY + 36.0f * S;
+			for (int32 i = 0; i < Explain.Len(); i += ExplainChars)
+			{
+				DrawCentered(Explain.Mid(i, ExplainChars), W * 0.5f, EY, TextDim, 0.8f * S);
+				EY += 22.0f * S;
+			}
+		}
 	}
 
 	// ── 세션 종료 시 AI 판단 코칭 ──
@@ -223,6 +247,6 @@ void ABackupHUD::DrawHUD()
 	}
 
 	// ── 조작 안내 ──
-	DrawCentered(TEXT("Hold WASD to move to your backup zone    -    M to exit"),
+	DrawCentered(TEXT("Hold WASD to move to your backup zone    -    Q / E (or arrows) to look around    -    M to exit"),
 		W * 0.5f, H - 30.0f * S, TextDim, 0.75f * S);
 }

@@ -22,10 +22,10 @@ bool FBaseballFieldBaseCoordsTest::RunTest(const FString& Parameters)
 	const FVector Second = Field.GetBaseLocation(EBaseType::Second);
 	const FVector Third = Field.GetBaseLocation(EBaseType::Third);
 
-	TestEqual(TEXT("홈-1루 거리 = 90ft"), FVector::Dist2D(Home, First), Field.BasePathCm, 1.0f);
-	TestEqual(TEXT("홈-3루 거리 = 90ft"), FVector::Dist2D(Home, Third), Field.BasePathCm, 1.0f);
-	TestEqual(TEXT("1루-2루 거리 = 90ft"), FVector::Dist2D(First, Second), Field.BasePathCm, 1.0f);
-	TestEqual(TEXT("홈-2루 거리 = 90ft * sqrt(2)"), FVector::Dist2D(Home, Second),
+	TestEqual(TEXT("홈-1루 거리 = 90ft"), static_cast<float>(FVector::Dist2D(Home, First)), Field.BasePathCm, 1.0f);
+	TestEqual(TEXT("홈-3루 거리 = 90ft"), static_cast<float>(FVector::Dist2D(Home, Third)), Field.BasePathCm, 1.0f);
+	TestEqual(TEXT("1루-2루 거리 = 90ft"), static_cast<float>(FVector::Dist2D(First, Second)), Field.BasePathCm, 1.0f);
+	TestEqual(TEXT("홈-2루 거리 = 90ft * sqrt(2)"), static_cast<float>(FVector::Dist2D(Home, Second)),
 		Field.BasePathCm * FMath::Sqrt(2.0f), 1.0f);
 
 	// 1루는 +Y(우측), 3루는 -Y(좌측) — 방향 관례가 뒤집히면 모든 좌우 판정이 반대로 나온다.
@@ -37,12 +37,12 @@ bool FBaseballFieldBaseCoordsTest::RunTest(const FString& Parameters)
 	const FVector LF = Field.GetFieldingSpot(EFieldPosition::Left);
 	const FVector CF = Field.GetFieldingSpot(EFieldPosition::Center);
 	const FVector RF = Field.GetFieldingSpot(EFieldPosition::Right);
-	TestEqual(TEXT("좌익수 깊이 = OutfieldDepthCm"), FVector::Dist2D(Home, LF), Field.OutfieldDepthCm, 1.0f);
-	TestEqual(TEXT("중견수 깊이 = OutfieldDepthCm"), FVector::Dist2D(Home, CF), Field.OutfieldDepthCm, 1.0f);
-	TestEqual(TEXT("우익수 깊이 = OutfieldDepthCm"), FVector::Dist2D(Home, RF), Field.OutfieldDepthCm, 1.0f);
+	TestEqual(TEXT("좌익수 깊이 = OutfieldDepthCm"), static_cast<float>(FVector::Dist2D(Home, LF)), Field.OutfieldDepthCm, 1.0f);
+	TestEqual(TEXT("중견수 깊이 = OutfieldDepthCm"), static_cast<float>(FVector::Dist2D(Home, CF)), Field.OutfieldDepthCm, 1.0f);
+	TestEqual(TEXT("우익수 깊이 = OutfieldDepthCm"), static_cast<float>(FVector::Dist2D(Home, RF)), Field.OutfieldDepthCm, 1.0f);
 	TestTrue(TEXT("좌익수는 3루 쪽(-Y)"), LF.Y < 0.0f);
 	TestTrue(TEXT("우익수는 1루 쪽(+Y)"), RF.Y > 0.0f);
-	TestEqual(TEXT("중견수는 정면(Y=0)"), CF.Y, 0.0f, 0.5f);
+	TestEqual(TEXT("중견수는 정면(Y=0)"), static_cast<float>(CF.Y), 0.0f, 0.5f);
 
 	return true;
 }
@@ -75,7 +75,7 @@ bool FBaseballFieldZoneGeometryTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("백업 중심이 베이스보다 던지는 사람에게서 더 멀다"),
 			FVector::Dist2D(Zone.Center, RFSpot) > FVector::Dist2D(FirstBase, RFSpot));
 		TestEqual(TEXT("백업 중심-베이스 거리 = BackupDistanceCm"),
-			FVector::Dist2D(Zone.Center, FirstBase), Field.BackupDistanceCm, 2.0f);
+			static_cast<float>(FVector::Dist2D(Zone.Center, FirstBase)), Field.BackupDistanceCm, 2.0f);
 	}
 
 	// CutoffRelay — 던지는 사람과 베이스 사이 선분 위, CutoffBandStart~End 구간에 있어야 한다.
@@ -95,8 +95,8 @@ bool FBaseballFieldZoneGeometryTest::RunTest(const FString& Parameters)
 		const FVector ExpectedA = FMath::Lerp(From, To, Field.CutoffBandStart);
 		const FVector ExpectedB = FMath::Lerp(From, To, Field.CutoffBandEnd);
 
-		TestEqual(TEXT("중계 구간 시작점이 예상과 일치"), FVector::Dist(Zone.SegmentA, ExpectedA), 0.0f, 1.0f);
-		TestEqual(TEXT("중계 구간 끝점이 예상과 일치"), FVector::Dist(Zone.SegmentB, ExpectedB), 0.0f, 1.0f);
+		TestEqual(TEXT("중계 구간 시작점이 예상과 일치"), static_cast<float>(FVector::Dist(Zone.SegmentA, ExpectedA)), 0.0f, 1.0f);
+		TestEqual(TEXT("중계 구간 끝점이 예상과 일치"), static_cast<float>(FVector::Dist(Zone.SegmentB, ExpectedB)), 0.0f, 1.0f);
 
 		// 선분 판정 — 구간 중점은 거리 0, 구간 밖(던진 사람 자리)은 회랑 밖이어야 한다.
 		const FVector Midpoint = FMath::Lerp(Zone.SegmentA, Zone.SegmentB, 0.5f);
@@ -112,7 +112,7 @@ bool FBaseballFieldZoneGeometryTest::RunTest(const FString& Parameters)
 
 		const FBackupZone Zone = Field.ResolveZone(Rule, FBackupPlay());
 		TestEqual(TEXT("Hold 중심 = 그 포지션의 수비 위치"),
-			FVector::Dist2D(Zone.Center, Field.GetFieldingSpot(EFieldPosition::Center)), 0.0f, 1.0f);
+			static_cast<float>(FVector::Dist2D(Zone.Center, Field.GetFieldingSpot(EFieldPosition::Center))), 0.0f, 1.0f);
 	}
 
 	// 페어 지역 클램프 — 파울선(±45°) 밖 좌표를 넣으면 45° 안으로 눌려야 한다.

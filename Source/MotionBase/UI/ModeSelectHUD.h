@@ -70,6 +70,15 @@ private:
 	/** 세션 요약을 중앙 패널로 그린다 (점수 3축·집계·약점·드릴·AI 코칭·신기록). */
 	void DrawSessionResult(const FSessionSummary& Sum);
 
+	/**
+	 * 종합 점수 패널 (공격 50 + 수비 50 = 100).
+	 *
+	 * 시작 화면에 상시 띄우는 이유: 부스 관람객이 자기 종합과 **남은 종목**을 같은 화면에서
+	 * 보게 되어, 총점이 다음 종목을 하게 만드는 유도 장치가 된다. 미실시는 0 이 아니라
+	 * "—" 로 표시되므로 한 종목만 한 사람도 낮은 점수로 낙인찍히지 않는다.
+	 */
+	void DrawOverallScore(float X, float Y, float PanelW, float S, UFont* FontLarge, UFont* FontBody);
+
 	/** 가로 막대 미터 하나 (라벨 + 0~1 게이지 + 퍼센트). */
 	void DrawMeter(const FString& Label, float Value01, float X, float Y, float W, float S,
 		UFont* Font, const FLinearColor& Fill);

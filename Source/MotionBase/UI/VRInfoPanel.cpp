@@ -148,6 +148,16 @@ void UVRInfoPanel::HideRowsFrom(int32 FirstHiddenIndex)
 	}
 }
 
+void UVRInfoPanel::HideFooter()
+{
+	if (FooterText) { FooterText->SetVisibility(false); }
+}
+
+void UVRInfoPanel::HideHint()
+{
+	if (HintText) { HintText->SetVisibility(false); }
+}
+
 void UVRInfoPanel::SetBackBelowRows(int32 RowCount, const FString& Text, const FColor& Color, bool bShow)
 {
 	if (!BackText) { return; }

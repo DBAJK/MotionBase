@@ -152,6 +152,34 @@ struct FTrainingDrill
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
 	FString Prescription;
+
+	/**
+	 * VR 패널용 압축 표기 ("3x15", "3x30s", "4x10m").
+	 *
+	 * 왜 별도 필드인가: VR 패널(UVRInfoPanel)은 한 행이 ~30자이고 TextRender 라 자동 줄바꿈이
+	 * 없다. "3 sets x 15 reps"를 그대로 넣으면 드릴 이름과 합쳐 행을 넘겨 패널 밖으로 흘러
+	 * 나간다. Prescription 문자열을 파싱해 만들지 않는 이유는 단위가 제각각(회·초·m·이닝)이라
+	 * 파싱이 깨지기 쉽고, **수행량은 사람이 검수한 값**이라 표기도 저작하는 게 맞기 때문.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Feedback")
+	FString PrescriptionShort;
+
+	/**
+	 * VR 패널 한 행에 들어가는 표기: "- Deadlift (3x15)".
+	 * 이름이 길면 잘라 붙인다 — 자르지 않으면 행이 패널 밖으로 흘러나간다.
+	 */
+	FString CompactLabel(int32 MaxChars = 30) const
+	{
+		const FString Suffix = PrescriptionShort.IsEmpty()
+			? FString() : FString::Printf(TEXT(" (%s)"), *PrescriptionShort);
+
+		// "- " + 이름 + 접미사 가 MaxChars 를 넘으면 이름 쪽을 줄인다(수행량은 지킨다).
+		const int32 NameBudget = FMath::Max(MaxChars - 2 - Suffix.Len(), 6);
+		const FString ShortName = (Name.Len() > NameBudget)
+			? (Name.Left(FMath::Max(NameBudget - 1, 1)) + TEXT("~")) : Name;
+
+		return FString::Printf(TEXT("- %s%s"), *ShortName, *Suffix);
+	}
 };
 
 /**

@@ -39,6 +39,9 @@ FString UAIFeedbackService::BuildSystemPrompt(ECoachDomain Domain) const
 			"do not invent new figures or metrics.\n"
 			"- Separate the causes: missing the zone is direction/step, low velocity is whole-body power, "
 			"slow transfer is glove-to-hand footwork. Address the weakest one first.\n"
+			"- If a 'training trend' is present, reflect it: encourage when 'improving', and when 'worsening' "
+			"or 'chronic', say the weakness keeps coming back and to focus there. If no trend block is given, "
+			"say nothing about progress over time - this may be their first session.\n"
 			"- For every exercise you name, say what it improves (from its 'benefit') and then give its "
 			"'volume' EXACTLY as written. Example shape: \"Long toss builds arm endurance through a "
 			"progressive range - 6 steps of 5 throws.\"\n"
@@ -67,6 +70,12 @@ FString UAIFeedbackService::BuildSystemPrompt(ECoachDomain Domain) const
 			"frame the advice around those.\n"
 			"- Cite only the numbers provided (correct rate, decision time, route efficiency, which cases "
 			"were missed); do not invent new figures.\n"
+			"- The breakdown lists each case: the situation, what the correct job was (back up a base, cover "
+			"a base, cut off the throw, or hold your spot), and how it went. Name a specific missed case "
+			"rather than only the totals - that is what makes the advice usable.\n"
+			"- If a 'training trend' is present, reflect it: encourage when 'improving', and when 'worsening' "
+			"or 'chronic', say the judgment error keeps coming back and to focus there. If no trend block is "
+			"given, say nothing about progress over time - this may be their first session.\n"
 			"- For every exercise you name, say what it improves (from its 'benefit') and then give its "
 			"'volume' EXACTLY as written. Here the volume counts SITUATIONS, not workout sets - say "
 			"\"2 sets of 10 cases\", never turn it into reps of a physical exercise.\n"
@@ -85,6 +94,9 @@ FString UAIFeedbackService::BuildSystemPrompt(ECoachDomain Domain) const
 			"Rules:\n"
 			"- Cite only the numbers provided; do not invent new figures or metrics.\n"
 			"- Point out fitness factors (reaction speed, upper-body flexibility, foot speed) that match the weaknesses.\n"
+			"- If a 'training trend' is present, reflect it: encourage when 'improving', and when 'worsening' "
+			"or 'chronic', say the weakness keeps coming back and to focus there. If no trend block is given, "
+			"say nothing about progress over time - this may be their first session.\n"
 			"- For every exercise you name, say what it improves (from its 'benefit') and then give its "
 			"'volume' EXACTLY as written. Example shape: \"Ladder quick steps raise your foot turnover so "
 			"the first step comes quicker - 3 sets of 30 seconds.\"\n"
@@ -192,31 +204,49 @@ void UAIFeedbackService::RequestSwingCoaching(const FWeaknessReport& Report, con
 	DispatchCoachingRequest(BuildRequestBody(ECoachDomain::Batting, Report, Drills, Chronic));
 }
 
-void UAIFeedbackService::RequestCatchCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills)
+// ⚠️ 수비 3종목도 만성 추세를 싣는다. 예전엔 빈 FChronicWeaknessReport() 를 넘겼는데,
+//    각 수비 폰은 드릴 추천(RecommendWithHistory)을 위해 **이미 AnalyzeTrend 를 돌려 결과를
+//    갖고 있었다.** 계산해 놓고 프롬프트에서만 버리던 값이라, 넘기는 데 드는 비용이 0 이다.
+//    Chronic.bValid=false(이력 부족)면 BuildUserPrompt 가 추세 블록 자체를 생략하므로
+//    첫 세션 사용자에게 LLM 이 없는 추세를 지어낼 여지도 없다.
+
+void UAIFeedbackService::RequestCatchCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
+	const FChronicWeaknessReport& Chronic)
 {
-	// 포구는 만성 추세 이력이 아직 없다 — 빈(무효) 추세를 넘겨 프롬프트에서 생략되게 한다.
-	DispatchCoachingRequest(BuildRequestBody(ECoachDomain::Fielding, Report, Drills, FChronicWeaknessReport()));
+	DispatchCoachingRequest(BuildRequestBody(ECoachDomain::Fielding, Report, Drills, Chronic));
 }
 
-void UAIFeedbackService::RequestThrowCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills)
+void UAIFeedbackService::RequestThrowCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
+	const FChronicWeaknessReport& Chronic)
 {
-	DispatchCoachingRequest(BuildRequestBody(ECoachDomain::Throwing, Report, Drills, FChronicWeaknessReport()));
+	DispatchCoachingRequest(BuildRequestBody(ECoachDomain::Throwing, Report, Drills, Chronic));
 }
 
-void UAIFeedbackService::RequestBackupCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills)
+void UAIFeedbackService::RequestBackupCoaching(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
+	const FChronicWeaknessReport& Chronic)
 {
-	DispatchCoachingRequest(BuildRequestBody(ECoachDomain::Backup, Report, Drills, FChronicWeaknessReport()));
+	DispatchCoachingRequest(BuildRequestBody(ECoachDomain::Backup, Report, Drills, Chronic));
 }
 
 void UAIFeedbackService::DispatchCoachingRequest(const FString& Body)
 {
+	// 세션 코칭 — 모델은 ModelId(기본 opus). 세션당 1회라 품질을 택한다.
+	DispatchRequest(Body, ModelId, [](UAIFeedbackService* Self, bool bSuccess, const FString& Text)
+		{
+			Self->OnFeedbackReady.Broadcast(bSuccess, Text);
+		});
+}
+
+void UAIFeedbackService::DispatchRequest(const FString& Body, const FString& Model,
+	TFunction<void(UAIFeedbackService*, bool, const FString&)> OnComplete)
+{
 	const FString ApiKey = LoadApiKey();
 	if (ApiKey.IsEmpty())
 	{
-		// 키가 없으면 조용히 건너뛴다 — 약점 리포트·드릴은 이미 화면에 있다.
+		// 키가 없으면 조용히 건너뛴다 — 약점 리포트·드릴·저작 해설은 이미 화면에 있다.
 		UE_LOG(LogMotionBase, Log,
-			TEXT("AIFeedback: API 키 미설정 (Config/Secrets.ini [AI] ApiKey). AI 코칭 생략."));
-		OnFeedbackReady.Broadcast(false, TEXT("AI 코칭 미설정 (Config/Secrets.ini)"));
+			TEXT("AIFeedback: API 키 미설정 (Config/Secrets.ini [AI] ApiKey). AI 호출 생략."));
+		OnComplete(this, false, TEXT("AI 코칭 미설정 (Config/Secrets.ini)"));
 		return;
 	}
 
@@ -228,12 +258,12 @@ void UAIFeedbackService::DispatchCoachingRequest(const FString& Body)
 	Request->SetHeader(TEXT("anthropic-version"), TEXT("2023-06-01"));
 	Request->SetContentAsString(Body);
 
-	UE_LOG(LogMotionBase, Log, TEXT("AIFeedback: 코칭 요청 (model=%s, %d chars)"), *ModelId, Body.Len());
+	UE_LOG(LogMotionBase, Log, TEXT("AIFeedback: 요청 (model=%s, %d chars)"), *Model, Body.Len());
 
 	// 완료 콜백 — this 가 async 도중 파괴될 수 있으므로 weak 가드.
 	TWeakObjectPtr<UAIFeedbackService> WeakThis(this);
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakThis](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakThis, OnComplete](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
 			UAIFeedbackService* Self = WeakThis.Get();
 			if (!Self)
@@ -243,7 +273,7 @@ void UAIFeedbackService::DispatchCoachingRequest(const FString& Body)
 
 			if (!bConnected || !Response.IsValid())
 			{
-				Self->OnFeedbackReady.Broadcast(false, TEXT("AI 코칭 요청 실패 (네트워크)"));
+				OnComplete(Self, false, TEXT("AI 코칭 요청 실패 (네트워크)"));
 				return;
 			}
 
@@ -253,7 +283,7 @@ void UAIFeedbackService::DispatchCoachingRequest(const FString& Body)
 			if (Code != 200)
 			{
 				UE_LOG(LogMotionBase, Warning, TEXT("AIFeedback: HTTP %d — %s"), Code, *Content);
-				Self->OnFeedbackReady.Broadcast(false, FString::Printf(TEXT("AI 코칭 오류 (HTTP %d)"), Code));
+				OnComplete(Self, false, FString::Printf(TEXT("AI 코칭 오류 (HTTP %d)"), Code));
 				return;
 			}
 
@@ -262,7 +292,7 @@ void UAIFeedbackService::DispatchCoachingRequest(const FString& Body)
 			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Content);
 			if (!FJsonSerializer::Deserialize(Reader, Json) || !Json.IsValid())
 			{
-				Self->OnFeedbackReady.Broadcast(false, TEXT("AI 코칭 응답 파싱 실패"));
+				OnComplete(Self, false, TEXT("AI 코칭 응답 파싱 실패"));
 				return;
 			}
 
@@ -273,13 +303,67 @@ void UAIFeedbackService::DispatchCoachingRequest(const FString& Body)
 				FString Text;
 				if (First.IsValid() && First->TryGetStringField(TEXT("text"), Text))
 				{
-					Self->OnFeedbackReady.Broadcast(true, Text.TrimStartAndEnd());
+					OnComplete(Self, true, Text.TrimStartAndEnd());
 					return;
 				}
 			}
 
-			Self->OnFeedbackReady.Broadcast(false, TEXT("AI 코칭 응답에 텍스트가 없습니다"));
+			OnComplete(Self, false, TEXT("AI 코칭 응답에 텍스트가 없습니다"));
 		});
 
 	Request->ProcessRequest();
+}
+
+FString UAIFeedbackService::BuildExplanationBody(const FBackupExplainRequest& Req) const
+{
+	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetStringField(TEXT("model"), ExplanationModelId);
+	Root->SetNumberField(TEXT("max_tokens"), ExplanationMaxTokens);
+	Root->SetStringField(TEXT("system"), TEXT(
+		"You are a baseball coach explaining ONE backup assignment that has ALREADY been decided by the "
+		"game's rulebook. Write 1-2 short sentences in English explaining WHY that is this fielder's job.\n"
+		"- **Hard limit: 25 words total.** This is read on a small panel inside a VR headset while the "
+		"player is standing on the field; anything longer gets cut off mid-sentence.\n"
+		"Rules:\n"
+		"- **The given assignment is correct and final. Never contradict it, never suggest a different base "
+		"or a different job, never hedge about whether it is right.** You are explaining it, not reviewing it.\n"
+		"- Ground the reason in the two things that decide it: where the ball went, and where the throw is "
+		"going because of the runners. Say the causal chain, e.g. \"the throw is going to third, so someone "
+		"has to be behind it in case it gets away.\"\n"
+		"- Speak to the player as \"you\". Present tense.\n"
+		"- Do not restate the situation text verbatim - the player just saw it. Add the reasoning it implies.\n"
+		"- No preamble, no lists, no markdown. Just the sentences."));
+
+	FString User;
+	User += FString::Printf(TEXT("Fielder: %s\n"), *Req.PositionName);
+	User += FString::Printf(TEXT("Situation: %s\n"), *Req.Situation);
+	User += FString::Printf(TEXT("Runners: %s\n"), *Req.RunnerText);
+	User += FString::Printf(TEXT("Your job on this play: %s\n"), *Req.JobText);
+	User += FString::Printf(TEXT("Rulebook's one-line reason (expand on this, do not contradict it): %s\n"),
+		*Req.AuthoredExplain);
+	User += TEXT("\nExplain why this is your job.");
+
+	const TSharedRef<FJsonObject> UserMsg = MakeShared<FJsonObject>();
+	UserMsg->SetStringField(TEXT("role"), TEXT("user"));
+	UserMsg->SetStringField(TEXT("content"), User);
+
+	TArray<TSharedPtr<FJsonValue>> Messages;
+	Messages.Add(MakeShared<FJsonValueObject>(UserMsg));
+	Root->SetArrayField(TEXT("messages"), Messages);
+
+	FString Body;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Body);
+	FJsonSerializer::Serialize(Root, Writer);
+	return Body;
+}
+
+void UAIFeedbackService::RequestPlayExplanation(const FBackupExplainRequest& Req)
+{
+	const FString Key = Req.CacheKey;
+	DispatchRequest(BuildExplanationBody(Req), ExplanationModelId,
+		[Key](UAIFeedbackService* Self, bool bSuccess, const FString& Text)
+		{
+			// 실패해도 조용히 넘어간다 — 호출부가 저작 해설로 되돌아간다.
+			Self->OnPlayExplanationReady.Broadcast(bSuccess, Key, bSuccess ? Text : FString());
+		});
 }

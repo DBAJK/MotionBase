@@ -22,7 +22,8 @@ public class MotionBase : ModuleRules
 			"XRBase",          // UE 5.8: HeadMountedDisplayFunctionLibrary·MotionControllerComponent 여기로 이동
 			"HTTP",            // (후반) 생성형 AI API 호출
 			"Json",            // 결과 직렬화 / API 페이로드
-			"JsonUtilities"
+			"JsonUtilities",
+			"NetCore"          // 협동 멀티플레이 복제 (DOREPLIFETIME / Net/UnrealNetwork.h)
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

@@ -5,6 +5,7 @@
 #include "Core/Defense/Throw/ThrowTypes.h"
 #include "Data/TrainingFeedback.h"
 #include "UI/VRExitGesture.h"
+#include "UI/VREndCardMenu.h"
 #include "ThrowPawn.generated.h"
 
 class UCameraComponent;
@@ -173,8 +174,8 @@ protected:
 
 	// ── 설정값 ──
 
-	/** 총 시행 수. */
-	UPROPERTY(EditAnywhere, Category = "Throw")
+	/** 총 시행 수 (에디터/디테일 패널에서 조절). */
+	UPROPERTY(EditAnywhere, Category = "Throw", meta = (ClampMin = "1"))
 	int32 TotalThrows = 10;
 
 	/** 파워가 0→1 까지 차오르는 시간 (초). */
@@ -264,6 +265,9 @@ private:
 	void ThrowBall(float Power);
 	void FinishThrow(const FThrowResult& Result);
 	void EndSession();
+
+	/** 종료 화면의 PLAY AGAIN — 끝난 판을 저장하고 같은 폰에서 새 세션을 시작한다. */
+	void RestartSession();
 
 	/** 파워(0~1) → 발사 속도 벡터. 방향은 목표 베이스 자동 조준. */
 	FVector PowerToVelocity(float Power) const;
@@ -406,4 +410,14 @@ private:
 
 	/** VR '컨트롤러 위로 들어 나가기' 제스처 상태 (헤드셋만으로 모드 선택 복귀). */
 	FVRExitGesture ExitGesture;
+
+	/** 세션 종료 화면의 선택 카드(PLAY AGAIN / BACK TO MENU) 겨눔 상태. */
+	FVREndCardMenu EndMenu;
+
+	/** 종료 화면에서 선택 카드가 놓이는 첫 행 인덱스 (그 위쪽은 결과 내용). */
+	static constexpr int32 EndCardFirstRow = 3;
+
+	/** 플레이 중 나가기 제스처 임계 — 이 종목의 자연 동작과 겹치지 않게 조인 값. */
+	static constexpr float LiveExitUpThreshold = 0.90f;
+	static constexpr float LiveExitHoldSec     = 2.0f;
 };

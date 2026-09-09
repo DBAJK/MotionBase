@@ -68,6 +68,10 @@ public:
 	/** Index 이상의 행을 모두 숨긴다 (현재 단계 행 수보다 뒤쪽 정리). */
 	void HideRowsFrom(int32 FirstHiddenIndex);
 
+	/** 푸터/힌트를 각각 숨긴다 (종료 화면처럼 그 자리를 선택 카드에 내줘야 할 때). */
+	void HideFooter();
+	void HideHint();
+
 	/**
 	 * 뒤로 카드를 행 아래에 배치·표시한다 (선택 메뉴 전용).
 	 * @param RowCount 현재 보이는 행 수 — 그 바로 아래에 놓기 위한 값.

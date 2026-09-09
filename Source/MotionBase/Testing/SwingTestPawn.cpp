@@ -261,6 +261,14 @@ void ASwingTestPawn::HandlePitchThrown(EPitchType PitchType, FVector InPlateLoca
 	CurrentPitchType = PitchType;
 	bSwungThisPitch = false;
 	bCurrentPitchIsStrike = PitchingZone ? PitchingZone->IsLastPitchStrike() : false;
+
+	// 이 공이 세션의 몇 번째인지. 마지막 공이면 여기서 곧바로 자동 투구를 끈다 —
+	// 판정이 끝난 뒤에 끄면 그 사이에 투수가 다음 공을 이미 던져버린다.
+	++PitchIndex;
+	if (PitchIndex >= TotalPitches && PitchingZone)
+	{
+		PitchingZone->SetAutoPitch(false);
+	}
 }
 
 void ASwingTestPawn::HandlePitchArrived(FVector InPlateLocation)
@@ -437,6 +445,23 @@ void ASwingTestPawn::SimulateSwing()
 		LastHit.ExitVelocityMps, LastHit.CarryDistanceM, LastSwingScore.TotalScore);
 }
 
+void ASwingTestPawn::EndSession()
+{
+	bSessionOver = true;
+
+	if (PitchingZone)
+	{
+		PitchingZone->SetAutoPitch(false); // 마지막 공에서 이미 껐지만, 재시작 경로를 위해 멱등하게.
+	}
+
+	// 세션 결과 + 약점·드릴·AI 코칭을 자동으로 띄운다 ([F] 를 안 눌러도).
+	// 스윙이 하나도 없으면 RequestFeedback 이 안내만 남기고 끝나므로 그대로 불러도 안전하다.
+	RequestFeedback();
+
+	UE_LOG(LogMotionBase, Log, TEXT("[SwingTest] 세션 종료 — %d구 (스윙 %d · 컨택 %d · 흘려보냄 %d) 총점 %.1f"),
+		PitchIndex, SwingCount, ContactCount, MissedPitchCount, SessionScore.TotalScore);
+}
+
 void ASwingTestPawn::FlushSessionToSave()
 {
 	if (UModeManager* ModeManager = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
@@ -474,6 +499,12 @@ void ASwingTestPawn::ResetSession()
 	WalkCount = 0;
 	LastPitchCall.Reset();
 	bHasSwung = false;
+	PitchIndex = 0;
+	bSessionOver = false;
+	if (PitchingZone)
+	{
+		PitchingZone->SetAutoPitch(true); // 세션 종료로 멈춰 있던 투수를 다시 돌린다.
+	}
 
 	// 피드백도 초기화 — 지난 세션 약점이 새 세션에 남으면 안 된다.
 	bShowFeedback = false;
@@ -490,6 +521,14 @@ void ASwingTestPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// 목표 구수를 다 던졌고, 마지막 공(과 그 타구)이 완전히 끝났으면 세션을 닫는다.
+	// IsIdle() 을 쓰는 이유: 컨택하면 공이 HitFlight 로 넘어가는데, 그걸 안 기다리면
+	// 타구가 날아가는 도중에 결과 화면이 덮어버린다.
+	if (!bSessionOver && PitchIndex >= TotalPitches && PitchingZone && PitchingZone->IsIdle())
+	{
+		EndSession();
+	}
+
 	if (!GEngine)
 	{
 		return;
@@ -503,9 +542,19 @@ void ASwingTestPawn::Tick(float DeltaSeconds)
 	}
 
 	GEngine->AddOnScreenDebugMessage(1, 2.0f, FColor::White,
-		FString::Printf(TEXT("=== MotionBase 타격 훈련 [%s · %s] ===   [Space] 스윙   [F] 분석·추천   [R] 리셋   [M] 모드 선택"),
+		FString::Printf(TEXT("=== MotionBase 타격 훈련 [%s · %s]  %d / %d구 ===   [Space] 스윙   [F] 분석·추천   [R] 리셋   [M] 모드 선택"),
 			*UModeManager::GetDifficultyDisplayName(SessionDifficulty).ToString(),
-			*UModeManager::GetStanceDisplayName(SessionStance).ToString()));
+			*UModeManager::GetStanceDisplayName(SessionStance).ToString(),
+			GetPitchNumber(), TotalPitches));
+
+	// 세션이 끝났는데 결과 패널이 안 떠 있는 경우(= 스윙이 한 번도 없어 채점할 게 없음).
+	// 그냥 두면 "다음 투구 준비 중..."만 계속 떠서 멈춘 것처럼 보인다.
+	if (bSessionOver && !bShowFeedback)
+	{
+		GEngine->AddOnScreenDebugMessage(12, 2.0f, FColor::Yellow,
+			FString::Printf(TEXT("세션 종료 — %d구를 모두 던졌습니다. 스윙 기록이 없어 채점할 내용이 없습니다.  [R] 다시 시작   [M] 모드 선택"),
+				TotalPitches));
+	}
 
 	// 동적 난이도 — 성적에 따라 구속·변화구가 오르내린다 (0%=프리셋, 100%=최대 상승).
 	if (PitchingZone)

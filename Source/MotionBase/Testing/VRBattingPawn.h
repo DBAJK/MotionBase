@@ -11,6 +11,7 @@
 #include "Data/TrainingFeedback.h"
 #include "UI/SessionResultView.h"
 #include "UI/VRExitGesture.h"
+#include "UI/VREndCardMenu.h"
 #include "UI/VRHaptics.h"
 #include "VRBattingPawn.generated.h"
 
@@ -56,6 +57,18 @@ public:
 	 */
 	virtual bool GetSessionSummary(FSessionSummary& OutSummary) const override;
 
+	/** 이 세션에서 던지는 총 투구 수. */
+	UFUNCTION(BlueprintPure, Category = "VRBatting")
+	int32 GetTotalPitches() const { return TotalPitches; }
+
+	/** 현재 몇 번째 공인지 (1-based, 표시용). */
+	UFUNCTION(BlueprintPure, Category = "VRBatting")
+	int32 GetPitchNumber() const { return FMath::Clamp(PitchIndex, 1, TotalPitches); }
+
+	/** 목표 구수를 다 채워 세션이 닫혔는지. */
+	UFUNCTION(BlueprintPure, Category = "VRBatting")
+	bool IsSessionOver() const { return bSessionOver; }
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -96,6 +109,16 @@ protected:
 	 */
 	UPROPERTY(EditAnywhere, Category = "VRBatting")
 	float PostContactDelaySec = USwingAnalyzer::ContactTimeWindowSec;
+
+	/**
+	 * 한 세션의 총 투구 수. 이 수를 채우면 투구를 멈추고 결과·AI 코칭 화면으로 넘어간다.
+	 *
+	 * **스윙 수가 아니라 투구 수**로 센다. 안 휘두른 공(Take)도 한 구로 치지 않으면
+	 * 가만히 서 있는 플레이어에게서 세션이 영원히 안 끝난다 (수비 포구 모드의 TotalPitches 와 같은 기준).
+	 * 세션 통계·동적 난이도에서 Take 를 시도로 세지 않는 규칙은 그대로다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "VRBatting", meta = (ClampMin = "1"))
+	int32 TotalPitches = 10;
 
 	// ── 컨택 지점(공이 도착할 곳) — 플레이어 기준 오프셋 (cm) ──
 	// 공이 몸 정중앙으로 날아오지 않게, 앞/옆/위로 옮겨 스윙하기 좋은 위치에 도착시킨다.
@@ -179,6 +202,9 @@ protected:
 private:
 	void AnalyzeSwingNow();
 
+	/** 목표 구수를 다 채웠을 때 세션을 닫는다 (투구 정지 + 결과·코칭 표시). */
+	void EndSession();
+
 	/** 세션 스윙들 → 약점 판별 + 드릴 추천 + AI 코칭 요청 (SwingTestPawn 과 동일 파이프라인). */
 	void RequestCoaching();
 
@@ -207,6 +233,12 @@ private:
 	EPitchType CurrentPitchType = EPitchType::Fastball;
 	bool bPitchActive = false;
 	bool bAnalyzedThisPitch = true;
+
+	/** 지금까지 던진 공 수 (Take 포함). TotalPitches 에 도달하면 세션 종료. */
+	int32 PitchIndex = 0;
+
+	/** 세션 종료됨 — 투구가 멈추고 결과 화면이 계속 떠 있는 상태 ([R] 로 재시작). */
+	bool bSessionOver = false;
 
 	// 세션 (ModeManager 에서 읽음)
 	EDifficultyLevel SessionDifficulty = EDifficultyLevel::Amateur;
@@ -258,6 +290,16 @@ private:
 
 	/** VR '배트 위로 들어 나가기' 제스처 상태 (헤드셋만으로 모드 선택 복귀). */
 	FVRExitGesture ExitGesture;
+
+	/** 세션 종료 화면의 선택 카드(PLAY AGAIN / BACK TO MENU) 겨눔 상태. */
+	FVREndCardMenu EndMenu;
+
+	/** 종료 화면에서 선택 카드가 놓이는 첫 행 인덱스 (그 위쪽은 결과 내용). */
+	static constexpr int32 EndCardFirstRow = 3;
+
+	/** 플레이 중 나가기 제스처 임계 — 타자 준비 자세와 겹쳐 가장 빡빡하게 잡는다. */
+	static constexpr float LiveExitUpThreshold = 0.95f;
+	static constexpr float LiveExitHoldSec     = 3.0f;
 
 	/** 컨택 진동 상태 (Tick 이 지속시간을 재고 EndPlay 가 끈다). */
 	FVRHapticPulse ContactHaptic;
