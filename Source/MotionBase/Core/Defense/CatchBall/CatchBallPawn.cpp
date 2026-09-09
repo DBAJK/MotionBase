@@ -106,6 +106,16 @@ void ACatchBallPawn::BeginPlay()
 		UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
 	}
 
+	// TickVRLocomotion 이 매 틱 읽는 이동축 키를 여기서 한 번만 만든다 (손이 세션 내내 안 바뀜).
+	{
+		const FName Hand = GloveController ? GloveController->MotionSource : FName(TEXT("Right"));
+		const TCHAR* Side = (Hand == FName(TEXT("Left"))) ? TEXT("Left") : TEXT("Right");
+		LocomotionGenericXKey = FKey(*FString::Printf(TEXT("MotionController_%s_Thumbstick_X"), Side));
+		LocomotionViveXKey    = FKey(*FString::Printf(TEXT("Vive_%s_Trackpad_X"), Side));
+		LocomotionGenericYKey = FKey(*FString::Printf(TEXT("MotionController_%s_Thumbstick_Y"), Side));
+		LocomotionViveYKey    = FKey(*FString::Printf(TEXT("Vive_%s_Trackpad_Y"), Side));
+	}
+
 	// 나가기 제스처를 이 종목에 맞게 조인다.
 	// 뜬공을 기다리는 자세 = 글러브를 위로 들고 대기 = 기본값(37°/1.5s)과 정확히 겹친다.
 	// 거의 수직(±23°)으로 2.5초를 요구하고, 공이 날아오는 동안에는 Tick 에서 아예 끈다.
@@ -248,6 +258,8 @@ void ACatchBallPawn::SpawnNextPitch()
 		ActiveBall->SetTrailVisible(true);
 		ActiveBall->Launch(CurrentTrial.LaunchVelocity);
 		bPitchActive = true;
+		// 새 투구 = 낙구지점이 바뀌었다 — 저빈도 재호출 타이머를 무시하고 즉시 다시 그리게 한다.
+		LandingMarkerValidUntilSec = 0.0f;
 
 		StatusLine = FString::Printf(TEXT("%d / %d   Get ready!"), PitchIndex + 1, TotalPitches);
 
@@ -750,32 +762,40 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 	// 낙구지점 마커 (공이 날아가는 동안).
 	if (bPitchActive)
 	{
-		DrawDebugCircle(GetWorld(), CurrentTrial.PredictedLanding + FVector(0, 0, 2.0f),
-			CurrentTrial.CatchRadius, 32, FColor::Yellow, false, -1.0f, 0, 3.0f,
-			FVector(1, 0, 0), FVector(0, 1, 0), false);
+		// 낙구지점·반경은 이 투구 내내 고정이라, 바닥/공중 마커는 저빈도로만 다시 그린다
+		// (캐치 반경 원은 글러브를 따라 움직이는 실시간 정보라 매 프레임 그대로 둔다).
+		if (GetWorld()->GetTimeSeconds() >= LandingMarkerValidUntilSec)
+		{
+			const float Duration = LandingMarkerRedrawIntervalSec * 1.5f;
+			LandingMarkerValidUntilSec = GetWorld()->GetTimeSeconds() + LandingMarkerRedrawIntervalSec;
 
-		// 내 캐치 반경 표시 — VR 은 글러브 위치, 키보드는 발밑 기준.
+			DrawDebugCircle(GetWorld(), CurrentTrial.PredictedLanding + FVector(0, 0, 2.0f),
+				CurrentTrial.CatchRadius, 32, FColor::Yellow, false, Duration, 0, 3.0f,
+				FVector(1, 0, 0), FVector(0, 1, 0), false);
+
+			// VR: 공이 도착할 지점을 공중에 표시 + 발밑 마커와 세로선으로 잇는다.
+			// 낙구 마커만 바닥에 있으면 "어느 높이로 오는지"를 알 수 없어 글러브를 못 맞춘다.
+			if (bVR)
+			{
+				const FVector AirTarget(CurrentTrial.PredictedLanding.X, CurrentTrial.PredictedLanding.Y, CatchHeightZ());
+				// 잡는 면은 **공이 오는 방향을 마주보게** 세운다 (내 정면 기준 좌우축 × 수직축).
+				// 월드 축으로 고정하면 정면이 +X 가 아닐 때 원이 옆에서 본 선처럼 납작해진다.
+				const FVector RightAxis = FRotator(0.0f, TrialYawDeg, 0.0f).RotateVector(FVector::RightVector);
+				DrawDebugCircle(GetWorld(), AirTarget, CurrentTrial.CatchRadius, 24,
+					FColor(120, 235, 140), false, Duration, 0, 2.0f,
+					RightAxis, FVector::UpVector, false); // 세로 원 = 잡는 면
+				DrawDebugLine(GetWorld(), CurrentTrial.PredictedLanding, AirTarget,
+					FColor(120, 235, 140), false, Duration, 0, 1.5f);
+			}
+		}
+
+		// 내 캐치 반경 표시 — VR 은 글러브 위치, 키보드는 발밑 기준. 실시간 위치라 매 프레임 그린다.
 		const FVector CatchCenter = (bVR && GloveController)
 			? GloveController->GetComponentLocation()
 			: FVector(GetActorLocation().X, GetActorLocation().Y, FloorZ());
 		DrawDebugCircle(GetWorld(), CatchCenter,
 			CurrentTrial.CatchRadius, 32, FColor::Cyan, false, -1.0f, 0, 2.0f,
 			FVector(1, 0, 0), FVector(0, 1, 0), false);
-
-		// VR: 공이 도착할 지점을 공중에 표시 + 발밑 마커와 세로선으로 잇는다.
-		// 낙구 마커만 바닥에 있으면 "어느 높이로 오는지"를 알 수 없어 글러브를 못 맞춘다.
-		if (bVR)
-		{
-			const FVector AirTarget(CurrentTrial.PredictedLanding.X, CurrentTrial.PredictedLanding.Y, CatchHeightZ());
-			// 잡는 면은 **공이 오는 방향을 마주보게** 세운다 (내 정면 기준 좌우축 × 수직축).
-			// 월드 축으로 고정하면 정면이 +X 가 아닐 때 원이 옆에서 본 선처럼 납작해진다.
-			const FVector RightAxis = FRotator(0.0f, TrialYawDeg, 0.0f).RotateVector(FVector::RightVector);
-			DrawDebugCircle(GetWorld(), AirTarget, CurrentTrial.CatchRadius, 24,
-				FColor(120, 235, 140), false, -1.0f, 0, 2.0f,
-				RightAxis, FVector::UpVector, false); // 세로 원 = 잡는 면
-			DrawDebugLine(GetWorld(), CurrentTrial.PredictedLanding, AirTarget,
-				FColor(120, 235, 140), false, -1.0f, 0, 1.5f);
-		}
 	}
 }
 
@@ -861,26 +881,22 @@ void ACatchBallPawn::TickVRLocomotion(float DeltaSeconds)
 		return;
 	}
 
-	// 글러브가 붙은 손(기본 오른손) 기준으로 축 키를 고른다.
-	const FName Hand = GloveController ? GloveController->MotionSource : FName(TEXT("Right"));
-	const bool bLeft = (Hand == FName(TEXT("Left")));
-	const TCHAR* Side = bLeft ? TEXT("Left") : TEXT("Right");
-
 	// Vive 컨트롤러 가운데 '원형 트랙패드'로 이동한다. 문제는 UE 가 이 패드를 두 이름 중
 	// 하나로 잡는다는 것:
 	//   · MotionController_<Side>_Thumbstick_X/Y  (OpenXR 제네릭)
 	//   · Vive_<Side>_Trackpad_X/Y                (Vive 전용)
 	// 실기에서 어느 쪽으로 매핑되든 동작하도록 둘 다 읽어 절댓값이 큰 쪽을 쓴다.
 	// (미등록 키면 FKey 가 무효라 GetInputAnalogKeyState 가 0 을 돌려주므로 안전.)
-	auto ReadAxis = [PC, Side](const TCHAR* Generic, const TCHAR* ViveName) -> float
+	// 키 자체는 BeginPlay 에서 캐싱해 뒀다(손이 세션 내내 안 바뀌므로 매 프레임 재생성 불필요).
+	auto ReadAxis = [PC](const FKey& Generic, const FKey& Vive) -> float
 	{
-		const float A = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("MotionController_%s_%s"), Side, Generic)));
-		const float B = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("Vive_%s_%s"), Side, ViveName)));
+		const float A = PC->GetInputAnalogKeyState(Generic);
+		const float B = PC->GetInputAnalogKeyState(Vive);
 		return (FMath::Abs(B) > FMath::Abs(A)) ? B : A;
 	};
 
-	float AxisX = ReadAxis(TEXT("Thumbstick_X"), TEXT("Trackpad_X")); // 좌우(+우)
-	float AxisY = ReadAxis(TEXT("Thumbstick_Y"), TEXT("Trackpad_Y")); // 앞뒤(+앞)
+	float AxisX = ReadAxis(LocomotionGenericXKey, LocomotionViveXKey); // 좌우(+우)
+	float AxisY = ReadAxis(LocomotionGenericYKey, LocomotionViveYKey); // 앞뒤(+앞)
 
 	// 데드존 (손떨림/드리프트 무시).
 	if (FMath::Abs(AxisX) < StickDeadzone) { AxisX = 0.0f; }

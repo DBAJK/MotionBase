@@ -597,6 +597,14 @@ void AModeSelectPawn::InitVRMenu()
 	// 바닥 기준 트래킹 → MenuHeightCm(눈높이)이 실제 높이와 맞는다.
 	UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
 
+	// UpdateVRMenu 가 매 틱 읽는 트리거 키를 여기서 한 번만 만든다 (손이 세션 내내 안 바뀜).
+	{
+		const FName Hand = (PointerController ? PointerController->MotionSource : FName(TEXT("Right")));
+		const TCHAR* Side = (Hand == FName(TEXT("Left"))) ? TEXT("Left") : TEXT("Right");
+		TriggerGenericKey = FKey(*FString::Printf(TEXT("MotionController_%s_Trigger"), Side));
+		TriggerViveKey    = FKey(*FString::Printf(TEXT("Vive_%s_Trigger"), Side));
+	}
+
 	RefreshVRMenuTexts();
 	UE_LOG(LogMotionBase, Log, TEXT("ModeSelect: VR 인메뉴 활성화 (드웰 %.1fs / %.0f°)"),
 		DwellTimeSec, DwellAngleDeg);
@@ -677,11 +685,10 @@ void AModeSelectPawn::UpdateVRMenu(float DeltaSeconds)
 	bool bTriggerPressedEdge = false;
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
-		const FName Hand = (PointerController ? PointerController->MotionSource : FName(TEXT("Right")));
-		const TCHAR* Side = (Hand == FName(TEXT("Left"))) ? TEXT("Left") : TEXT("Right");
 		// 트리거(아래 검지 버튼)를 제네릭/Vive 두 이름으로 읽어 매핑에 관계없이 동작하게 한다.
-		const float Generic = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("MotionController_%s_Trigger"), Side)));
-		const float Vive    = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("Vive_%s_Trigger"), Side)));
+		// 키 자체는 InitVRMenu 에서 캐싱해 뒀다(손이 세션 내내 안 바뀜).
+		const float Generic = PC->GetInputAnalogKeyState(TriggerGenericKey);
+		const float Vive    = PC->GetInputAnalogKeyState(TriggerViveKey);
 		const bool bHeld = FMath::Max(Generic, Vive) >= TriggerPressThreshold;
 		bTriggerPressedEdge = (bHeld && !bTriggerHeldPrev);
 		bTriggerHeldPrev = bHeld;

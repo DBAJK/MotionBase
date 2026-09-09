@@ -118,6 +118,14 @@ void AVRBattingPawn::BeginPlay()
 		}
 	}
 
+	// Tick 이 매 프레임 읽는 코칭 요청 트리거 키를 여기서 한 번만 만든다
+	// (SessionStance 가 세션 내내 안 바뀌므로 손도 안 바뀐다).
+	{
+		const TCHAR* Side = (SessionStance == EBattingStance::Left) ? TEXT("Left") : TEXT("Right");
+		TriggerGenericKey = FKey(*FString::Printf(TEXT("MotionController_%s_Trigger"), Side));
+		TriggerViveKey    = FKey(*FString::Printf(TEXT("Vive_%s_Trigger"), Side));
+	}
+
 	// 난이도 → 타구 판정 관대도 (점수 산식은 건드리지 않는다 — FScoringConfig 주석 참고).
 	ScoringConfig.ApplyDifficulty(SessionDifficulty);
 
@@ -616,9 +624,9 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 	// (스윙은 배트 궤적으로 자동 판정되므로 트리거는 비어 있다 — 코칭 버튼으로 재활용.)
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
-		const TCHAR* Side = (SessionStance == EBattingStance::Left) ? TEXT("Left") : TEXT("Right");
-		const float Generic = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("MotionController_%s_Trigger"), Side)));
-		const float Vive    = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("Vive_%s_Trigger"), Side)));
+		// 키 자체는 BeginPlay 에서 캐싱해 뒀다(손이 세션 내내 안 바뀜).
+		const float Generic = PC->GetInputAnalogKeyState(TriggerGenericKey);
+		const float Vive    = PC->GetInputAnalogKeyState(TriggerViveKey);
 		const bool bHeld = FMath::Max(Generic, Vive) >= TriggerPressThreshold;
 		if (bHeld && !bTriggerHeldPrev)
 		{

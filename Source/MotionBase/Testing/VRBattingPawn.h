@@ -288,6 +288,10 @@ private:
 	bool bTriggerHeldPrev = false;    // 트리거 눌림 에지 검출용
 	float CoachingShowTimer = 0.0f;   // 코칭 오버레이를 패널에 띄워두는 잔여 시간(초)
 
+	/** Tick 이 매 프레임 읽는 코칭 요청 트리거 키. BeginPlay 에서 한 번만 만든다(손이 안 바뀜). */
+	FKey TriggerGenericKey;
+	FKey TriggerViveKey;
+
 	/** VR '배트 위로 들어 나가기' 제스처 상태 (헤드셋만으로 모드 선택 복귀). */
 	FVRExitGesture ExitGesture;
 

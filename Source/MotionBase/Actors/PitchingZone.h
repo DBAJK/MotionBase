@@ -168,9 +168,13 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "MotionBase|Pitch|Field")
 	float StrikeZoneHalfHeightCm = 28.0f;
 
-	/** 존을 디버그 박스로 표시할지. */
+	/**
+	 * 존을 디버그 박스로 표시할지. 기본 꺼짐 — 켜두면 매 프레임 DrawDebugBox 를 호출해서
+	 * (Duration=-1, 즉 한 프레임짜리라 매 틱 다시 그려야 함) VR 스테레오에서 상시 부담이 된다.
+	 * 개발 중 존 위치를 눈으로 맞출 때만 에디터에서 토글할 것.
+	 */
 	UPROPERTY(EditAnywhere, Category = "MotionBase|Pitch|Field")
-	bool bDrawStrikeZone = true;
+	bool bDrawStrikeZone = false;
 
 	// ── 난이도 ──
 
