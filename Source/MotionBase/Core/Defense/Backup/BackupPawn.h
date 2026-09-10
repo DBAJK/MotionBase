@@ -17,6 +17,7 @@ class UVRInfoPanel;
 class UAIFeedbackService;
 class ACatchBall;
 class AFielderMarker;
+class AFielderCrowd;
 
 /** 한 시행의 진행 단계. */
 UENUM(BlueprintType)
@@ -552,4 +553,11 @@ private:
 	/** 동료 수비수 마커 (세션 내내 유지 — 시행마다 다시 세우지 않는다). */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AFielderMarker>> FielderMarkers;
+
+	/**
+	 * 동료 몸을 인스턴싱으로 그리는 렌더러 (마커당 도형 31개 × 6명 = 186 드로우콜을
+	 * 최대 12 배치로 줄인다). 마커는 이름표 담당으로 남고 몸은 여기서 그린다.
+	 */
+	UPROPERTY()
+	TObjectPtr<AFielderCrowd> FielderCrowd;
 };

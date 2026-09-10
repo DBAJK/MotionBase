@@ -256,8 +256,34 @@ void AFielderMarker::BeginPlay()
 	}
 }
 
+void AFielderMarker::CollectBodyParts(TArray<FFielderPartInstance>& Out) const
+{
+	Out.Reserve(Out.Num() + BodyParts.Num());
+
+	for (int32 i = 0; i < BodyParts.Num(); ++i)
+	{
+		const UStaticMeshComponent* Part = BodyParts[i];
+		if (!Part || !Part->GetStaticMesh())
+		{
+			continue;
+		}
+
+		FFielderPartInstance Inst;
+		Inst.Mesh  = Part->GetStaticMesh();
+		Inst.Group = PartGroups.IsValidIndex(i) ? PartGroups[i] : 0;
+		Inst.Color = ColorFor(static_cast<EFielderPart>(Inst.Group));
+
+		// 부위의 상대 트랜스폼은 생성자에서 이미 잡혀 있고, 스폰 시점에 컴포넌트가 등록되므로
+		// 월드 트랜스폼(= 마커 배치 × 부위 상대)이 그대로 유효하다. 여기서 다시 곱하지 않는다.
+		Inst.WorldTransform = Part->GetComponentTransform();
+
+		Out.Add(Inst);
+	}
+}
+
 void AFielderMarker::SetBodyVisible(bool bVisible)
 {
+	bBodyVisible = bVisible;
 	for (UStaticMeshComponent* Part : BodyParts)
 	{
 		if (Part)
@@ -310,5 +336,23 @@ void AFielderMarker::FaceLabelTowards(const FVector& ViewerLocation)
 	{
 		return;
 	}
-	Label->SetWorldRotation(FRotator(0.0f, ToViewer.Rotation().Yaw, 0.0f));
+
+	const float DesiredYaw = ToViewer.Rotation().Yaw;
+
+	// ⚠️ 변화가 미미하면 건드리지 않는다. SetWorldRotation 은 렌더 상태를 더티로 만들어
+	//    TextRender 지오메트리를 다시 올리는데, 이걸 마커 6개에 **매 프레임** 하고 있었다.
+	//
+	//    "움직이는 동안엔 어차피 계속 변하니 소용없지 않나"가 아니다 — 마커는 10~60m 밖에
+	//    있어서 각속도가 작다. 30m 지점 마커를 7m/s 로 지나가도 프레임당 약 0.08° 라,
+	//    1.5° 문턱이면 이동 중에도 갱신 횟수가 한 자릿수 분의 일로 줄어든다.
+	//    글자 크기·거리를 감안하면 1.5° 틀어진 이름표는 눈에 띄지 않는다.
+	if (bLabelYawApplied
+		&& FMath::Abs(FRotator::NormalizeAxis(DesiredYaw - LastLabelYaw)) < LabelYawEpsilonDeg)
+	{
+		return;
+	}
+
+	LastLabelYaw = DesiredYaw;
+	bLabelYawApplied = true;
+	Label->SetWorldRotation(FRotator(0.0f, DesiredYaw, 0.0f));
 }

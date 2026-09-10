@@ -5,6 +5,7 @@
 #include "Core/Defense/Backup/BackupGameState.h"
 #include "Core/Defense/CatchBall/CatchBall.h"
 #include "Core/Defense/Backup/FielderMarker.h"
+#include "Core/Defense/Backup/FielderCrowd.h"
 #include "Core/MotionBaseGameMode.h"
 #include "Core/ModeManager.h"
 #include "MotionBase.h"
@@ -1553,10 +1554,33 @@ void ABackupPawn::SpawnFielderMarkers()
 			UBackupPlaybook::PositionNumber(Pos), Pos == Position);
 		FielderMarkers.Add(Marker);
 	}
+
+	// ── 동료 몸을 인스턴싱으로 한 번에 그린다 ──
+	// 마커 하나가 도형 31개로 조립돼 있어서, 본인을 뺀 6명이면 186 드로우콜이 된다
+	// (VR 은 스테레오라 실질 372). 송구 모드엔 없는 부하라 백업 모드만 렉이 걸렸다.
+	// 같은 (메시 × 색그룹)끼리 묶으면 최대 12 배치로 줄어든다.
+	//
+	// ⚠️ 원점·아이덴티티로 스폰해야 한다 — 크라우드가 부위의 **월드** 트랜스폼을 그대로
+	//    인스턴스 좌표로 쓴다(FielderCrowd::Rebuild 주석 참고).
+	if (FielderMarkers.Num() > 0)
+	{
+		FielderCrowd = World->SpawnActor<AFielderCrowd>(
+			AFielderCrowd::StaticClass(), FTransform::Identity, Params);
+		if (FielderCrowd)
+		{
+			FielderCrowd->Rebuild(FielderMarkers);
+		}
+	}
 }
 
 void ABackupPawn::DestroyFielderMarkers()
 {
+	if (IsValid(FielderCrowd))
+	{
+		FielderCrowd->Destroy();
+	}
+	FielderCrowd = nullptr;
+
 	for (TObjectPtr<AFielderMarker>& Marker : FielderMarkers)
 	{
 		if (IsValid(Marker))
