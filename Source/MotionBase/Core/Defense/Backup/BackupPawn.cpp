@@ -413,6 +413,32 @@ void ABackupPawn::StartSession()
 	CoachingText.Reset();
 	bAwaitingCoaching = false;
 
+	// 동적 난이도: 과거 기록(이 종목 평균 총점)이 좋을수록 더 어렵게(제한시간 빡빡하게) 시작한다
+	// (PitchingZone 과 같은 계약). GetModeStats 는 수비 세 종목을 안 갈라서 여기서 직접
+	// DrillId="BackupMove" 로 걸러 평균을 낸다 — 퀴즈 시절 "Backup" 기록과는 분리돼 있다.
+	BaseSlackFactor = Field.SlackFactor; // 디자이너가 에디터에서 맞춘 기본값을 기준선으로 캡처.
+	DynamicDifficulty.Seed(0.0f);
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UModeManager* MM = GI->GetSubsystem<UModeManager>())
+		{
+			double Sum = 0.0; int32 Count = 0;
+			for (const FSessionResult& S : MM->GetHistory())
+			{
+				if (S.Mode == EGameModeId::Defense && S.DrillId == UModeManager::GetDefenseDrillIdName(2) && S.Average.bValid)
+				{
+					Sum += S.Average.TotalScore;
+					++Count;
+				}
+			}
+			if (Count > 0)
+			{
+				DynamicDifficulty.Seed(static_cast<float>(Sum / Count) / 100.0f);
+			}
+		}
+	}
+	Field.SlackFactor = DynamicDifficulty.ApplyDown(BaseSlackFactor, DynamicSlackReduction, 1.0f);
+
 	Phase = EBackupPhase::Done; // 첫 시행 전까지는 "진행 중"이 아니다.
 
 	// ⚠️ 첫 시행 예약은 여기서 하지 않는다 — 진행권은 GameState 에 있다.
@@ -644,7 +670,8 @@ void ABackupPawn::FinishTrial(EBackupOutcome Outcome)
 		++SuccessCount;
 	}
 
-	// 시도 1건 = 기록 1건 (수비는 성공/실패 + 원시 측정값만 남긴다 — 3축 모델 없음).
+	// 시도 1건 = 기록 1건 (성공/실패 + 원시 측정값). 세션 종료 시 FlushSessionToSave 가
+	// 이 원시값들을 3축(정확도·효율·일관성)으로 집계해 FinalizeSession 에 넘긴다.
 	if (UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
 	{
 		TMap<FName, float> Details;
@@ -654,6 +681,18 @@ void ABackupPawn::FinishTrial(EBackupOutcome Outcome)
 		Details.Add(TEXT("KeyScenario"), Result.bKeyScenario ? 1.0f : 0.0f);
 		Details.Add(TEXT("HoldTrial"), CurrentTrial.bIsHoldTrial ? 1.0f : 0.0f);
 		MM->RecordResult(UScoringService::ScoreDefenseAttempt(Result.IsSuccess(), Details));
+	}
+
+	// 동적 난이도: 정답이면 올리고, 오답/시간초과면 내린다(PitchingZone 과 같은 계약).
+	// Field.SlackFactor 는 다음 SpawnNextTrial 이 아니라 여기서 바로 반영한다 — 이 폰은
+	// PitchingZone/Catch/Throw 와 달리 다음 시행 스폰을 GameState 가 트리거할 수 있어
+	// "다음 빌드 시점에 자연히 읽힌다"를 보장할 수 없다.
+	if (bDynamicDifficulty)
+	{
+		if (DynamicDifficulty.RegisterOutcome(Result.IsSuccess(), DynamicStepUp, DynamicStepDown))
+		{
+			Field.SlackFactor = DynamicDifficulty.ApplyDown(BaseSlackFactor, DynamicSlackReduction, 1.0f);
+		}
 	}
 
 	UE_LOG(LogMotionBase, Log, TEXT("[Backup] 판정: %s  판단 %.2fs  경로효율 %.0f%%"),
@@ -739,19 +778,10 @@ FWeaknessReport ABackupPawn::BuildBackupReport() const
 
 	const float CorrectRate = static_cast<float>(Correct) / N;
 
-	// 문턱은 타격·포구·송구와 같은 모드 공통 상수를 쓴다.
-	auto AddWeakness = [&R](EWeaknessAxis Axis, float Score, const FString& Evidence)
-	{
-		FWeakness W;
-		W.Axis = Axis;
-		W.Score = FMath::Clamp(Score, 0.0f, 1.0f);
-		W.Severity = 1.0f - W.Score;
-		W.Evidence = Evidence;
-		if (W.Severity >= UWeaknessDetector::MinReportSeverity) { R.Weaknesses.Add(W); }
-	};
+	// 문턱은 타격·포구·송구와 같은 모드 공통 상수를 쓴다(UWeaknessDetector 공용).
 
 	// ① 백업 판단: 정답률 그대로.
-	AddWeakness(EWeaknessAxis::BackupJudgment, CorrectRate,
+	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::BackupJudgment, CorrectRate,
 		FString::Printf(TEXT("correct %d/%d backup calls"), Correct, N));
 
 	// ② 판단 속도: **맞힌 시행만** 기준으로 본다 — 빨리 틀리는 사람이 만점 받는 걸 막는다
@@ -759,7 +789,7 @@ FWeaknessReport ABackupPawn::BuildBackupReport() const
 	if (CorrectDecisionN > 0)
 	{
 		const float AvgCorrectDecision = SumCorrectDecision / CorrectDecisionN;
-		AddWeakness(EWeaknessAxis::DecisionSpeed,
+		UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::DecisionSpeed,
 			FMath::Clamp(Field.TargetDecisionSec / FMath::Max(AvgCorrectDecision, 0.01f), 0.0f, 1.0f),
 			FString::Printf(TEXT("average %.2f s to start moving on correct calls (target %.2f s)"),
 				AvgCorrectDecision, Field.TargetDecisionSec));
@@ -771,7 +801,7 @@ FWeaknessReport ABackupPawn::BuildBackupReport() const
 	if (PathEffN > 0)
 	{
 		const float AvgPathEff = SumPathEff / PathEffN;
-		AddWeakness(EWeaknessAxis::RouteEfficiency, AvgPathEff,
+		UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::RouteEfficiency, AvgPathEff,
 			FString::Printf(TEXT("average route efficiency %.0f%% (straight-line distance / distance actually covered)"),
 				AvgPathEff * 100.0f));
 	}
@@ -841,7 +871,7 @@ FWeaknessReport ABackupPawn::BuildBackupReport() const
 		R.Notes.Add(Line);
 	}
 
-	R.Weaknesses.Sort([](const FWeakness& A, const FWeakness& B) { return A.Severity > B.Severity; });
+	UWeaknessDetector::SortWeaknessesBySeverity(R);
 	return R;
 }
 
@@ -879,8 +909,39 @@ void ABackupPawn::FlushSessionToSave()
 	{
 		return;
 	}
+
+	// 3축 채점: 정확도=정답 여부(이진값), 효율=판단시간을 TargetDecisionSec 대비 정규화.
+	// ⚠️ 일관성은 Accuracy(늘 0 아니면 1)가 아니라 Efficiency(판단시간) 편차를 쓴다 —
+	//    성공한 시도의 정확도는 전부 1.0이라 그걸로 편차를 내면 항상 0(=늘 만점)이 되어
+	//    "판단은 늘 맞는데 시간이 들쭉날쭉하다" 같은 실제 신호를 놓친다.
+	// Hold 시행(정답=제자리)은 즉시·확정적인 판단이라 효율 만점 — DecisionTimeSec=-1(안 움직임)을
+	// "느리다"로 잘못 읽으면 정답 행동을 벌점 주는 꼴이 된다.
+	TArray<float> AccuracyPerAttempt, EfficiencyPerAttempt, ConsistencyBasis;
+	AccuracyPerAttempt.Reserve(SessionResults.Num());
+	EfficiencyPerAttempt.Reserve(SessionResults.Num());
+	ConsistencyBasis.Reserve(SessionResults.Num());
+	for (const FBackupResult& R : SessionResults)
+	{
+		const bool bOk = R.IsSuccess();
+		float Eff = 0.0f;
+		if (bOk)
+		{
+			Eff = R.bHoldTrial
+				? 1.0f
+				: (R.DecisionTimeSec >= 0.0f
+					? FMath::Clamp(Field.TargetDecisionSec / FMath::Max(R.DecisionTimeSec, KINDA_SMALL_NUMBER), 0.0f, 1.0f)
+					: 0.0f);
+		}
+
+		AccuracyPerAttempt.Add(bOk ? 1.0f : 0.0f);
+		EfficiencyPerAttempt.Add(Eff);
+		ConsistencyBasis.Add(bOk ? Eff : -1.0f); // 성공한 시도의 판단시간 편차만 일관성에 반영.
+	}
+
+	FDefenseScoringConfig ScoringCfg;
+
 	MM->FinalizeSession(
-		UScoringService::ScoreDefenseSession(SuccessCount, SessionResults.Num()),
+		UScoringService::ScoreDefenseSession3Axis(AccuracyPerAttempt, EfficiencyPerAttempt, ConsistencyBasis, ScoringCfg),
 		BuildBackupReport());
 }
 

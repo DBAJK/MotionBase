@@ -6,6 +6,7 @@
 #include "Data/TrainingFeedback.h"
 #include "UI/VRExitGesture.h"
 #include "UI/VREndCardMenu.h"
+#include "Core/DynamicDifficulty.h"
 #include "CatchBallPawn.generated.h"
 
 class UCameraComponent;
@@ -214,6 +215,38 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "CatchBall")
 	TSubclassOf<ACatchBall> CatchBallClass;
 
+	// ── 동적 난이도 (기록·성적 기반 자동 상승) ──
+	// PitchingZone(타격)과 같은 계약: 세션 시작 시 과거 평균으로 시드, 시도마다 성과로 조정.
+	// ⚠️ 헤드룸 값은 실측 캘리브레이션 대상 — 하드코딩 확정 금지.
+
+	/** 기록·성적 기반으로 캐치 반경·체공시간을 자동 조절할지. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	bool bDynamicDifficulty = true;
+
+	/** 동적 상승 최대 반경 축소(cm) — DynamicLevel=1 일 때 유형별 반경에서 이만큼 줄어든다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicRadiusReductionCm = 25.0f;
+
+	/** 반경이 아무리 줄어도 이 아래로는 안 내려간다(완전히 못 잡는 반경을 막는 하한). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicRadiusFloorCm = 30.0f;
+
+	/** 동적 상승 최대 체공시간 축소(초). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicFlightReductionSec = 0.4f;
+
+	/** 체공시간이 아무리 줄어도 이 아래로는 안 내려간다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicFlightFloorSec = 0.5f;
+
+	/** 성공 1회당 동적 수준 상승폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicStepUp = 0.12f;
+
+	/** 실패(헛손질/놓침) 1회당 동적 수준 하강폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicStepDown = 0.08f;
+
 private:
 	// ── 입력 핸들러 (BindKey 눌림/뗌 → 플래그) ──
 	void OnRightPressed()  { bMoveRight = true; }
@@ -350,6 +383,9 @@ private:
 	 */
 	static constexpr float LandingMarkerRedrawIntervalSec = 0.5f;
 	float LandingMarkerValidUntilSec = 0.0f;
+
+	/** 동적 난이도 상태 (0~1) — BuildTrial 이 반경·체공시간 계산에 쓴다. */
+	FDynamicDifficultyLevel DynamicDifficulty;
 	bool  bWaitingNext = false;
 
 	FCatchResult LastResult;

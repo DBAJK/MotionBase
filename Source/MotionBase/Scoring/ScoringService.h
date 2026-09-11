@@ -116,6 +116,36 @@ struct FScoringConfig
 };
 
 /**
+ * 수비 3축 채점 가중치. FScoringConfig(타격)와 대칭이지만, 정확도·효율의 실제 계산은
+ * 종목(포구/송구/백업)마다 다른 원시 지표를 쓰므로 여기 담지 않는다 — 각 폰이 이미 갖고 있는
+ * 기준값(CatchRadius, TargetReleaseKmh, TargetTransferSec, TargetDecisionSec 등)을 단일
+ * 출처로 참조해 0~1 로 정규화한 뒤, 그 결과만 UScoringService::ScoreDefenseSession3Axis 에 넘긴다.
+ */
+USTRUCT(BlueprintType)
+struct FDefenseScoringConfig
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weights")
+	float WeightAccuracy = 0.4f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weights")
+	float WeightEfficiency = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weights")
+	float WeightConsistency = 0.25f;
+
+	/** 실측 캘리브레이션 완료 여부. false면 FScoreResult.bUncalibrated 로 전파된다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Calibration")
+	bool bCalibrated = false;
+
+	float WeightSum() const
+	{
+		return FMath::Max(WeightAccuracy + WeightEfficiency + WeightConsistency, KINDA_SMALL_NUMBER);
+	}
+};
+
+/**
  * 지표(FSwingMetrics) → 3축 점수(FScoreResult) 변환. (점수 계층)
  * 타격·투구가 공유하는 3축 구조. 순수 계산 — UE 액터/렌더 비의존.
  */
@@ -138,10 +168,10 @@ public:
 
 	// ── 수비 계열 (포구·송구·백업) ──
 	//
-	// ⚠️ 수비는 아직 **3축 채점 모델이 없다.** 타격의 정확도·효율·일관성을 수비에 억지로
-	//    끼워 맞추면(예: 구속을 '효율'로) 근거 없는 숫자가 기록에 남는다. 그래서 여기서는
-	//    성공/실패만 점수로 남기고, 실제 분석 내용은 각 폰이 만드는 FWeaknessReport 가 진다.
-	//    Details 에 원시 측정값을 실어두므로 나중에 실측 캘리브레이션 후 모델을 얹을 수 있다.
+	// 시도 1건은 여전히 성공/실패만 남긴다(ScoreDefenseAttempt) — 원시 측정값은 이미 Details 에
+	// 실려 있고, 그걸 종목별 0~1 정확도·효율로 바꾸는 계산은 각 폰(자기 기준값을 쥔 쪽)의 몫이다.
+	// 세션 집계(ScoreDefenseSession3Axis)만 타격과 동일한 원칙(가중치 재정규화, 표본<2 면
+	// 일관성 축 제외)으로 3축 총점을 낸다 — 이전엔 여기서도 성공률×100 이 전부였다.
 
 	/**
 	 * 수비 시도 1건 → 점수. 성공 100 / 실패 0.
@@ -151,7 +181,27 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Scoring")
 	static FScoreResult ScoreDefenseAttempt(bool bSuccess, const TMap<FName, float>& Details);
 
-	/** 수비 세션 집계 → 총점 = 성공률 × 100. 시도가 0이면 bValid=false. */
+	/**
+	 * 수비 세션 3축 집계. "정확도·효율이 무엇인가"는 종목마다 다르므로(포구=거리/타이밍,
+	 * 송구=거리/구속·전환시간, 백업=정답여부/판단시간) 그 계산은 호출부가 이미 0~1 로 정규화해
+	 * 넘긴다 — 여기선 타격의 ScoreSession 과 동일한 집계 원칙만 공유한다.
+	 *
+	 * @param AccuracyPerAttempt    시도별 정확도(0~1). 실패 시도는 0.
+	 * @param EfficiencyPerAttempt  시도별 효율(0~1). Accuracy 와 같은 길이.
+	 * @param ConsistencyBasisPerAttempt 일관성 표준편차를 낼 기준값(0~1). 해당 시도가 편차 계산
+	 *        대상이 아니면(예: 실패 시도) 음수를 넣는다 — 내부에서 0 이상만 골라 쓴다.
+	 *        포구/송구는 보통 Accuracy 와 같은 배열을 넘기고, 백업은 판단시간 기반 Efficiency
+	 *        를 넘긴다(백업의 정확도는 이진값이라 편차가 늘 0이 되어 무의미하기 때문).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Scoring")
+	static FScoreResult ScoreDefenseSession3Axis(const TArray<float>& AccuracyPerAttempt,
+		const TArray<float>& EfficiencyPerAttempt, const TArray<float>& ConsistencyBasisPerAttempt,
+		const FDefenseScoringConfig& Config);
+
+	/**
+	 * 수비 세션 집계 → 총점 = 성공률 × 100. 시도가 0이면 bValid=false.
+	 * ⚠️ 레거시 — 3축 근거 없이 성공률만 본다. 새 코드는 ScoreDefenseSession3Axis 를 쓸 것.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Scoring")
 	static FScoreResult ScoreDefenseSession(int32 SuccessCount, int32 AttemptCount);
 

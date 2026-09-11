@@ -218,6 +218,30 @@ void ACatchBallPawn::StartSession()
 	CoachingText.Reset();
 	bAwaitingCoaching = false;
 
+	// 동적 난이도: 과거 기록(이 종목 평균 총점)이 좋을수록 더 어렵게 시작한다
+	// (PitchingZone 과 같은 계약). GetModeStats 는 수비 세 종목을 안 갈라서 여기서 직접
+	// DrillId="Catch" 로 걸러 평균을 낸다.
+	DynamicDifficulty.Seed(0.0f);
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UModeManager* MM = GI->GetSubsystem<UModeManager>())
+		{
+			double Sum = 0.0; int32 Count = 0;
+			for (const FSessionResult& S : MM->GetHistory())
+			{
+				if (S.Mode == EGameModeId::Defense && S.DrillId == UModeManager::GetDefenseDrillIdName(0) && S.Average.bValid)
+				{
+					Sum += S.Average.TotalScore;
+					++Count;
+				}
+			}
+			if (Count > 0)
+			{
+				DynamicDifficulty.Seed(static_cast<float>(Sum / Count) / 100.0f);
+			}
+		}
+	}
+
 	// 첫 구는 한 박자 뒤에 만든다 — VR 은 BeginPlay 시점에 HMD 포즈가 아직 안 들어와
 	// '정면'을 알 수 없다 (FirstPitchDelaySec 주석 참고). PC 에도 준비 시간이 되어 손해가 없다.
 	bWaitingNext  = true;
@@ -279,13 +303,14 @@ void ACatchBallPawn::OnCatchPressed()
 		return;
 	}
 
-	const FCatchResult Result = FCatchBallJudge::JudgePress(
+	FCatchResult Result = FCatchBallJudge::JudgePress(
 		ActiveBall->GetActorLocation(),
 		GetActorLocation(),
 		CurrentTrial.CatchRadius,
 		ActiveBall->GetElapsedTime(),
 		CurrentTrial.TimeToLanding,
 		TimingTolerance);
+	Result.CatchRadiusUsed = CurrentTrial.CatchRadius; // 세션 3축 채점용 스냅샷.
 
 	FinishPitch(Result);
 }
@@ -297,8 +322,8 @@ void ACatchBallPawn::FinishPitch(const FCatchResult& Result)
 
 	SessionResults.Add(Result); // AI 약점 리포트 입력으로 누적.
 
-	// 시도 1건 = 기록 1건. 세션 종료 시 FinalizeSession 이 한 판으로 묶어 저장한다.
-	// (수비는 3축 채점 모델이 없어 성공/실패만 남기고, 원시 측정값은 Details 로 붙인다.)
+	// 시도 1건 = 기록 1건 (성공/실패 + 원시 측정값). 세션 종료 시 FlushSessionToSave 가
+	// 이 원시값들을 3축(정확도·효율·일관성)으로 집계해 FinalizeSession 에 넘긴다.
 	if (UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
 	{
 		TMap<FName, float> Details;
@@ -307,6 +332,13 @@ void ACatchBallPawn::FinishPitch(const FCatchResult& Result)
 		Details.Add(TEXT("TimingErrorSec"),  Result.TimingError);
 		Details.Add(TEXT("BallSpeedScale"),  BallSpeedScale);
 		MM->RecordResult(UScoringService::ScoreDefenseAttempt(Result.IsSuccess(), Details));
+	}
+
+	// 동적 난이도: 성공하면 올리고, 헛손질/놓치면 내린다(PitchingZone 과 같은 계약).
+	// 다음 BuildTrial() 이 새 Level 을 그때그때 읽으므로 별도 "재계산" 호출이 필요 없다.
+	if (bDynamicDifficulty)
+	{
+		DynamicDifficulty.RegisterOutcome(Result.IsSuccess(), DynamicStepUp, DynamicStepDown);
 	}
 
 	// 타구 타입별 집계 — 이번 구가 실제로 어떤 유형이었는지(Mixed 확정 결과) 기준.
@@ -413,31 +445,22 @@ FWeaknessReport ACatchBallPawn::BuildCatchReport() const
 	const float MissRate = static_cast<float>(Misses + Drops) / N;
 	const float AvgDist = (DistN > 0) ? (SumDist / DistN) : 0.0f; // cm
 
-	// 문턱을 넘는 축만 약점으로 담는다. 문턱은 타격과 같은 값을 쓴다 —
+	// 문턱을 넘는 축만 약점으로 담는다. 문턱은 타격과 같은 값을 쓴다(UWeaknessDetector 공용) —
 	// 모드마다 다르면 같은 수행도가 모드에 따라 약점이 됐다 안 됐다 한다.
-	auto AddWeakness = [&R](EWeaknessAxis Axis, float Score, const FString& Evidence)
-	{
-		FWeakness W;
-		W.Axis = Axis;
-		W.Score = FMath::Clamp(Score, 0.0f, 1.0f);
-		W.Severity = 1.0f - W.Score;
-		W.Evidence = Evidence;
-		if (W.Severity >= UWeaknessDetector::MinReportSeverity) { R.Weaknesses.Add(W); }
-	};
 
 	// 반응속도: 타이밍 오차(±0.35s 창) + 놓침 페널티.
 	const float ReactionScore = FMath::Clamp(1.0f - (AvgAbsTiming / 0.35f), 0.0f, 1.0f) * (1.0f - 0.5f * DropRate);
-	AddWeakness(EWeaknessAxis::CatchReaction, ReactionScore,
+	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::CatchReaction, ReactionScore,
 		FString::Printf(TEXT("avg timing error %.0f ms, drops %d/%d"), AvgAbsTiming * 1000.0f, Drops, N));
 
 	// 상체 유연성: 포구 순간 글러브-공 거리(못 닿음). 기준 150cm.
 	const float FlexScore = FMath::Clamp(1.0f - (AvgDist / 150.0f), 0.0f, 1.0f);
-	AddWeakness(EWeaknessAxis::UpperBodyFlex, FlexScore,
+	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::UpperBodyFlex, FlexScore,
 		FString::Printf(TEXT("avg glove-to-ball distance at catch %.0f cm"), AvgDist));
 
 	// 발 스피드: 위치 선점 실패(실패율). 이동이 컨트롤러라 비중을 낮춰(×0.6) 반영.
 	const float FootScore = FMath::Clamp(1.0f - MissRate * 0.6f, 0.0f, 1.0f);
-	AddWeakness(EWeaknessAxis::FootSpeed, FootScore,
+	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::FootSpeed, FootScore,
 		FString::Printf(TEXT("caught %d/%d - room to get into position"), Catches, N));
 
 	// 타구 타입별 성공률(측정 지표 ②) — 축이 아니라 노트로 실어 코칭 문장에 숫자가 남게 한다.
@@ -465,7 +488,7 @@ FWeaknessReport ACatchBallPawn::BuildCatchReport() const
 	}
 
 	// 심각도 내림차순 (가장 시급한 약점이 앞으로).
-	R.Weaknesses.Sort([](const FWeakness& A, const FWeakness& B) { return A.Severity > B.Severity; });
+	UWeaknessDetector::SortWeaknessesBySeverity(R);
 	return R;
 }
 
@@ -495,9 +518,32 @@ void ACatchBallPawn::FlushSessionToSave()
 	{
 		return;
 	}
+
+	// 3축 채점: 정확도=착지 거리 감쇠(그 시도의 CatchRadius 기준 — 타구 유형마다 달라서
+	// 스냅샷을 쓴다), 효율=타이밍 오차 가우시안 감쇠(TimingTolerance 기준). 둘 다 실패 시도는
+	// 0 — 헛손질/놓침이 평균을 끌어내려 성공률이 자연스럽게 반영된다(타격의
+	// EvalAccuracy/EvalEfficiency 와 동일 원칙).
+	TArray<float> AccuracyPerAttempt, EfficiencyPerAttempt, ConsistencyBasis;
+	AccuracyPerAttempt.Reserve(SessionResults.Num());
+	EfficiencyPerAttempt.Reserve(SessionResults.Num());
+	ConsistencyBasis.Reserve(SessionResults.Num());
+	for (const FCatchResult& R : SessionResults)
+	{
+		const bool bOk = R.IsSuccess();
+		const float RadiusUsed = (R.CatchRadiusUsed > 0.0f) ? R.CatchRadiusUsed : FMath::Max(1.0f, CurrentTrial.CatchRadius);
+		const float Acc = bOk ? FMath::Clamp(1.0f - (R.DistanceError / RadiusUsed), 0.0f, 1.0f) : 0.0f;
+		const float Sigma = FMath::Max(TimingTolerance, KINDA_SMALL_NUMBER);
+		const float Eff = bOk ? FMath::Exp(-(R.TimingError * R.TimingError) / (2.0f * Sigma * Sigma)) : 0.0f;
+		AccuracyPerAttempt.Add(Acc);
+		EfficiencyPerAttempt.Add(Eff);
+		ConsistencyBasis.Add(bOk ? Acc : -1.0f); // 성공한 시도의 정확도 편차만 일관성에 반영.
+	}
+
+	FDefenseScoringConfig ScoringCfg; // 기본 가중치(0.4/0.35/0.25), bCalibrated=false.
+
 	// 시도가 0건이면 ModeManager 가 빈 세션으로 스스로 무시하므로 무조건 불러도 안전하다.
 	MM->FinalizeSession(
-		UScoringService::ScoreDefenseSession(SuccessCount, SessionResults.Num()),
+		UScoringService::ScoreDefenseSession3Axis(AccuracyPerAttempt, EfficiencyPerAttempt, ConsistencyBasis, ScoringCfg),
 		BuildCatchReport());
 }
 
@@ -631,13 +677,18 @@ FCatchTrial ACatchBallPawn::BuildTrial(ECatchBallType Type) const
 
 	// 유형별 체공시간·캐치 반경. (시작값 — 플레이하며 조절)
 	float Flight = 1.6f;
+	float BaseRadius = 90.0f;
 	switch (Trial.ResolvedType)
 	{
-	case ECatchBallType::GroundBall: Flight = GroundBallFlightSec; Trial.CatchRadius = GroundBallCatchRadius; break; // 낮고 빠름, 그나마 관대
-	case ECatchBallType::FlyBall:    Flight = FlyBallFlightSec;    Trial.CatchRadius = FlyBallCatchRadius;    break; // 높이 뜨고 김
-	case ECatchBallType::LineDrive:  Flight = LineDriveFlightSec;  Trial.CatchRadius = LineDriveCatchRadius;  break; // 빠르고 빡셈
+	case ECatchBallType::GroundBall: Flight = GroundBallFlightSec; BaseRadius = GroundBallCatchRadius; break; // 낮고 빠름, 그나마 관대
+	case ECatchBallType::FlyBall:    Flight = FlyBallFlightSec;    BaseRadius = FlyBallCatchRadius;    break; // 높이 뜨고 김
+	case ECatchBallType::LineDrive:  Flight = LineDriveFlightSec;  BaseRadius = LineDriveCatchRadius;  break; // 빠르고 빡셈
 	default: break;
 	}
+
+	// 동적 난이도: 잘할수록 반경이 좁아지고 체공시간이 짧아진다(PitchingZone 과 같은 계약).
+	Trial.CatchRadius = DynamicDifficulty.ApplyDown(BaseRadius, DynamicRadiusReductionCm, DynamicRadiusFloorCm);
+	Flight = DynamicDifficulty.ApplyDown(Flight, DynamicFlightReductionSec, DynamicFlightFloorSec);
 
 	// 공 속도 조절: 체공시간을 배율로 나눈다 (배율↑ = 체공↓ = 공이 빨라짐).
 	// 발사 속도는 아래 포물선 역산이 이 체공시간에서 자동으로 따라온다.

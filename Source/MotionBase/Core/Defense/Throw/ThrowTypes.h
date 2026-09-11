@@ -106,5 +106,13 @@ struct FThrowResult
 	UPROPERTY(BlueprintReadOnly)
 	bool bCleanCatch = false;
 
+	/**
+	 * 이 시도에 적용됐던 목표 zone 반경(cm) 스냅샷 — 동적 난이도로 HitRadius 가 시도마다
+	 * 바뀔 수 있어, 세션을 3축 채점할 때 "그때 기준"으로 정확도를 정규화하려면 세션 끝난
+	 * 뒤의 "지금" 반경이 아니라 이 값을 써야 한다. -1 = 미기록(레거시 경로).
+	 */
+	UPROPERTY(BlueprintReadOnly)
+	float HitRadiusUsed = -1.0f;
+
 	bool IsSuccess() const { return Outcome == EThrowOutcome::Ontarget; }
 };

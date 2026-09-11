@@ -9,6 +9,7 @@
 #include "Serialization/JsonWriter.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Paths.h"
+#include "Containers/Ticker.h"
 
 FString UAIFeedbackService::LoadApiKey() const
 {
@@ -31,9 +32,9 @@ FString UAIFeedbackService::BuildSystemPrompt(ECoachDomain Domain) const
 {
 	if (Domain == ECoachDomain::Throwing)
 	{
-		return TEXT(
+		return FString::Printf(TEXT(
 			"You are a baseball throwing coach. Using ONLY the given 'throwing analysis' "
-			"and 'recommended exercises', write 3-4 short, specific coaching sentences in English.\n"
+			"and 'recommended exercises', write 3-4 short, specific coaching sentences in %s.\n"
 			"Rules:\n"
 			"- Cite only the numbers provided (accuracy to the target base, release velocity, transfer time); "
 			"do not invent new figures or metrics.\n"
@@ -50,16 +51,16 @@ FString UAIFeedbackService::BuildSystemPrompt(ECoachDomain Domain) const
 			"exercise that is not on the list.\n"
 			"- Encouraging tone, but no exaggeration.\n"
 			"- If an 'uncalibrated' note is present, hedge with words like 'roughly' instead of being absolute.\n"
-			"- Output the coaching sentences only: no preamble, lists, or markdown.");
+			"- Output the coaching sentences only: no preamble, lists, or markdown."), *OutputLanguage);
 	}
 
 	if (Domain == ECoachDomain::Backup)
 	{
-		return TEXT(
+		return FString::Printf(TEXT(
 			"You are a baseball infield/outfield positioning coach. The player just took a BACKUP-POSITION "
 			"JUDGMENT drill where they physically move (via a hand controller) to the correct backup spot "
 			"after a situation is called, not a physical workout. Using ONLY the given 'judgment analysis' "
-			"and 'recommended exercises', write 3-4 short, specific coaching sentences in English.\n"
+			"and 'recommended exercises', write 3-4 short, specific coaching sentences in %s.\n"
 			"Rules:\n"
 			"- This is about DECISION MAKING and ROUTE-TAKING, not fitness. Never prescribe strength, speed, "
 			"flexibility, or conditioning work here.\n"
@@ -83,14 +84,14 @@ FString UAIFeedbackService::BuildSystemPrompt(ECoachDomain Domain) const
 			"exercise that is not on the list.\n"
 			"- Encouraging tone, but no exaggeration.\n"
 			"- If an 'uncalibrated' note is present, hedge with words like 'roughly' instead of being absolute.\n"
-			"- Output the coaching sentences only: no preamble, lists, or markdown.");
+			"- Output the coaching sentences only: no preamble, lists, or markdown."), *OutputLanguage);
 	}
 
 	if (Domain == ECoachDomain::Fielding)
 	{
-		return TEXT(
+		return FString::Printf(TEXT(
 			"You are a baseball fielding (catching) coach. Using ONLY the given 'catch analysis' "
-			"and 'recommended exercises', write 3-4 short, specific coaching sentences in English.\n"
+			"and 'recommended exercises', write 3-4 short, specific coaching sentences in %s.\n"
 			"Rules:\n"
 			"- Cite only the numbers provided; do not invent new figures or metrics.\n"
 			"- Point out fitness factors (reaction speed, upper-body flexibility, foot speed) that match the weaknesses.\n"
@@ -105,12 +106,12 @@ FString UAIFeedbackService::BuildSystemPrompt(ECoachDomain Domain) const
 			"exercise that is not on the list.\n"
 			"- Encouraging tone, but no exaggeration.\n"
 			"- If an 'uncalibrated' note is present, hedge with words like 'roughly' instead of being absolute.\n"
-			"- Output the coaching sentences only: no preamble, lists, or markdown.");
+			"- Output the coaching sentences only: no preamble, lists, or markdown."), *OutputLanguage);
 	}
 
-	return TEXT(
+	return FString::Printf(TEXT(
 		"You are a baseball hitting coach. Using ONLY the given 'weakness analysis', 'training trend', "
-		"and 'recommended drills', write 3-4 short, specific coaching sentences in English.\n"
+		"and 'recommended drills', write 3-4 short, specific coaching sentences in %s.\n"
 		"Rules:\n"
 		"- Cite only the numbers provided; do not invent new figures or metrics.\n"
 		"- If a 'training trend' is present, reflect it: encourage when 'improving', and when 'worsening' "
@@ -123,7 +124,7 @@ FString UAIFeedbackService::BuildSystemPrompt(ECoachDomain Domain) const
 		"is not on the list.\n"
 		"- Encouraging tone, but no exaggeration.\n"
 		"- If an 'uncalibrated' note is present, hedge with words like 'roughly' instead of being absolute.\n"
-		"- Output the coaching sentences only: no preamble, lists, or markdown.");
+		"- Output the coaching sentences only: no preamble, lists, or markdown."), *OutputLanguage);
 }
 
 FString UAIFeedbackService::BuildUserPrompt(const FWeaknessReport& Report, const TArray<FTrainingDrill>& Drills,
@@ -238,7 +239,7 @@ void UAIFeedbackService::DispatchCoachingRequest(const FString& Body)
 }
 
 void UAIFeedbackService::DispatchRequest(const FString& Body, const FString& Model,
-	TFunction<void(UAIFeedbackService*, bool, const FString&)> OnComplete)
+	TFunction<void(UAIFeedbackService*, bool, const FString&)> OnComplete, bool bIsRetry)
 {
 	const FString ApiKey = LoadApiKey();
 	if (ApiKey.IsEmpty())
@@ -257,13 +258,16 @@ void UAIFeedbackService::DispatchRequest(const FString& Body, const FString& Mod
 	Request->SetHeader(TEXT("x-api-key"), ApiKey);
 	Request->SetHeader(TEXT("anthropic-version"), TEXT("2023-06-01"));
 	Request->SetContentAsString(Body);
+	// 부스 와이파이가 불안정해도 요청이 무한정 매달리지 않게 명시적 타임아웃을 둔다.
+	Request->SetTimeout(15.0f);
 
-	UE_LOG(LogMotionBase, Log, TEXT("AIFeedback: 요청 (model=%s, %d chars)"), *Model, Body.Len());
+	UE_LOG(LogMotionBase, Log, TEXT("AIFeedback: 요청 (model=%s, %d chars%s)"), *Model, Body.Len(),
+		bIsRetry ? TEXT(", 재시도") : TEXT(""));
 
 	// 완료 콜백 — this 가 async 도중 파괴될 수 있으므로 weak 가드.
 	TWeakObjectPtr<UAIFeedbackService> WeakThis(this);
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakThis, OnComplete](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakThis, OnComplete, Body, Model, bIsRetry](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
 			UAIFeedbackService* Self = WeakThis.Get();
 			if (!Self)
@@ -282,12 +286,35 @@ void UAIFeedbackService::DispatchRequest(const FString& Body, const FString& Mod
 
 			if (Code != 200)
 			{
+				// 429(과부하)·5xx(서버 오류)는 일시적일 때가 많다 — 짧은 대기 후 한 번만
+				// 자동 재시도한다. 4xx(요청 자체가 잘못됨)는 재시도해도 결과가 같으므로
+				// 바로 실패 사유를 보여준다.
+				const bool bTransient = (Code == 429) || (Code >= 500);
+				if (bTransient && !bIsRetry)
+				{
+					UE_LOG(LogMotionBase, Warning,
+						TEXT("AIFeedback: HTTP %d — 일시적 오류로 보고 1.5초 뒤 1회 재시도"), Code);
+					TWeakObjectPtr<UAIFeedbackService> RetryWeak = WeakThis;
+					FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+						[RetryWeak, Body, Model, OnComplete](float) -> bool
+						{
+							if (UAIFeedbackService* RetrySelf = RetryWeak.Get())
+							{
+								RetrySelf->DispatchRequest(Body, Model, OnComplete, /*bIsRetry=*/true);
+							}
+							return false; // 한 번만 실행하고 티커에서 스스로 제거.
+						}), 1.5f);
+					return;
+				}
+
 				UE_LOG(LogMotionBase, Warning, TEXT("AIFeedback: HTTP %d — %s"), Code, *Content);
 				OnComplete(Self, false, FString::Printf(TEXT("AI 코칭 오류 (HTTP %d)"), Code));
 				return;
 			}
 
-			// 응답 파싱: { "content": [ { "type":"text", "text":"..." } ], ... }
+			// 응답 파싱: { "content": [ { "type":"text", "text":"..." }, ... ], ... }
+			// content[0] 만 보면 앞에 다른 블록(향후 tool_use 등)이 오는 응답에서 실패한다 —
+			// 배열을 순회해 type=="text" 인 첫 블록을 쓴다.
 			TSharedPtr<FJsonObject> Json;
 			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Content);
 			if (!FJsonSerializer::Deserialize(Reader, Json) || !Json.IsValid())
@@ -297,14 +324,23 @@ void UAIFeedbackService::DispatchRequest(const FString& Body, const FString& Mod
 			}
 
 			const TArray<TSharedPtr<FJsonValue>>* ContentArr = nullptr;
-			if (Json->TryGetArrayField(TEXT("content"), ContentArr) && ContentArr && ContentArr->Num() > 0)
+			if (Json->TryGetArrayField(TEXT("content"), ContentArr) && ContentArr)
 			{
-				const TSharedPtr<FJsonObject> First = (*ContentArr)[0]->AsObject();
-				FString Text;
-				if (First.IsValid() && First->TryGetStringField(TEXT("text"), Text))
+				for (const TSharedPtr<FJsonValue>& Item : *ContentArr)
 				{
-					OnComplete(Self, true, Text.TrimStartAndEnd());
-					return;
+					const TSharedPtr<FJsonObject> Obj = Item.IsValid() ? Item->AsObject() : nullptr;
+					if (!Obj.IsValid())
+					{
+						continue;
+					}
+					FString Type;
+					FString Text;
+					if (Obj->TryGetStringField(TEXT("type"), Type) && Type == TEXT("text")
+						&& Obj->TryGetStringField(TEXT("text"), Text))
+					{
+						OnComplete(Self, true, Text.TrimStartAndEnd());
+						return;
+					}
 				}
 			}
 
@@ -319,9 +355,9 @@ FString UAIFeedbackService::BuildExplanationBody(const FBackupExplainRequest& Re
 	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("model"), ExplanationModelId);
 	Root->SetNumberField(TEXT("max_tokens"), ExplanationMaxTokens);
-	Root->SetStringField(TEXT("system"), TEXT(
+	Root->SetStringField(TEXT("system"), FString::Printf(TEXT(
 		"You are a baseball coach explaining ONE backup assignment that has ALREADY been decided by the "
-		"game's rulebook. Write 1-2 short sentences in English explaining WHY that is this fielder's job.\n"
+		"game's rulebook. Write 1-2 short sentences in %s explaining WHY that is this fielder's job.\n"
 		"- **Hard limit: 25 words total.** This is read on a small panel inside a VR headset while the "
 		"player is standing on the field; anything longer gets cut off mid-sentence.\n"
 		"Rules:\n"
@@ -332,7 +368,7 @@ FString UAIFeedbackService::BuildExplanationBody(const FBackupExplainRequest& Re
 		"has to be behind it in case it gets away.\"\n"
 		"- Speak to the player as \"you\". Present tense.\n"
 		"- Do not restate the situation text verbatim - the player just saw it. Add the reasoning it implies.\n"
-		"- No preamble, no lists, no markdown. Just the sentences."));
+		"- No preamble, no lists, no markdown. Just the sentences."), *OutputLanguage));
 
 	FString User;
 	User += FString::Printf(TEXT("Fielder: %s\n"), *Req.PositionName);

@@ -110,6 +110,75 @@ FScoreResult UScoringService::ScoreDefenseAttempt(bool bSuccess, const TMap<FNam
 	return R;
 }
 
+FScoreResult UScoringService::ScoreDefenseSession3Axis(const TArray<float>& AccuracyPerAttempt,
+	const TArray<float>& EfficiencyPerAttempt, const TArray<float>& ConsistencyBasisPerAttempt,
+	const FDefenseScoringConfig& Config)
+{
+	FScoreResult R;
+	R.bUncalibrated = !Config.bCalibrated;
+
+	const int32 N = AccuracyPerAttempt.Num();
+	if (N == 0 || EfficiencyPerAttempt.Num() != N || ConsistencyBasisPerAttempt.Num() != N)
+	{
+		return R; // bValid=false — 호출부가 배열 길이를 맞추지 않았거나 시도 0건.
+	}
+
+	// 축별 평균은 전체 시도로 낸다 — 타격의 ScoreSession 과 동일한 원칙(실패 시도가 0으로
+	// 평균을 끌어내려 성공률이 자연스럽게 점수에 반영된다).
+	float SumAcc = 0.0f, SumEff = 0.0f;
+	for (int32 i = 0; i < N; ++i)
+	{
+		SumAcc += AccuracyPerAttempt[i];
+		SumEff += EfficiencyPerAttempt[i];
+	}
+	R.Accuracy = SumAcc / N;
+	R.Efficiency = SumEff / N;
+
+	// 일관성: 음수가 아닌(=편차 계산 대상인) 기준값들의 표준편차. 작을수록 고득점.
+	// 표본 2개 미만이면 편차 정의 불가 → 일관성 축을 빼고 재정규화(단일 스윙과 동일 원칙).
+	TArray<float> Basis;
+	Basis.Reserve(N);
+	for (float V : ConsistencyBasisPerAttempt)
+	{
+		if (V >= 0.0f) { Basis.Add(V); }
+	}
+
+	const bool bHasConsistency = Basis.Num() >= 2;
+	float StdDev = 0.0f;
+	if (bHasConsistency)
+	{
+		float Mean = 0.0f;
+		for (float V : Basis) { Mean += V; }
+		Mean /= Basis.Num();
+
+		float Variance = 0.0f;
+		for (float V : Basis) { Variance += FMath::Square(V - Mean); }
+		Variance /= Basis.Num();
+		StdDev = FMath::Sqrt(Variance);
+
+		constexpr float StdMax = 0.35f; // FScoringConfig::ConsistencySigmaMax 와 같은 기본값.
+		R.Consistency = FMath::Clamp(1.0f - (StdDev / StdMax), 0.0f, 1.0f);
+
+		R.TotalScore = 100.0f * (
+			Config.WeightAccuracy * R.Accuracy +
+			Config.WeightEfficiency * R.Efficiency +
+			Config.WeightConsistency * R.Consistency) / Config.WeightSum();
+	}
+	else
+	{
+		R.Consistency = 0.0f;
+		const float W = FMath::Max(Config.WeightAccuracy + Config.WeightEfficiency, KINDA_SMALL_NUMBER);
+		R.TotalScore = 100.0f * (Config.WeightAccuracy * R.Accuracy + Config.WeightEfficiency * R.Efficiency) / W;
+	}
+
+	R.bValid = true;
+	R.Details.Add(TEXT("AttemptCount"), static_cast<float>(N));
+	R.Details.Add(TEXT("ConsistencySampleCount"), static_cast<float>(Basis.Num()));
+	R.Details.Add(TEXT("ConsistencyStdDev"), StdDev);
+
+	return R;
+}
+
 FScoreResult UScoringService::ScoreDefenseSession(int32 SuccessCount, int32 AttemptCount)
 {
 	FScoreResult R;

@@ -177,6 +177,25 @@ FChronicWeaknessReport UWeaknessDetector::AnalyzeTrend(
 	return Out;
 }
 
+void UWeaknessDetector::AddWeaknessIfSevere(FWeaknessReport& Report, EWeaknessAxis Axis,
+	float Score, const FString& Evidence)
+{
+	FWeakness W;
+	W.Axis = Axis;
+	W.Score = FMath::Clamp(Score, 0.0f, 1.0f);
+	W.Severity = 1.0f - W.Score;
+	W.Evidence = Evidence;
+	if (W.Severity >= MinReportSeverity)
+	{
+		Report.Weaknesses.Add(W);
+	}
+}
+
+void UWeaknessDetector::SortWeaknessesBySeverity(FWeaknessReport& Report)
+{
+	Report.Weaknesses.Sort([](const FWeakness& A, const FWeakness& B) { return A.Severity > B.Severity; });
+}
+
 FWeaknessReport UWeaknessDetector::DetectSwing(const TArray<FSwingMetrics>& History, const FScoringConfig& Config)
 {
 	FWeaknessReport Report;

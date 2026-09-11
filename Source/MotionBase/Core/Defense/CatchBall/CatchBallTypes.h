@@ -87,4 +87,12 @@ struct FCatchResult
 	/** [예약] 글러브 위치 오차 (cm). LiDAR 손 추적 연결 시 사용. */
 	UPROPERTY(BlueprintReadOnly)
 	float GloveError = -1.0f;   // -1 = 미측정
+
+	/**
+	 * 이 시도에 적용됐던 캐치 반경(cm) 스냅샷 — 타구 유형마다 반경이 다르고(Mixed 모드에서
+	 * 매 구 바뀔 수 있음), 나중에 세션을 3축 채점할 때 "그때 기준"으로 정확도를 정규화하려면
+	 * 세션 끝난 뒤의 "지금" 반경이 아니라 이 값을 써야 한다. -1 = 미기록(레거시 경로).
+	 */
+	UPROPERTY(BlueprintReadOnly)
+	float CatchRadiusUsed = -1.0f;
 };

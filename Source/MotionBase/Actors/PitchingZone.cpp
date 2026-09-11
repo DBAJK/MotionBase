@@ -109,7 +109,7 @@ void APitchingZone::ApplyDifficulty(EDifficultyLevel Level)
 	BaseSpeedMaxKmh = SpeedMaxKmh;
 	BaseBreakingBallRatio = BreakingBallRatio;
 	BaseAutoPitchIntervalSec = AutoPitchIntervalSec;
-	DynamicLevel = 0.0f;
+	DynamicDifficulty.Level = 0.0f;
 
 	UE_LOG(LogMotionBase, Log, TEXT("PitchingZone: 난이도 적용 (구속 %.0f~%.0f, 변화구 %.0f%%, 간격 %.1fs)"),
 		SpeedMinKmh, SpeedMaxKmh, BreakingBallRatio * 100.0f, AutoPitchIntervalSec);
@@ -117,21 +117,24 @@ void APitchingZone::ApplyDifficulty(EDifficultyLevel Level)
 
 void APitchingZone::RefreshDynamicPitchParams()
 {
-	const float L = bDynamicDifficulty ? FMath::Clamp(DynamicLevel, 0.0f, 1.0f) : 0.0f;
+	if (!bDynamicDifficulty)
+	{
+		DynamicDifficulty.Level = 0.0f;
+	}
 
-	SpeedMinKmh = BaseSpeedMinKmh + L * DynamicSpeedHeadroomKmh;
-	SpeedMaxKmh = BaseSpeedMaxKmh + L * DynamicSpeedHeadroomKmh;
-	BreakingBallRatio = FMath::Clamp(BaseBreakingBallRatio + L * DynamicBreakingHeadroom, 0.0f, 1.0f);
-	AutoPitchIntervalSec = FMath::Max(BaseAutoPitchIntervalSec - L * DynamicIntervalReductionSec, MinAutoPitchIntervalSec);
+	SpeedMinKmh = DynamicDifficulty.ApplyUp(BaseSpeedMinKmh, DynamicSpeedHeadroomKmh);
+	SpeedMaxKmh = DynamicDifficulty.ApplyUp(BaseSpeedMaxKmh, DynamicSpeedHeadroomKmh);
+	BreakingBallRatio = FMath::Clamp(DynamicDifficulty.ApplyUp(BaseBreakingBallRatio, DynamicBreakingHeadroom), 0.0f, 1.0f);
+	AutoPitchIntervalSec = DynamicDifficulty.ApplyDown(BaseAutoPitchIntervalSec, DynamicIntervalReductionSec, MinAutoPitchIntervalSec);
 }
 
 void APitchingZone::SeedDynamicLevel(float Level01)
 {
-	DynamicLevel = FMath::Clamp(Level01, 0.0f, 1.0f);
+	DynamicDifficulty.Seed(Level01);
 	RefreshDynamicPitchParams();
 
 	UE_LOG(LogMotionBase, Log, TEXT("PitchingZone: 동적 난이도 시드 %.2f → 구속 %.0f~%.0f, 변화구 %.0f%%, 간격 %.1fs"),
-		DynamicLevel, SpeedMinKmh, SpeedMaxKmh, BreakingBallRatio * 100.0f, AutoPitchIntervalSec);
+		DynamicDifficulty.Level, SpeedMinKmh, SpeedMaxKmh, BreakingBallRatio * 100.0f, AutoPitchIntervalSec);
 }
 
 void APitchingZone::RegisterSwingOutcome(bool bContacted, float SwingScore01)
@@ -143,10 +146,7 @@ void APitchingZone::RegisterSwingOutcome(bool bContacted, float SwingScore01)
 
 	// 잘 친 스윙(컨택 + 기준 점수 이상)이면 상승, 헛스윙/약한 컨택이면 하강.
 	const bool bGood = bContacted && (SwingScore01 >= DynamicGoodSwingScore01);
-	const float Prev = DynamicLevel;
-	DynamicLevel = FMath::Clamp(DynamicLevel + (bGood ? DynamicStepUp : -DynamicStepDown), 0.0f, 1.0f);
-
-	if (!FMath::IsNearlyEqual(Prev, DynamicLevel))
+	if (DynamicDifficulty.RegisterOutcome(bGood, DynamicStepUp, DynamicStepDown))
 	{
 		RefreshDynamicPitchParams();
 	}

@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Data/MotionBaseTypes.h"
+#include "Core/DynamicDifficulty.h"
 #include "PitchingZone.generated.h"
 
 class UStaticMeshComponent;
@@ -67,7 +68,7 @@ public:
 
 	/** 현재 동적 난이도 수준 (0~1). HUD 표시용. */
 	UFUNCTION(BlueprintPure, Category = "MotionBase|Pitch")
-	float GetDynamicLevel() const { return DynamicLevel; }
+	float GetDynamicLevel() const { return DynamicDifficulty.Level; }
 
 	/** 타격 성공 시 공을 날려보내는 연출. */
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|Pitch")
@@ -252,7 +253,7 @@ private:
 	void RefreshDynamicPitchParams();
 
 	// 동적 난이도 상태 — 현재 상승 수준(0~1)과 ApplyDifficulty 에서 잡은 프리셋 기준선.
-	float DynamicLevel = 0.0f;
+	FDynamicDifficultyLevel DynamicDifficulty;
 	float BaseSpeedMinKmh = 95.0f;
 	float BaseSpeedMaxKmh = 135.0f;
 	float BaseBreakingBallRatio = 0.35f;

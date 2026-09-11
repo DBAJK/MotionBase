@@ -232,6 +232,30 @@ void AThrowPawn::StartSession()
 	CoachingText.Reset();
 	bAwaitingCoaching = false;
 
+	// 동적 난이도: 과거 기록(이 종목 평균 총점)이 좋을수록 더 어렵게 시작한다
+	// (PitchingZone 과 같은 계약). GetModeStats 는 수비 세 종목을 안 갈라서 여기서 직접
+	// DrillId="Throw" 로 걸러 평균을 낸다.
+	DynamicDifficulty.Seed(0.0f);
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UModeManager* MM = GI->GetSubsystem<UModeManager>())
+		{
+			double Sum = 0.0; int32 Count = 0;
+			for (const FSessionResult& S : MM->GetHistory())
+			{
+				if (S.Mode == EGameModeId::Defense && S.DrillId == UModeManager::GetDefenseDrillIdName(1) && S.Average.bValid)
+				{
+					Sum += S.Average.TotalScore;
+					++Count;
+				}
+			}
+			if (Count > 0)
+			{
+				DynamicDifficulty.Seed(static_cast<float>(Sum / Count) / 100.0f);
+			}
+		}
+	}
+
 	// 첫 시행은 한 박자 뒤에 — VR 은 BeginPlay 시점에 HMD 포즈가 없어 그라운드를 깔 방향을
 	// 모른다 (FirstTrialDelaySec 주석 참고). 플레이어에게도 준비할 틈이 된다.
 	bWaitingNext  = true;
@@ -254,7 +278,8 @@ void AThrowPawn::SpawnNextTrial()
 	CurrentTrial.TargetLocation = BaseLocation(CurrentTrial.TargetBase);
 	CurrentTrial.TargetDistance = FVector::Dist2D(CurrentTrial.TargetLocation, CurrentTrial.ThrowOrigin);
 	CurrentTrial.IdealPower     = DistanceToIdealPower(CurrentTrial.TargetDistance);
-	CurrentTrial.HitRadius      = HitRadius;
+	// 동적 난이도: 잘할수록 목표 반경이 좁아진다(PitchingZone 과 같은 계약).
+	CurrentTrial.HitRadius      = DynamicDifficulty.ApplyDown(HitRadius, DynamicRadiusReductionCm, DynamicRadiusFloorCm);
 
 	// 새 시행 = 목표 베이스가 바뀌었을 수 있다 — 저빈도 재호출 타이머를 무시하고 즉시 다시 그리게 한다.
 	BaseMarkerValidUntilSec = 0.0f;
@@ -270,7 +295,9 @@ void AThrowPawn::SpawnNextTrial()
 	// 루트에 그냥 더하면 VR 에서 공이 발밑으로 날아와 글러브에 닿지 않는다.
 	CurrentTrial.FeedLaunchLocation =
 		FieldAnchor + FieldForward * FeedDistance + FieldRight * SideY + FVector(0, 0, 150.0f);
-	CurrentTrial.FeedFlightSec      = FMath::Max(FeedFlightSec, 0.3f);
+	// 동적 난이도: 잘할수록 급구가 빨리 온다(=전환 시간이 더 압박받는다).
+	CurrentTrial.FeedFlightSec      = DynamicDifficulty.ApplyDown(
+		FMath::Max(FeedFlightSec, 0.3f), DynamicFeedFlightReductionSec, DynamicFeedFlightFloorSec);
 
 	const FVector Arrival(FieldAnchor.X, FieldAnchor.Y, CatchHeightZ()); // 가슴 높이
 	const FVector ToTarget = Arrival - CurrentTrial.FeedLaunchLocation;
@@ -401,7 +428,8 @@ void AThrowPawn::FinishThrow(const FThrowResult& Result)
 
 	SessionResults.Add(Result);
 
-	// 시도 1건 = 기록 1건 (수비는 성공/실패 + 원시 측정값만 남긴다 — 3축 모델 없음).
+	// 시도 1건 = 기록 1건 (성공/실패 + 원시 측정값). 세션 종료 시 FlushSessionToSave 가
+	// 이 원시값들을 3축(정확도·효율·일관성)으로 집계해 FinalizeSession 에 넘긴다.
 	if (UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
 	{
 		TMap<FName, float> Details;
@@ -410,6 +438,13 @@ void AThrowPawn::FinishThrow(const FThrowResult& Result)
 		Details.Add(TEXT("ReleaseKmh"),      Result.ReleaseSpeedKmh);
 		Details.Add(TEXT("TransferSec"),     Result.TransferTimeSec);
 		MM->RecordResult(UScoringService::ScoreDefenseAttempt(Result.IsSuccess(), Details));
+	}
+
+	// 동적 난이도: 명중하면 올리고, 빗나가면 내린다(PitchingZone 과 같은 계약).
+	// 다음 SpawnNextTrial() 이 새 Level 을 그때그때 읽으므로 별도 "재계산" 호출이 필요 없다.
+	if (bDynamicDifficulty)
+	{
+		DynamicDifficulty.RegisterOutcome(Result.IsSuccess(), DynamicStepUp, DynamicStepDown);
 	}
 
 	const int32 Bi = BaseIndexOf(Result.TargetBase);
@@ -545,25 +580,16 @@ FWeaknessReport AThrowPawn::BuildThrowReport() const
 	const float AvgKmh       = SumKmh / N;                        // km/h
 	const float AvgTransfer  = (TransferN > 0) ? (SumTransfer / TransferN) : -1.0f; // s
 
-	auto AddWeakness = [&R](EWeaknessAxis Axis, float Score, const FString& Evidence)
-	{
-		FWeakness W;
-		W.Axis = Axis;
-		W.Score = FMath::Clamp(Score, 0.0f, 1.0f);
-		W.Severity = 1.0f - W.Score;
-		W.Evidence = Evidence;
-		// 문턱은 타격·포구와 같은 모드 공통 상수를 쓴다.
-		if (W.Severity >= UWeaknessDetector::MinReportSeverity) { R.Weaknesses.Add(W); }
-	};
+	// 문턱은 타격·포구와 같은 모드 공통 상수를 쓴다(UWeaknessDetector 공용).
 
 	// ① 정확도: 도달률이 주(0.6), 빗나간 거리(0.4). 기준 거리는 zone 반경의 4배.
 	const float DistScore = FMath::Clamp(1.0f - (AvgDist / FMath::Max(HitRadius * 4.0f, 1.0f)), 0.0f, 1.0f);
-	AddWeakness(EWeaknessAxis::ThrowAccuracy, OnTargetRate * 0.6f + DistScore * 0.4f,
+	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::ThrowAccuracy, OnTargetRate * 0.6f + DistScore * 0.4f,
 		FString::Printf(TEXT("on target %d/%d, average miss %.0f cm (zone radius %.0f cm)"),
 			OnTarget, N, AvgDist, HitRadius));
 
 	// ② 구속: 목표 구속 대비 비율.
-	AddWeakness(EWeaknessAxis::ArmStrength,
+	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::ArmStrength,
 		FMath::Clamp(AvgKmh / FMath::Max(TargetReleaseKmh, 1.0f), 0.0f, 1.0f),
 		FString::Printf(TEXT("average release %.0f km/h (target %.0f km/h)"), AvgKmh, TargetReleaseKmh));
 
@@ -571,7 +597,7 @@ FWeaknessReport AThrowPawn::BuildThrowReport() const
 	//    (0 을 넣으면 "전환이 완벽하다"로 뒤집혀 읽힌다).
 	if (AvgTransfer > 0.0f)
 	{
-		AddWeakness(EWeaknessAxis::TransferQuick,
+		UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::TransferQuick,
 			FMath::Clamp(TargetTransferSec / AvgTransfer, 0.0f, 1.0f),
 			FString::Printf(TEXT("average catch-to-throw %.2f s (target %.2f s), clean catches %d/%d"),
 				AvgTransfer, TargetTransferSec, CleanCatches, N));
@@ -604,7 +630,7 @@ FWeaknessReport AThrowPawn::BuildThrowReport() const
 		R.Notes.Add(TEXT("No clean catch this session - transfer time not measured"));
 	}
 
-	R.Weaknesses.Sort([](const FWeakness& A, const FWeakness& B) { return A.Severity > B.Severity; });
+	UWeaknessDetector::SortWeaknessesBySeverity(R);
 	return R;
 }
 
@@ -634,8 +660,41 @@ void AThrowPawn::FlushSessionToSave()
 	{
 		return;
 	}
+
+	// 3축 채점: 정확도=착지 거리 감쇠(그 시도의 목표 반경 기준), 효율=구속·전환시간을 각각
+	// 목표 대비 정규화해 절반씩 결합. 셋 다 실패 시도는 0(타격의 EvalAccuracy/EvalEfficiency
+	// 와 동일 원칙 — 못 맞힌 송구는 아무리 빨라도 효율 점수를 안 준다, 통제 안 된 강한 어깨는
+	// 실전에서 도움이 안 되므로).
+	TArray<float> AccuracyPerAttempt, EfficiencyPerAttempt, ConsistencyBasis;
+	AccuracyPerAttempt.Reserve(SessionResults.Num());
+	EfficiencyPerAttempt.Reserve(SessionResults.Num());
+	ConsistencyBasis.Reserve(SessionResults.Num());
+	for (const FThrowResult& R : SessionResults)
+	{
+		const bool bOk = R.IsSuccess();
+		const float RadiusUsed = (R.HitRadiusUsed > 0.0f) ? R.HitRadiusUsed : FMath::Max(1.0f, HitRadius);
+		const float Acc = bOk ? FMath::Clamp(1.0f - (R.DistanceError / RadiusUsed), 0.0f, 1.0f) : 0.0f;
+
+		float Eff = 0.0f;
+		if (bOk)
+		{
+			const float SpeedScore = FMath::Clamp(R.ReleaseSpeedKmh / FMath::Max(TargetReleaseKmh, 1.0f), 0.0f, 1.0f);
+			// 전환시간은 짧을수록 좋다 — 목표보다 빠르면 만점(1.0)으로 클램프.
+			const float TransferScore = (R.TransferTimeSec >= 0.0f)
+				? FMath::Clamp(TargetTransferSec / FMath::Max(R.TransferTimeSec, KINDA_SMALL_NUMBER), 0.0f, 1.0f)
+				: 0.0f; // fumble 로 전환시간 미측정 — 효율 절반을 못 받는다.
+			Eff = 0.5f * SpeedScore + 0.5f * TransferScore;
+		}
+
+		AccuracyPerAttempt.Add(Acc);
+		EfficiencyPerAttempt.Add(Eff);
+		ConsistencyBasis.Add(bOk ? Acc : -1.0f); // 명중한 시도의 정확도 편차만 일관성에 반영.
+	}
+
+	FDefenseScoringConfig ScoringCfg;
+
 	MM->FinalizeSession(
-		UScoringService::ScoreDefenseSession(SuccessCount, SessionResults.Num()),
+		UScoringService::ScoreDefenseSession3Axis(AccuracyPerAttempt, EfficiencyPerAttempt, ConsistencyBasis, ScoringCfg),
 		BuildThrowReport());
 }
 
@@ -910,6 +969,7 @@ void AThrowPawn::Tick(float DeltaSeconds)
 				PendingPower);
 			FThrowJudge::FillMotionMetrics(Result, CurrentTrial.TargetBase,
 				PendingReleaseSpeedCms, PendingTransferSec, bCleanCatch);
+			Result.HitRadiusUsed = CurrentTrial.HitRadius; // 세션 3축 채점용 스냅샷.
 			FinishThrow(Result);
 		}
 	}

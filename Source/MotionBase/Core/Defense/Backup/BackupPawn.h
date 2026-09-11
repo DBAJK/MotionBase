@@ -8,6 +8,7 @@
 #include "Data/TrainingFeedback.h"
 #include "UI/VRExitGesture.h"
 #include "UI/VREndCardMenu.h"
+#include "Core/DynamicDifficulty.h"
 #include "BackupPawn.generated.h"
 
 class UCameraComponent;
@@ -167,6 +168,31 @@ protected:
 	/** VR 입력이 PC(즉시 키 입력) 대비 갖는 구조적 지연 — 판단 시간에서 빼준다. */
 	UPROPERTY(EditAnywhere, Category = "Backup", meta = (ClampMin = "0.0"))
 	float VRInputLatencyBiasSec = 0.15f;
+
+	// ── 동적 난이도 (기록·성적 기반 자동 상승) ──
+	// PitchingZone(타격)과 같은 계약: 세션 시작 시 과거 평균으로 시드, 시도마다 성과로 조정.
+	// ⚠️ 헤드룸 값은 실측 캘리브레이션 대상 — 하드코딩 확정 금지.
+	//
+	// 범위: "제한시간 단축"만 다룬다(Field.SlackFactor — 폰마다 독립된 값이라 협동 세션에서
+	// 다른 플레이어에게 안 새어 나간다). "핵심 시나리오 비중 상승"은 시나리오 선택이
+	// ABackupGameState(협동 세션 전체가 공유)에 있어, 플레이어 한 명의 개인 난이도로
+	// 공유 상태를 흔드는 게 맞는지 설계 결정이 더 필요해 이번 범위에서 제외했다.
+
+	/** 기록·성적 기반으로 도착 제한시간을 자동 조절할지. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Backup|Difficulty")
+	bool bDynamicDifficulty = true;
+
+	/** 동적 상승 최대 여유배율 축소 — Field.SlackFactor 에서 이만큼 줄어든다(하한은 1.0). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Backup|Difficulty")
+	float DynamicSlackReduction = 0.25f;
+
+	/** 정답 1회당 동적 수준 상승폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Backup|Difficulty")
+	float DynamicStepUp = 0.12f;
+
+	/** 오답/시간초과 1회당 동적 수준 하강폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Backup|Difficulty")
+	float DynamicStepDown = 0.08f;
 
 	/** Hold 시행에서 이 시간(초) 동안 게이트 입력이 없으면 성공. */
 	UPROPERTY(EditAnywhere, Category = "Backup", meta = (ClampMin = "0.5"))
@@ -462,6 +488,12 @@ private:
 
 	int32 TrialIndex = 0;
 	int32 SuccessCount = 0;
+
+	/** 동적 난이도 상태 (0~1) — SpawnNextTrial 이 Field.SlackFactor 계산에 쓴다. */
+	FDynamicDifficultyLevel DynamicDifficulty;
+
+	/** StartSession 에서 캡처한 디자이너 기본 여유배율 — 매 시행 재계산이 누적되지 않게 기준선으로 쓴다. */
+	float BaseSlackFactor = 1.35f;
 
 	/**
 	 * 마지막으로 처리한 GameState 시행 시리얼. 이 값과 달라지면 새 시행으로 본다.
