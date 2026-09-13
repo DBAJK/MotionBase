@@ -120,7 +120,7 @@ void AThrowPawn::BeginPlay()
 			// 액션 모드 — 요소를 눈높이로 모으고, 나가기용 '뒤로' 카드를 상시 띄운다
 			// (컨트롤러를 겨눠 잠시 유지 = 나가기. '위로 들기' 제스처와 병행).
 			VrPanel->SetStatusCompact();
-			VrPanel->ShowBackCard(TEXT("EXIT - aim here & hold"), FColor(255, 190, 90));
+			VrPanel->ShowBackCard(TEXT("나가기 - 여기를 겨눈 채 유지"), FColor(255, 190, 90));
 		}
 	}
 
@@ -155,10 +155,10 @@ FString AThrowPawn::BaseName(EBaseType Base)
 {
 	switch (Base)
 	{
-	case EBaseType::First:  return TEXT("1B");
-	case EBaseType::Second: return TEXT("2B");
-	case EBaseType::Third:  return TEXT("3B");
-	default:                return TEXT("Home");
+	case EBaseType::First:  return TEXT("1루");
+	case EBaseType::Second: return TEXT("2루");
+	case EBaseType::Third:  return TEXT("3루");
+	default:                return TEXT("홈");
 	}
 }
 
@@ -534,9 +534,9 @@ FString AThrowPawn::GetLastMetricsLine() const
 
 	const FString Transfer = (LastResult.TransferTimeSec >= 0.0f)
 		? FString::Printf(TEXT("%.2fs"), LastResult.TransferTimeSec)
-		: FString(TEXT("-- (fumble)"));
+		: FString(TEXT("-- (놓침)"));
 
-	return FString::Printf(TEXT("to %s   miss %.0fcm   %.0f km/h   transfer %s"),
+	return FString::Printf(TEXT("%s로   빗나감 %.0fcm   %.0f km/h   전환 %s"),
 		*BaseName(LastResult.TargetBase), LastResult.DistanceError,
 		LastResult.ReleaseSpeedKmh, *Transfer);
 }
@@ -585,13 +585,13 @@ FWeaknessReport AThrowPawn::BuildThrowReport() const
 	// ① 정확도: 도달률이 주(0.6), 빗나간 거리(0.4). 기준 거리는 zone 반경의 4배.
 	const float DistScore = FMath::Clamp(1.0f - (AvgDist / FMath::Max(HitRadius * 4.0f, 1.0f)), 0.0f, 1.0f);
 	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::ThrowAccuracy, OnTargetRate * 0.6f + DistScore * 0.4f,
-		FString::Printf(TEXT("on target %d/%d, average miss %.0f cm (zone radius %.0f cm)"),
+		FString::Printf(TEXT("%d/%d 명중, 평균 빗나감 %.0f cm (목표 반경 %.0f cm)"),
 			OnTarget, N, AvgDist, HitRadius));
 
 	// ② 구속: 목표 구속 대비 비율.
 	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::ArmStrength,
 		FMath::Clamp(AvgKmh / FMath::Max(TargetReleaseKmh, 1.0f), 0.0f, 1.0f),
-		FString::Printf(TEXT("average release %.0f km/h (target %.0f km/h)"), AvgKmh, TargetReleaseKmh));
+		FString::Printf(TEXT("평균 릴리스 %.0f km/h (목표 %.0f km/h)"), AvgKmh, TargetReleaseKmh));
 
 	// ③ 전환 시간: 목표 시간 / 실제 시간. 정상 포구가 하나도 없으면 축을 만들지 않는다
 	//    (0 을 넣으면 "전환이 완벽하다"로 뒤집혀 읽힌다).
@@ -599,7 +599,7 @@ FWeaknessReport AThrowPawn::BuildThrowReport() const
 	{
 		UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::TransferQuick,
 			FMath::Clamp(TargetTransferSec / AvgTransfer, 0.0f, 1.0f),
-			FString::Printf(TEXT("average catch-to-throw %.2f s (target %.2f s), clean catches %d/%d"),
+			FString::Printf(TEXT("평균 포구-송구 전환 %.2f s (목표 %.2f s), 클린 포구 %d/%d"),
 				AvgTransfer, TargetTransferSec, CleanCatches, N));
 	}
 
@@ -618,16 +618,16 @@ FWeaknessReport AThrowPawn::BuildThrowReport() const
 		}
 		if (!ByBase.IsEmpty())
 		{
-			R.Notes.Add(FString::Printf(TEXT("Accuracy by target base: %s"), *ByBase));
+			R.Notes.Add(FString::Printf(TEXT("베이스별 정확도: %s"), *ByBase));
 		}
 	}
 	if (AvgTransfer > 0.0f)
 	{
-		R.Notes.Add(FString::Printf(TEXT("Clean catches %d/%d before the throw"), CleanCatches, N));
+		R.Notes.Add(FString::Printf(TEXT("송구 전 클린 포구 %d/%d"), CleanCatches, N));
 	}
 	else
 	{
-		R.Notes.Add(TEXT("No clean catch this session - transfer time not measured"));
+		R.Notes.Add(TEXT("이번 세션엔 클린 포구가 없어 전환 시간 미측정"));
 	}
 
 	UWeaknessDetector::SortWeaknessesBySeverity(R);
@@ -646,7 +646,7 @@ void AThrowPawn::RestartSession()
 	EndMenu.Reset();
 	if (VrPanel && bVR)
 	{
-		VrPanel->ShowBackCard(TEXT("EXIT - aim here & hold"), FColor(255, 190, 90));
+		VrPanel->ShowBackCard(TEXT("나가기 - 여기를 겨눈 채 유지"), FColor(255, 190, 90));
 		VrPanel->RequestRecenter();
 	}
 
@@ -726,14 +726,14 @@ void AThrowPawn::RequestThrowFeedback()
 
 	if (FeedbackService && FeedbackService->IsConfigured())
 	{
-		CoachingText = TEXT("Requesting AI coaching...");
+		CoachingText = TEXT("AI 코칭 요청 중...");
 		bAwaitingCoaching = true;
 		FeedbackService->RequestThrowCoaching(Report, LastDrills, Chronic);
 	}
 	else
 	{
 		bAwaitingCoaching = false;
-		CoachingText = TEXT("AI coaching not configured (Config/Secrets.ini)");
+		CoachingText = TEXT("AI 코칭 미설정 (Config/Secrets.ini)");
 	}
 
 	UE_LOG(LogMotionBase, Log, TEXT("[Throw] 코칭 요청: 명중 %d/%d, 평균 %.0f km/h, 전환 %.2fs, 약점 %d개"),
@@ -1047,7 +1047,7 @@ void AThrowPawn::RefreshVrPanel()
 	if (bSessionOver)
 	{
 		VrPanel->SetTitle(
-			FString::Printf(TEXT("AI exercise tips    (On-target %d / %d)"), SuccessCount, TotalThrows),
+			FString::Printf(TEXT("AI 운동 추천    (%d / %d 명중)"), SuccessCount, TotalThrows),
 			FColor(150, 210, 255));
 
 		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
@@ -1056,7 +1056,7 @@ void AThrowPawn::RefreshVrPanel()
 		const int32 MaxContentRows = EndCardFirstRow;
 		int32 Row = 0;
 		const float AvgT = GetAverageTransferSec();
-		VrPanel->SetRow(Row++, FString::Printf(TEXT("avg %.0f km/h    transfer %s"),
+		VrPanel->SetRow(Row++, FString::Printf(TEXT("평균 %.0f km/h    전환 %s"),
 			GetAverageReleaseKmh(),
 			(AvgT >= 0.0f) ? *FString::Printf(TEXT("%.2fs"), AvgT) : TEXT("--")),
 			FColor(150, 200, 255));
@@ -1076,17 +1076,17 @@ void AThrowPawn::RefreshVrPanel()
 		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
 		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
 		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
-		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("PLAY AGAIN")),   EndMenu.Color(0));
-		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("BACK TO MENU")), EndMenu.Color(1));
+		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("다시 하기")), EndMenu.Color(0));
+		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("메뉴로")),   EndMenu.Color(1));
 		VrPanel->HideFooter();
 		VrPanel->HideBackCard();
-		VrPanel->SetHint(TEXT("aim the controller at a card and hold"), FColor(110, 116, 128));
+		VrPanel->SetHint(TEXT("컨트롤러로 카드를 겨눈 채 유지하세요"), FColor(110, 116, 128));
 		return;
 	}
 
 	// 제목: 진행 + 목표 베이스 (지정된 곳이 항상 눈에 보이게).
 	VrPanel->SetTitle(
-		FString::Printf(TEXT("Throw  %d / %d      ->  %s      On-target %d"),
+		FString::Printf(TEXT("송구  %d / %d      ->  %s      명중 %d"),
 			GetThrowNumber(), GetTotalThrows(), *BaseName(CurrentTrial.TargetBase), GetSuccessCount()),
 		FColor(228, 233, 244));
 
@@ -1095,17 +1095,17 @@ void AThrowPawn::RefreshVrPanel()
 	{
 		// 추적이 끊긴 동안에는 던지기가 물리적으로 인식되지 않는다. 원인을 알려주지 않으면
 		// 플레이어는 계속 허공에 던지면서 게임이 멈춘 줄 안다.
-		VrPanel->SetRow(0, TEXT("Controller not tracked - move it into view"), FColor(255, 120, 120));
+		VrPanel->SetRow(0, TEXT("컨트롤러 추적 안 됨 - 시야 안으로 옮기세요"), FColor(255, 120, 120));
 	}
 	else if (Phase == EThrowPhase::Feed)
 	{
-		VrPanel->SetRow(0, TEXT("Catch the feed first"), FColor(255, 190, 90));
+		VrPanel->SetRow(0, TEXT("먼저 급구를 포구하세요"), FColor(255, 190, 90));
 	}
 	else
 	{
 		const int32 Cells = 10;
 		const int32 Filled = FMath::Clamp(FMath::RoundToInt(CurrentPower * Cells), 0, Cells);
-		const FString Bar = FString::Printf(TEXT("Power [%s%s] %3.0f%%"),
+		const FString Bar = FString::Printf(TEXT("파워 [%s%s] %3.0f%%"),
 			*FString::ChrN(Filled, TEXT('=')), *FString::ChrN(Cells - Filled, TEXT('.')),
 			CurrentPower * 100.0f);
 		VrPanel->SetRow(0, Bar, bCharging ? FColor(255, 190, 90) : FColor(150, 200, 255));
@@ -1115,7 +1115,7 @@ void AThrowPawn::RefreshVrPanel()
 	const float Live = GetLiveTransferTime();
 	if (Live >= 0.0f)
 	{
-		VrPanel->SetRow(1, FString::Printf(TEXT("transfer  %.2fs"), Live),
+		VrPanel->SetRow(1, FString::Printf(TEXT("전환  %.2fs"), Live),
 			(Live > TargetTransferSec) ? FColor(230, 130, 90) : FColor(90, 220, 110));
 		VrPanel->HideRowsFrom(2);
 	}
@@ -1134,19 +1134,19 @@ void AThrowPawn::RefreshVrPanel()
 	}
 	else
 	{
-		VrPanel->SetFooter(TEXT("Auto-aimed at the called base - just match the power (distance)"),
+		VrPanel->SetFooter(TEXT("지정된 베이스로 자동 조준됨 - 파워(거리)만 맞추면 됩니다"),
 			FColor(150, 156, 168));
 	}
 
 	// 힌트: 조작 안내. 컨트롤러를 위로 드는 중이면 나가기 진행바를 보여준다.
 	if (ExitGesture.IsHolding())
 	{
-		VrPanel->SetHint(FString::Printf(TEXT("Raise controller to exit  %s"), *ExitGesture.ProgressBar()),
+		VrPanel->SetHint(FString::Printf(TEXT("컨트롤러를 들어 나가기  %s"), *ExitGesture.ProgressBar()),
 			FColor(255, 190, 90));
 	}
 	else
 	{
-		VrPanel->SetHint(TEXT("Reach the glove to the feed, then fling forward to throw   ·   raise controller = exit"),
+		VrPanel->SetHint(TEXT("글러브를 급구에 뻗어 포구한 뒤 앞으로 던지세요   ·   컨트롤러 들기 = 나가기"),
 			FColor(110, 116, 128));
 	}
 }
@@ -1275,7 +1275,7 @@ bool AThrowPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) co
 {
 	if (bSessionOver)
 	{
-		OutText  = FString::Printf(TEXT("Session over!  On-target %d / %d"), SuccessCount, TotalThrows);
+		OutText  = FString::Printf(TEXT("세션 종료!  %d / %d 명중"), SuccessCount, TotalThrows);
 		OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f);
 		return true;
 	}
@@ -1287,11 +1287,11 @@ bool AThrowPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) co
 	switch (LastResult.Outcome)
 	{
 	case EThrowOutcome::Ontarget:
-		OutText = TEXT("On target!");        OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
+		OutText = TEXT("명중!");             OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
 	case EThrowOutcome::Short:
-		OutText = TEXT("Short - throw harder"); OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
+		OutText = TEXT("짧음 - 더 세게");     OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
 	case EThrowOutcome::Over:
-		OutText = TEXT("Long - ease up");    OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
+		OutText = TEXT("넘어감 - 약하게");    OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
 	default:
 		return false;
 	}

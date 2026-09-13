@@ -20,10 +20,10 @@ namespace
 	{
 		switch (T)
 		{
-		case ECatchBallType::GroundBall: return TEXT("Grounder");
-		case ECatchBallType::FlyBall:    return TEXT("Fly ball");
-		case ECatchBallType::LineDrive:  return TEXT("Line drive");
-		default:                         return TEXT("Random");
+		case ECatchBallType::GroundBall: return TEXT("땅볼");
+		case ECatchBallType::FlyBall:    return TEXT("뜬공");
+		case ECatchBallType::LineDrive:  return TEXT("라인드라이브");
+		default:                         return TEXT("랜덤");
 		}
 	}
 }
@@ -89,7 +89,7 @@ void ACatchBallHUD::DrawHUD()
 		Pawn->GetPitchNumber(), Pawn->GetTotalPitches());
 	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 16.0f * S, CbTextMain, 1.1f * S);
 
-	const FString SuccessStr = FString::Printf(TEXT("Caught  %d"), Pawn->GetSuccessCount());
+	const FString SuccessStr = FString::Printf(TEXT("성공  %d"), Pawn->GetSuccessCount());
 	DrawLabel(SuccessStr, PanelX + PanelW - 150.0f * S, PanelY + 16.0f * S, CbGood, 1.1f * S);
 
 	// 타구 타입별 성공률 (측정 지표 ②) + 공 속도 배율 — 진행 줄 가운데.
@@ -97,7 +97,7 @@ void ACatchBallHUD::DrawHUD()
 		FString ByType;
 		const ECatchBallType StatTypes[3] =
 			{ ECatchBallType::GroundBall, ECatchBallType::FlyBall, ECatchBallType::LineDrive };
-		const TCHAR* Short[3] = { TEXT("GB"), TEXT("FB"), TEXT("LD") };
+		const TCHAR* Short[3] = { TEXT("땅볼"), TEXT("뜬공"), TEXT("라인") };
 		for (int32 i = 0; i < 3; ++i)
 		{
 			int32 A = 0, Su = 0;
@@ -107,8 +107,8 @@ void ACatchBallHUD::DrawHUD()
 			ByType += FString::Printf(TEXT("%s %d/%d"), Short[i], Su, A);
 		}
 		const FString Line = ByType.IsEmpty()
-			? FString::Printf(TEXT("speed x%.1f  ([ / ])"), Pawn->GetBallSpeedScale())
-			: FString::Printf(TEXT("%s      speed x%.1f"), *ByType, Pawn->GetBallSpeedScale());
+			? FString::Printf(TEXT("속도 x%.1f  ([ / ])"), Pawn->GetBallSpeedScale())
+			: FString::Printf(TEXT("%s      속도 x%.1f"), *ByType, Pawn->GetBallSpeedScale());
 		DrawCentered(Line, PanelX + PanelW * 0.5f, PanelY + 18.0f * S, CbTextDim, 0.8f * S);
 	}
 
@@ -141,7 +141,7 @@ void ACatchBallHUD::DrawHUD()
 	}
 
 	// ── 하단 조작 안내 ──
-	DrawCentered(TEXT("WASD move   Space catch   1-4 type   [ / ] ball speed   M exit"),
+	DrawCentered(TEXT("WASD 이동   Space 포구   1-4 유형   [ / ] 공 속도   M 나가기"),
 		W * 0.5f, PanelY + PanelH + 12.0f * S, CbTextDim, 0.8f * S);
 
 	// ── 마지막 판정 결과 (있으면 중앙에 크게) ──
@@ -153,13 +153,11 @@ void ACatchBallHUD::DrawHUD()
 	}
 
 	// ── 세션 종료 시 AI 운동 추천 (코칭 문장 + 추천 드릴) ──
-	// ⚠️ 코칭·드릴은 한글이라 Korean 글리프가 있는 폰트에서만 제대로 보인다.
-	//    (엔진 기본 MediumFont 는 한글이 없어 네모로 나올 수 있음 — 앱 전역 폰트 이슈.)
 	const FString& Coaching = Pawn->GetCoachingText();
 	if (!Coaching.IsEmpty())
 	{
 		float PY = Canvas->SizeY * 0.52f;
-		DrawCentered(TEXT("AI exercise tips"), W * 0.5f, PY, FLinearColor(0.6f, 0.82f, 1.0f, 1.0f), 1.1f * S);
+		DrawCentered(TEXT("AI 운동 추천"), W * 0.5f, PY, FLinearColor(0.6f, 0.82f, 1.0f, 1.0f), 1.1f * S);
 		PY += 34.0f * S;
 
 		// Coaching sentences — rough wrap by character count.

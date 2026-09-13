@@ -25,20 +25,22 @@
 
 namespace
 {
-	// ── LLM 프롬프트용 영문 라벨 ──
+	// ── 화면 표시 + LLM 프롬프트 공용 라벨 ──
 	// UEnum::GetValueAsString 을 쓰지 않는 이유: "EBackupRole::CutoffRelay" 같은 식별자가
 	// 그대로 나가면 코치 문장에 코드 이름이 섞인다. 야구 용어로 읽히는 문구를 따로 둔다.
-	// (시스템 프롬프트가 설명하는 네 가지 job 과 표현을 맞춰 놓았다.)
+	// Phase 5: Content/Fonts/KRFont 도입 후 영문에서 한글로 전환 — AI 시스템 프롬프트는
+	// 영어로 남아 있지만(OutputLanguage), 한글 근거 문구가 섞여 들어가도 LLM 이 맥락상
+	// 문제없이 이해한다.
 	FString RoleLabel(EBackupRole Role)
 	{
 		switch (Role)
 		{
-		case EBackupRole::BackUpBase:    return TEXT("back up a base");
-		case EBackupRole::CoverBase:     return TEXT("cover a base");
-		case EBackupRole::CutoffRelay:   return TEXT("cut off / relay the throw");
-		case EBackupRole::BackUpFielder: return TEXT("back up a fielder");
+		case EBackupRole::BackUpBase:    return TEXT("베이스 백업");
+		case EBackupRole::CoverBase:     return TEXT("베이스 커버");
+		case EBackupRole::CutoffRelay:   return TEXT("중계 플레이");
+		case EBackupRole::BackUpFielder: return TEXT("야수 백업");
 		case EBackupRole::Hold:
-		default:                         return TEXT("hold your spot");
+		default:                         return TEXT("제자리 사수");
 		}
 	}
 
@@ -46,12 +48,12 @@ namespace
 	{
 		switch (Outcome)
 		{
-		case EBackupOutcome::Covered:    return TEXT("CORRECT");
-		case EBackupOutcome::TooSlow:    return TEXT("right direction but arrived too late");
-		case EBackupOutcome::WrongZone:  return TEXT("went to the wrong place");
-		case EBackupOutcome::NoStart:    return TEXT("never moved");
-		case EBackupOutcome::FalseStart: return TEXT("moved when the right answer was to stay put");
-		default:                         return TEXT("unknown");
+		case EBackupOutcome::Covered:    return TEXT("정답");
+		case EBackupOutcome::TooSlow:    return TEXT("방향은 맞았지만 늦게 도착");
+		case EBackupOutcome::WrongZone:  return TEXT("엉뚱한 곳으로 이동");
+		case EBackupOutcome::NoStart:    return TEXT("전혀 움직이지 않음");
+		case EBackupOutcome::FalseStart: return TEXT("제자리가 정답인데 움직임");
+		default:                         return TEXT("알 수 없음");
 		}
 	}
 
@@ -163,7 +165,7 @@ void ABackupPawn::BeginPlay()
 		else
 		{
 			VrPanel->SetStatusCompact();
-			VrPanel->ShowBackCard(TEXT("EXIT - aim here & hold"), FColor(255, 190, 90));
+			VrPanel->ShowBackCard(TEXT("나가기 - 여기를 겨눈 채 유지"), FColor(255, 190, 90));
 		}
 	}
 
@@ -782,7 +784,7 @@ FWeaknessReport ABackupPawn::BuildBackupReport() const
 
 	// ① 백업 판단: 정답률 그대로.
 	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::BackupJudgment, CorrectRate,
-		FString::Printf(TEXT("correct %d/%d backup calls"), Correct, N));
+		FString::Printf(TEXT("백업 판단 %d/%d 정답"), Correct, N));
 
 	// ② 판단 속도: **맞힌 시행만** 기준으로 본다 — 빨리 틀리는 사람이 만점 받는 걸 막는다
 	// (퀴즈 시절부터 이어지는 규칙, CoverPawn 의 동일 로직 참고).
@@ -791,7 +793,7 @@ FWeaknessReport ABackupPawn::BuildBackupReport() const
 		const float AvgCorrectDecision = SumCorrectDecision / CorrectDecisionN;
 		UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::DecisionSpeed,
 			FMath::Clamp(Field.TargetDecisionSec / FMath::Max(AvgCorrectDecision, 0.01f), 0.0f, 1.0f),
-			FString::Printf(TEXT("average %.2f s to start moving on correct calls (target %.2f s)"),
+			FString::Printf(TEXT("정답 시행 기준 평균 판단 %.2f s (목표 %.2f s)"),
 				AvgCorrectDecision, Field.TargetDecisionSec));
 	}
 
@@ -802,21 +804,21 @@ FWeaknessReport ABackupPawn::BuildBackupReport() const
 	{
 		const float AvgPathEff = SumPathEff / PathEffN;
 		UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::RouteEfficiency, AvgPathEff,
-			FString::Printf(TEXT("average route efficiency %.0f%% (straight-line distance / distance actually covered)"),
+			FString::Printf(TEXT("평균 경로 효율 %.0f%% (직선거리 / 실제 이동거리)"),
 				AvgPathEff * 100.0f));
 	}
 
 	if (DecisionN > 0)
 	{
-		R.Notes.Add(FString::Printf(TEXT("Average decision time over all cases: %.2f s"), SumDecision / DecisionN));
+		R.Notes.Add(FString::Printf(TEXT("전체 평균 판단 시간: %.2f s"), SumDecision / DecisionN));
 	}
 	if (KeyN > 0)
 	{
 		R.Notes.Add(FString::Printf(
-			TEXT("Key scenarios (wide CF coverage, 2B covering first when 1B is pulled off the bag): %d/%d"),
+			TEXT("핵심 시나리오(광범위 중견수 커버, 1루수 이탈 시 2루수 1루 커버): %d/%d"),
 			KeyCorrect, KeyN));
 	}
-	R.Notes.Add(FString::Printf(TEXT("Position: %s"), *UBackupPlaybook::PositionName(Position)));
+	R.Notes.Add(FString::Printf(TEXT("포지션: %s"), *UBackupPlaybook::PositionName(Position)));
 
 	// ── 역할별 분해 ──
 	// 정답률 하나로는 편중이 안 보인다. "백업은 되는데 중계(cutoff)를 못 선다"는 정답률이
@@ -840,7 +842,7 @@ FWeaknessReport ABackupPawn::BuildBackupReport() const
 		}
 		if (!Breakdown.IsEmpty())
 		{
-			R.Notes.Add(FString::Printf(TEXT("Correct by job type: %s"), *Breakdown));
+			R.Notes.Add(FString::Printf(TEXT("역할별 정답률: %s"), *Breakdown));
 		}
 	}
 
@@ -853,20 +855,20 @@ FWeaknessReport ABackupPawn::BuildBackupReport() const
 	{
 		const FBackupResult& Res = SessionResults[i];
 
-		FString Line = FString::Printf(TEXT("Case %d: \"%s\" - job: %s - %s"),
+		FString Line = FString::Printf(TEXT("%d번: \"%s\" - 역할: %s - %s"),
 			i + 1,
-			Res.Situation.IsEmpty() ? TEXT("(situation not recorded)") : *Res.Situation,
+			Res.Situation.IsEmpty() ? TEXT("(상황 미기록)") : *Res.Situation,
 			*RoleLabel(Res.Role),
 			*OutcomeLabel(Res.Outcome));
 
 		if (Res.DecisionTimeSec >= 0.0f)
 		{
-			Line += FString::Printf(TEXT(", started moving after %.1fs"), Res.DecisionTimeSec);
+			Line += FString::Printf(TEXT(", %.1fs 후 이동 시작"), Res.DecisionTimeSec);
 		}
 		if (Res.PathEfficiency >= 0.0f && Res.PathEfficiency < 0.85f && !Res.bHoldTrial)
 		{
 			// 낮을 때만 싣는다 — 잘 간 경로까지 전부 실으면 프롬프트가 잡음으로 덮인다.
-			Line += FString::Printf(TEXT(", wandered (route efficiency %.0f%%)"), Res.PathEfficiency * 100.0f);
+			Line += FString::Printf(TEXT(", 경로 헤맴(효율 %.0f%%)"), Res.PathEfficiency * 100.0f);
 		}
 		R.Notes.Add(Line);
 	}
@@ -887,7 +889,7 @@ void ABackupPawn::RestartSession()
 	EndMenu.Reset();
 	if (VrPanel && bVR)
 	{
-		VrPanel->ShowBackCard(TEXT("EXIT - aim here & hold"), FColor(255, 190, 90));
+		VrPanel->ShowBackCard(TEXT("나가기 - 여기를 겨눈 채 유지"), FColor(255, 190, 90));
 		VrPanel->RequestRecenter();
 	}
 
@@ -961,14 +963,14 @@ void ABackupPawn::RequestBackupFeedback()
 
 	if (FeedbackService && FeedbackService->IsConfigured())
 	{
-		CoachingText = TEXT("Requesting AI coaching...");
+		CoachingText = TEXT("AI 코칭 요청 중...");
 		bAwaitingCoaching = true;
 		FeedbackService->RequestBackupCoaching(Report, LastDrills, Chronic);
 	}
 	else
 	{
 		bAwaitingCoaching = false;
-		CoachingText = TEXT("AI coaching not configured (Config/Secrets.ini)");
+		CoachingText = TEXT("AI 코칭 미설정 (Config/Secrets.ini)");
 	}
 
 	UE_LOG(LogMotionBase, Log, TEXT("[Backup] 코칭 요청: 정답 %d/%d, 약점 %d개"),
@@ -1081,7 +1083,7 @@ bool ABackupPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) c
 	}
 	if (bSessionOver)
 	{
-		OutText = FString::Printf(TEXT("Session over!  %d / %d correct"), SuccessCount, TotalTrials);
+		OutText = FString::Printf(TEXT("세션 종료!  %d / %d 정답"), SuccessCount, TotalTrials);
 		OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f);
 		return true;
 	}
@@ -1093,15 +1095,15 @@ bool ABackupPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor) c
 	switch (LastResult.Outcome)
 	{
 	case EBackupOutcome::Covered:
-		OutText = TEXT("Covered!");     OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
+		OutText = TEXT("커버 성공!");   OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
 	case EBackupOutcome::TooSlow:
-		OutText = TEXT("Too slow");     OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
+		OutText = TEXT("너무 늦음");    OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
 	case EBackupOutcome::WrongZone:
-		OutText = TEXT("Wrong spot");   OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
+		OutText = TEXT("엉뚱한 위치");  OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
 	case EBackupOutcome::NoStart:
-		OutText = TEXT("No reaction");  OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
+		OutText = TEXT("무반응");       OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
 	case EBackupOutcome::FalseStart:
-		OutText = TEXT("False start");  OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
+		OutText = TEXT("성급한 출발");  OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
 	default:
 		return false;
 	}
@@ -1656,7 +1658,7 @@ void ABackupPawn::RefreshVrPanel()
 	if (bSessionOver)
 	{
 		VrPanel->SetTitle(
-			FString::Printf(TEXT("AI judgment tips    (Correct %d / %d)"), SuccessCount, TotalTrials),
+			FString::Printf(TEXT("AI 판단 추천    (%d / %d 정답)"), SuccessCount, TotalTrials),
 			FColor(150, 210, 255));
 
 		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
@@ -1668,7 +1670,7 @@ void ABackupPawn::RefreshVrPanel()
 		const float AvgP = GetAveragePathEfficiency();
 		if (Row < MaxContentRows && (AvgD >= 0.0f || AvgP >= 0.0f))
 		{
-			VrPanel->SetRow(Row++, FString::Printf(TEXT("avg decision %.2fs   route %.0f%%"),
+			VrPanel->SetRow(Row++, FString::Printf(TEXT("평균 판단 %.2fs   경로효율 %.0f%%"),
 				FMath::Max(AvgD, 0.0f), FMath::Max(AvgP, 0.0f) * 100.0f), FColor(150, 200, 255));
 		}
 
@@ -1687,16 +1689,16 @@ void ABackupPawn::RefreshVrPanel()
 		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
 		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
 		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
-		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("PLAY AGAIN")),   EndMenu.Color(0));
-		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("BACK TO MENU")), EndMenu.Color(1));
+		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("다시 하기")), EndMenu.Color(0));
+		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("메뉴로")),   EndMenu.Color(1));
 		VrPanel->HideFooter();
 		VrPanel->HideBackCard();
-		VrPanel->SetHint(TEXT("aim the controller at a card and hold"), FColor(110, 116, 128));
+		VrPanel->SetHint(TEXT("컨트롤러로 카드를 겨눈 채 유지하세요"), FColor(110, 116, 128));
 		return;
 	}
 
 	VrPanel->SetTitle(
-		FString::Printf(TEXT("%s   %d / %d   Correct %d"),
+		FString::Printf(TEXT("%s   %d / %d   정답 %d"),
 			*UBackupPlaybook::PositionName(Position), GetTrialNumber(), TotalTrials, SuccessCount),
 		FColor(228, 233, 244));
 
@@ -1710,7 +1712,7 @@ void ABackupPawn::RefreshVrPanel()
 	{
 		// 진행 중: 상황(0) · 주자(1) · 판단 시간(2).
 		VrPanel->SetRow(1, CurrentTrial.Play.RunnerText, FColor(150, 156, 168));
-		VrPanel->SetRow(2, FString::Printf(TEXT("deciding...  %.1fs"), Live),
+		VrPanel->SetRow(2, FString::Printf(TEXT("판단 중...  %.1fs"), Live),
 			(Live > Field.TargetDecisionSec) ? FColor(230, 130, 90) : FColor(90, 220, 110));
 		VrPanel->HideRowsFrom(3);
 	}
@@ -1743,23 +1745,23 @@ void ABackupPawn::RefreshVrPanel()
 		// 저하됐으면 조용히 넘어가지 않는다 — 조작법이 바뀌었다는 사실을 그 자리에서 알린다.
 		if (IsGateDegraded())
 		{
-			VrPanel->SetFooter(TEXT("Trigger not detected - stick only. Push the stick to move."),
+			VrPanel->SetFooter(TEXT("트리거 미감지 - 스틱만 사용. 스틱을 밀어 이동하세요."),
 				FColor(255, 190, 90));
 		}
 		else
 		{
-			VrPanel->SetFooter(TEXT("Hold the move button and go to your backup spot"), FColor(150, 156, 168));
+			VrPanel->SetFooter(TEXT("이동 버튼을 누른 채 백업 위치로 이동하세요"), FColor(150, 156, 168));
 		}
 	}
 
 	if (ExitGesture.IsHolding())
 	{
-		VrPanel->SetHint(FString::Printf(TEXT("Raise controller to exit  %s"), *ExitGesture.ProgressBar()),
+		VrPanel->SetHint(FString::Printf(TEXT("컨트롤러를 들어 나가기  %s"), *ExitGesture.ProgressBar()),
 			FColor(255, 190, 90));
 	}
 	else
 	{
-		VrPanel->SetHint(TEXT("Hold the trigger and push the stick to move to your backup zone"),
+		VrPanel->SetHint(TEXT("트리거를 누른 채 스틱을 밀어 백업 위치로 이동하세요"),
 			FColor(110, 116, 128));
 	}
 }

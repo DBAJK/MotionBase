@@ -31,10 +31,10 @@ namespace
 	{
 		switch (Type)
 		{
-		case ECatchBallType::GroundBall: return TEXT("Grounder");
-		case ECatchBallType::FlyBall:    return TEXT("Fly ball");
-		case ECatchBallType::LineDrive:  return TEXT("Line drive");
-		default:                         return TEXT("Mixed");
+		case ECatchBallType::GroundBall: return TEXT("땅볼");
+		case ECatchBallType::FlyBall:    return TEXT("뜬공");
+		case ECatchBallType::LineDrive:  return TEXT("라인드라이브");
+		default:                         return TEXT("혼합");
 		}
 	}
 
@@ -139,7 +139,7 @@ void ACatchBallPawn::BeginPlay()
 			// 액션 모드 — 요소를 눈높이로 모으고, 나가기용 '뒤로' 카드를 상시 띄운다
 			// (글러브를 겨눠 잠시 유지 = 나가기. '위로 들기' 제스처와 병행).
 			VrPanel->SetStatusCompact();
-			VrPanel->ShowBackCard(TEXT("EXIT - aim glove here & hold"), FColor(255, 190, 90));
+			VrPanel->ShowBackCard(TEXT("나가기 - 글러브로 여기를 겨눈 채 유지"), FColor(255, 190, 90));
 		}
 	}
 
@@ -363,11 +363,11 @@ void ACatchBallPawn::FinishPitch(const FCatchResult& Result)
 	FString OutcomeText;
 	switch (Result.Outcome)
 	{
-	case ECatchOutcome::Success: OutcomeText = TEXT("Caught!"); break;
-	case ECatchOutcome::Miss:    OutcomeText = TEXT("Whiff"); break;
-	default:                     OutcomeText = TEXT("Dropped"); break;
+	case ECatchOutcome::Success: OutcomeText = TEXT("포구 성공!"); break;
+	case ECatchOutcome::Miss:    OutcomeText = TEXT("헛손질"); break;
+	default:                     OutcomeText = TEXT("놓침"); break;
 	}
-	StatusLine = FString::Printf(TEXT("%s  (dist %.0fcm, timing %+.2fs)"),
+	StatusLine = FString::Printf(TEXT("%s  (거리 %.0fcm, 타이밍 %+.2fs)"),
 		*OutcomeText, Result.DistanceError, Result.TimingError);
 
 	++PitchIndex;
@@ -399,7 +399,7 @@ void ACatchBallPawn::EndSession()
 	{
 		VrPanel->RequestRecenter(); // 결과·선택 카드를 지금 보는 정면에 다시 잡는다.
 	}
-	StatusLine = FString::Printf(TEXT("Session over!  Caught %d / %d    (M: back to menu)"),
+	StatusLine = FString::Printf(TEXT("세션 종료!  %d / %d 포구    (M: 메뉴로)"),
 		SuccessCount, TotalPitches);
 
 	// 세션이 끝나면 포구 성적으로 약점을 판별해 AI 운동 추천을 요청한다.
@@ -451,17 +451,17 @@ FWeaknessReport ACatchBallPawn::BuildCatchReport() const
 	// 반응속도: 타이밍 오차(±0.35s 창) + 놓침 페널티.
 	const float ReactionScore = FMath::Clamp(1.0f - (AvgAbsTiming / 0.35f), 0.0f, 1.0f) * (1.0f - 0.5f * DropRate);
 	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::CatchReaction, ReactionScore,
-		FString::Printf(TEXT("avg timing error %.0f ms, drops %d/%d"), AvgAbsTiming * 1000.0f, Drops, N));
+		FString::Printf(TEXT("평균 타이밍 오차 %.0f ms, 놓침 %d/%d"), AvgAbsTiming * 1000.0f, Drops, N));
 
 	// 상체 유연성: 포구 순간 글러브-공 거리(못 닿음). 기준 150cm.
 	const float FlexScore = FMath::Clamp(1.0f - (AvgDist / 150.0f), 0.0f, 1.0f);
 	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::UpperBodyFlex, FlexScore,
-		FString::Printf(TEXT("avg glove-to-ball distance at catch %.0f cm"), AvgDist));
+		FString::Printf(TEXT("포구 순간 평균 글러브-공 거리 %.0f cm"), AvgDist));
 
 	// 발 스피드: 위치 선점 실패(실패율). 이동이 컨트롤러라 비중을 낮춰(×0.6) 반영.
 	const float FootScore = FMath::Clamp(1.0f - MissRate * 0.6f, 0.0f, 1.0f);
 	UWeaknessDetector::AddWeaknessIfSevere(R, EWeaknessAxis::FootSpeed, FootScore,
-		FString::Printf(TEXT("caught %d/%d - room to get into position"), Catches, N));
+		FString::Printf(TEXT("%d/%d 포구 - 위치 선점에 개선 여지 있음"), Catches, N));
 
 	// 타구 타입별 성공률(측정 지표 ②) — 축이 아니라 노트로 실어 코칭 문장에 숫자가 남게 한다.
 	// "전체 6/10"보다 "뜬공만 1/3"이 훨씬 실행 가능한 조언으로 이어진다.
@@ -469,7 +469,7 @@ FWeaknessReport ACatchBallPawn::BuildCatchReport() const
 		FString Breakdown;
 		const ECatchBallType Types[NumBallTypes] =
 			{ ECatchBallType::GroundBall, ECatchBallType::FlyBall, ECatchBallType::LineDrive };
-		const TCHAR* Names[NumBallTypes] = { TEXT("grounder"), TEXT("fly ball"), TEXT("line drive") };
+		const TCHAR* Names[NumBallTypes] = { TEXT("땅볼"), TEXT("뜬공"), TEXT("라인드라이브") };
 
 		for (int32 i = 0; i < NumBallTypes; ++i)
 		{
@@ -482,9 +482,9 @@ FWeaknessReport ACatchBallPawn::BuildCatchReport() const
 		}
 		if (!Breakdown.IsEmpty())
 		{
-			R.Notes.Add(FString::Printf(TEXT("Catch rate by ball type: %s"), *Breakdown));
+			R.Notes.Add(FString::Printf(TEXT("타구 유형별 포구율: %s"), *Breakdown));
 		}
-		R.Notes.Add(FString::Printf(TEXT("Ball speed setting: x%.1f"), BallSpeedScale));
+		R.Notes.Add(FString::Printf(TEXT("공 속도 설정: x%.1f"), BallSpeedScale));
 	}
 
 	// 심각도 내림차순 (가장 시급한 약점이 앞으로).
@@ -504,7 +504,7 @@ void ACatchBallPawn::RestartSession()
 	EndMenu.Reset();
 	if (VrPanel && bVR)
 	{
-		VrPanel->ShowBackCard(TEXT("EXIT - aim glove here & hold"), FColor(255, 190, 90));
+		VrPanel->ShowBackCard(TEXT("나가기 - 글러브로 여기를 겨눈 채 유지"), FColor(255, 190, 90));
 		VrPanel->RequestRecenter();
 	}
 
@@ -578,14 +578,14 @@ void ACatchBallPawn::RequestCatchFeedback()
 
 	if (FeedbackService && FeedbackService->IsConfigured())
 	{
-		CoachingText = TEXT("Requesting AI coaching...");
+		CoachingText = TEXT("AI 코칭 요청 중...");
 		bAwaitingCoaching = true;
 		FeedbackService->RequestCatchCoaching(Report, LastDrills, Chronic);
 	}
 	else
 	{
 		bAwaitingCoaching = false;
-		CoachingText = TEXT("AI coaching not configured (Config/Secrets.ini)");
+		CoachingText = TEXT("AI 코칭 미설정 (Config/Secrets.ini)");
 	}
 
 	UE_LOG(LogMotionBase, Log, TEXT("[CatchBall] 코칭 요청: 성공 %d/%d, 약점 %d개, 드릴 %d개"),
@@ -1001,7 +1001,7 @@ bool ACatchBallPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor
 
 	if (bSessionOver)
 	{
-		OutText  = FString::Printf(TEXT("Session over!  Caught %d / %d"), SuccessCount, TotalPitches);
+		OutText  = FString::Printf(TEXT("세션 종료!  %d / %d 포구"), SuccessCount, TotalPitches);
 		OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f);
 		return true;
 	}
@@ -1009,11 +1009,11 @@ bool ACatchBallPawn::GetLastOutcomeText(FString& OutText, FLinearColor& OutColor
 	switch (LastResult.Outcome)
 	{
 	case ECatchOutcome::Success:
-		OutText = TEXT("Caught!");   OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
+		OutText = TEXT("포구 성공!"); OutColor = FLinearColor(0.40f, 0.85f, 0.45f, 1.0f); return true;
 	case ECatchOutcome::Miss:
-		OutText = TEXT("Whiff");     OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
+		OutText = TEXT("헛손질");     OutColor = FLinearColor(0.95f, 0.55f, 0.30f, 1.0f); return true;
 	case ECatchOutcome::Dropped:
-		OutText = TEXT("Dropped");   OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
+		OutText = TEXT("놓침");       OutColor = FLinearColor(0.90f, 0.35f, 0.35f, 1.0f); return true;
 	default:
 		return false;
 	}
@@ -1029,13 +1029,13 @@ void ACatchBallPawn::SelectRandom() { SessionType = ECatchBallType::Mixed; }
 void ACatchBallPawn::SpeedDown()
 {
 	BallSpeedScale = FMath::Clamp(BallSpeedScale - BallSpeedStep, 0.5f, 2.0f);
-	StatusLine = FString::Printf(TEXT("Ball speed x%.1f  (applies from the next pitch)"), BallSpeedScale);
+	StatusLine = FString::Printf(TEXT("공 속도 x%.1f  (다음 공부터 적용)"), BallSpeedScale);
 }
 
 void ACatchBallPawn::SpeedUp()
 {
 	BallSpeedScale = FMath::Clamp(BallSpeedScale + BallSpeedStep, 0.5f, 2.0f);
-	StatusLine = FString::Printf(TEXT("Ball speed x%.1f  (applies from the next pitch)"), BallSpeedScale);
+	StatusLine = FString::Printf(TEXT("공 속도 x%.1f  (다음 공부터 적용)"), BallSpeedScale);
 }
 
 // ── 타구 타입별 집계 ──
@@ -1074,7 +1074,7 @@ void ACatchBallPawn::RefreshVrPanel()
 	if (bSessionOver)
 	{
 		VrPanel->SetTitle(
-			FString::Printf(TEXT("AI exercise tips    (Caught %d / %d)"), SuccessCount, TotalPitches),
+			FString::Printf(TEXT("AI 운동 추천    (%d / %d 포구)"), SuccessCount, TotalPitches),
 			FColor(150, 210, 255));
 
 		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
@@ -1088,7 +1088,7 @@ void ACatchBallPawn::RefreshVrPanel()
 			FString Line;
 			const ECatchBallType Types[NumBallTypes] =
 				{ ECatchBallType::GroundBall, ECatchBallType::FlyBall, ECatchBallType::LineDrive };
-			const TCHAR* Short[NumBallTypes] = { TEXT("GB"), TEXT("FB"), TEXT("LD") };
+			const TCHAR* Short[NumBallTypes] = { TEXT("땅볼"), TEXT("뜬공"), TEXT("라인") };
 			for (int32 i = 0; i < NumBallTypes; ++i)
 			{
 				int32 A = 0, S = 0;
@@ -1118,22 +1118,22 @@ void ACatchBallPawn::RefreshVrPanel()
 		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
 		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
 		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
-		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("PLAY AGAIN")),   EndMenu.Color(0));
-		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("BACK TO MENU")), EndMenu.Color(1));
+		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("다시 하기")), EndMenu.Color(0));
+		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("메뉴로")),   EndMenu.Color(1));
 		VrPanel->HideFooter();
 		VrPanel->HideBackCard();
-		VrPanel->SetHint(TEXT("aim the glove at a card and hold"), FColor(110, 116, 128));
+		VrPanel->SetHint(TEXT("글러브로 카드를 겨눈 채 유지하세요"), FColor(110, 116, 128));
 		return;
 	}
 
 	// 제목: 진행 + 성공 수.
 	VrPanel->SetTitle(
-		FString::Printf(TEXT("Catch  %d / %d      Caught %d"),
+		FString::Printf(TEXT("포구  %d / %d      성공 %d"),
 			GetPitchNumber(), GetTotalPitches(), GetSuccessCount()),
 		FColor(228, 233, 244));
 
 	// 행0: 이번 세션 타구 유형 + 공 속도 배율.
-	VrPanel->SetRow(0, FString::Printf(TEXT("Type: %s      Ball speed x%.1f"),
+	VrPanel->SetRow(0, FString::Printf(TEXT("유형: %s      공 속도 x%.1f"),
 		*CatchTypeName(SessionType), BallSpeedScale), FColor(150, 200, 255));
 	VrPanel->HideRowsFrom(1);
 
@@ -1151,12 +1151,12 @@ void ACatchBallPawn::RefreshVrPanel()
 	// 힌트: 조작 안내. 글러브를 위로 드는 중이면 나가기 진행바를 보여준다.
 	if (ExitGesture.IsHolding())
 	{
-		VrPanel->SetHint(FString::Printf(TEXT("Raise glove to exit  %s"), *ExitGesture.ProgressBar()),
+		VrPanel->SetHint(FString::Printf(TEXT("글러브를 들어 나가기  %s"), *ExitGesture.ProgressBar()),
 			FColor(255, 190, 90));
 	}
 	else
 	{
-		VrPanel->SetHint(TEXT("Stick/trackpad = move   ·   reach the glove to the ball to catch   ·   raise glove = exit"),
+		VrPanel->SetHint(TEXT("스틱/트랙패드 = 이동   ·   글러브를 공에 뻗어 포구   ·   글러브 들기 = 나가기"),
 			FColor(110, 116, 128));
 	}
 }

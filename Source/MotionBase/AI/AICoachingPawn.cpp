@@ -36,21 +36,20 @@ namespace
 		return Lines;
 	}
 
-	// 3D 텍스트는 한글 폰트가 없을 수 있어 구조 라벨은 영어로.
 	const TCHAR* ModeEn(EGameModeId Mode, FName Drill)
 	{
 		switch (Mode)
 		{
-		case EGameModeId::Batting: return TEXT("Batting");
+		case EGameModeId::Batting: return TEXT("타격");
 		case EGameModeId::Defense:
 			// ⚠️ 리터럴로 비교하지 않는다 — 저장되는 종목 ID 는 UModeManager 가 정본이고,
 			//    실제로 index 2 가 "Backup" → "BackupMove" 로 바뀌었을 때 여기가 함께
 			//    안 고쳐져서 백업 세션이 조용히 "Fielding" 으로 떨어진 적이 있다.
-			if (Drill == UModeManager::GetDefenseDrillIdName(0)) { return TEXT("Fielding - Catch"); }
-			if (Drill == UModeManager::GetDefenseDrillIdName(1)) { return TEXT("Fielding - Throw"); }
-			if (Drill == UModeManager::GetDefenseDrillIdName(2)) { return TEXT("Fielding - Backup"); }
-			return TEXT("Fielding");
-		default: return TEXT("Training");
+			if (Drill == UModeManager::GetDefenseDrillIdName(0)) { return TEXT("수비 - 포구"); }
+			if (Drill == UModeManager::GetDefenseDrillIdName(1)) { return TEXT("수비 - 송구"); }
+			if (Drill == UModeManager::GetDefenseDrillIdName(2)) { return TEXT("수비 - 백업"); }
+			return TEXT("수비");
+		default: return TEXT("훈련");
 		}
 	}
 }
@@ -88,7 +87,7 @@ void AAICoachingPawn::BeginPlay()
 	{
 		VrPanel->BuildPanel();
 		VrPanel->SetStatusCompact();
-		VrPanel->ShowBackCard(TEXT("EXIT - aim here & hold"), FColor(255, 190, 90));
+		VrPanel->ShowBackCard(TEXT("나가기 - 여기를 겨눈 채 유지"), FColor(255, 190, 90));
 	}
 
 	// AI 코칭 서비스 (키가 없으면 결정론적 추천만 보여준다).
@@ -112,7 +111,7 @@ void AAICoachingPawn::BuildRecommendation()
 	if (!MM)
 	{
 		bHasData = false;
-		CoachingText = TEXT("No save data available.");
+		CoachingText = TEXT("저장된 기록이 없습니다.");
 		return;
 	}
 
@@ -131,7 +130,7 @@ void AAICoachingPawn::BuildRecommendation()
 	if (!Focus)
 	{
 		bHasData = false;
-		CoachingText = TEXT("No records yet. Play a mode first.");
+		CoachingText = TEXT("아직 기록이 없습니다. 먼저 한 모드를 플레이해보세요.");
 		return;
 	}
 
@@ -149,7 +148,7 @@ void AAICoachingPawn::BuildRecommendation()
 	// AI 코칭 문장 (키가 있으면). 도메인별로 코치 역할이 다르다.
 	if (FeedbackService && FeedbackService->IsConfigured())
 	{
-		CoachingText = TEXT("Requesting AI coaching...");
+		CoachingText = TEXT("AI 코칭 요청 중...");
 		bAwaitingCoaching = true;
 
 		if (FocusMode == EGameModeId::Defense)
@@ -172,7 +171,7 @@ void AAICoachingPawn::BuildRecommendation()
 	else
 	{
 		bAwaitingCoaching = false;
-		CoachingText = TEXT("AI text off - showing recommended drills:");
+		CoachingText = TEXT("AI 문장 없이 추천 드릴만 표시합니다:");
 	}
 
 	UE_LOG(LogMotionBase, Log, TEXT("[AICoaching] focus=%s drill=%s 약점 %d개, 드릴 %d개"),
@@ -235,7 +234,7 @@ void AAICoachingPawn::RefreshPanel()
 {
 	if (!VrPanel) { return; }
 
-	VrPanel->SetTitle(FString::Printf(TEXT("AI Coaching   [%s]"), ModeEn(FocusMode, FocusDrill)),
+	VrPanel->SetTitle(FString::Printf(TEXT("AI 코칭   [%s]"), ModeEn(FocusMode, FocusDrill)),
 		FColor(150, 210, 255));
 
 	int32 Row = 0;
@@ -253,8 +252,8 @@ void AAICoachingPawn::RefreshPanel()
 			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
 		}
 		VrPanel->HideRowsFrom(Row);
-		VrPanel->SetFooter(TEXT("Play a mode to get recommendations"), FColor(150, 156, 168));
-		VrPanel->SetHint(TEXT("raise controller = menu  ·  aim card & hold = exit  ·  [M]"),
+		VrPanel->SetFooter(TEXT("추천을 받으려면 먼저 한 모드를 플레이하세요"), FColor(150, 156, 168));
+		VrPanel->SetHint(TEXT("컨트롤러 들기 = 메뉴  ·  카드 겨눈 채 유지 = 나가기  ·  [M]"),
 			FColor(150, 160, 175));
 		return;
 	}
@@ -274,7 +273,7 @@ void AAICoachingPawn::RefreshPanel()
 	}
 	VrPanel->HideRowsFrom(Row);
 
-	VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended exercises"),
+	VrPanel->SetFooter(bAwaitingCoaching ? TEXT("AI 응답 대기 중...") : TEXT("추천 운동"),
 		FColor(150, 200, 255));
 	VrPanel->SetHint(TEXT("raise controller = menu  ·  aim card & hold = exit  ·  [M]"),
 		FColor(150, 160, 175));

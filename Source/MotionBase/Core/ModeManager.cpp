@@ -177,27 +177,26 @@ TArray<FOverallCategoryDef> UModeManager::BuildOverallCategories()
 {
 	TArray<FOverallCategoryDef> Out;
 
-	auto Add = [&Out](EGameModeId Mode, FName DrillId, const TCHAR* Name, const TCHAR* ShortEn,
+	auto Add = [&Out](EGameModeId Mode, FName DrillId, const TCHAR* Name,
 		float MaxPoints, bool bOffense)
 	{
 		FOverallCategoryDef D;
 		D.Mode        = Mode;
 		D.DrillId     = DrillId;
 		D.DisplayName = Name;
-		D.ShortNameEn = ShortEn;
 		D.MaxPoints   = MaxPoints;
 		D.bIsOffense  = bOffense;
 		Out.Add(D);
 	};
 
 	// 공격 50 — 타격은 세부 종목이 없으므로 DrillId 는 None(모드만으로 매칭).
-	Add(EGameModeId::Batting, NAME_None, TEXT("타격"), TEXT("Bat"), 50.0f, /*bOffense=*/true);
+	Add(EGameModeId::Batting, NAME_None, TEXT("타격"), 50.0f, /*bOffense=*/true);
 
 	// 수비 50 을 3종목 균등 배분. GetDefenseDrillIdName 이 정본이라 리터럴을 쓰지 않는다.
 	constexpr float DefenseEach = 50.0f / 3.0f;
-	Add(EGameModeId::Defense, GetDefenseDrillIdName(0), TEXT("포구"),      TEXT("Catch"), DefenseEach, false);
-	Add(EGameModeId::Defense, GetDefenseDrillIdName(1), TEXT("송구"),      TEXT("Throw"), DefenseEach, false);
-	Add(EGameModeId::Defense, GetDefenseDrillIdName(2), TEXT("백업 판단"), TEXT("Bkup"),  DefenseEach, false);
+	Add(EGameModeId::Defense, GetDefenseDrillIdName(0), TEXT("포구"),      DefenseEach, false);
+	Add(EGameModeId::Defense, GetDefenseDrillIdName(1), TEXT("송구"),      DefenseEach, false);
+	Add(EGameModeId::Defense, GetDefenseDrillIdName(2), TEXT("백업 판단"), DefenseEach, false);
 
 	return Out;
 }

@@ -284,7 +284,6 @@ FOverallScore UScoringService::ComputeOverall(const TArray<FSessionResult>& Hist
 	{
 		FOverallCategoryScore Cat;
 		Cat.DisplayName = Def.DisplayName;
-		Cat.ShortNameEn = Def.ShortNameEn;
 		Cat.MaxPoints   = Def.MaxPoints;
 		Cat.bIsOffense  = Def.bIsOffense;
 
