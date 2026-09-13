@@ -22,6 +22,7 @@
 #include "Analysis/WeaknessDetector.h"
 #include "Scoring/ScoringService.h"
 #include "Core/ModeManager.h"
+#include "Framework/Application/SlateApplication.h"
 
 namespace
 {
@@ -128,7 +129,16 @@ void AThrowPawn::BeginPlay()
 	FeedbackService = NewObject<UAIFeedbackService>(this);
 	FeedbackService->OnFeedbackReady.AddDynamic(this, &AThrowPawn::HandleCoachingReady);
 
+	ApplicationActivationHandle = FSlateApplication::Get().OnApplicationActivationStateChanged()
+		.AddUObject(this, &AThrowPawn::HandleApplicationActivationChanged);
+
 	StartSession();
+}
+
+void AThrowPawn::HandleApplicationActivationChanged(bool bIsActive)
+{
+	if (bIsActive) { return; }
+	bCharging = false;
 }
 
 void AThrowPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -700,6 +710,11 @@ void AThrowPawn::FlushSessionToSave()
 
 void AThrowPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().OnApplicationActivationStateChanged().Remove(ApplicationActivationHandle);
+	}
+
 	FlushSessionToSave();
 
 	if (IsValid(ActiveBall))

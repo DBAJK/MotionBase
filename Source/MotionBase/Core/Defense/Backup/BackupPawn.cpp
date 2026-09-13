@@ -22,6 +22,7 @@
 #include "AI/AIFeedbackService.h"
 #include "Analysis/WeaknessDetector.h"
 #include "Scoring/ScoringService.h"
+#include "Framework/Application/SlateApplication.h"
 
 namespace
 {
@@ -194,11 +195,26 @@ void ABackupPawn::BeginPlay()
 	FeedbackService->OnFeedbackReady.AddDynamic(this, &ABackupPawn::HandleCoachingReady);
 	FeedbackService->OnPlayExplanationReady.AddDynamic(this, &ABackupPawn::HandlePlayExplanationReady);
 
+	ApplicationActivationHandle = FSlateApplication::Get().OnApplicationActivationStateChanged()
+		.AddUObject(this, &ABackupPawn::HandleApplicationActivationChanged);
+
 	StartSession();
+}
+
+void ABackupPawn::HandleApplicationActivationChanged(bool bIsActive)
+{
+	if (bIsActive) { return; }
+	bMoveFwd = bMoveBack = bMoveLeft = bMoveRight = false;
+	bTurnLeft = bTurnRight = false;
 }
 
 void ABackupPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().OnApplicationActivationStateChanged().Remove(ApplicationActivationHandle);
+	}
+
 	FlushSessionToSave();
 
 	// 등록을 풀지 않으면 협동에서 "전원 보고"가 영영 안 차서 세션이 멈춘다.
@@ -1174,8 +1190,18 @@ bool ABackupPawn::IsGateCurrentlyHeld() const
 		{
 			const FName Hand = MoveController->MotionSource;
 			const TCHAR* Side = (Hand == FName(TEXT("Left"))) ? TEXT("Left") : TEXT("Right");
-			const float Trig = PC->GetInputAnalogKeyState(
+
+			// "MotionController_%s_Trigger"(제네릭 OpenXR 키)가 이 런타임에서 전혀 안 잡히는
+			// 문제가 트랙패드에서도 있었다(CatchBallPawn 에서 실기 확인) — 진단해보니 트리거도
+			// 마찬가지였다(제네릭·Vive 키 둘 다 신호 없음). bGateRequired 기본값을 꺼둬서
+			// (위 헤더 주석 참고) 이 함수 자체가 기본적으론 호출되지 않지만, 그래도 두 이름을
+			// 함께 읽어 둔다 — 혹시 다른 기기에서 이 경로를 쓰게 되면 그쪽에서라도 잡히도록.
+			const float TrigGeneric = PC->GetInputAnalogKeyState(
 				FKey(*FString::Printf(TEXT("MotionController_%s_Trigger"), Side)));
+			const float TrigVive = PC->GetInputAnalogKeyState(
+				FKey(*FString::Printf(TEXT("Vive_%s_Trigger"), Side)));
+			const float Trig = FMath::Max(TrigGeneric, TrigVive);
+
 			return MoveController->IsTracked() && (Trig >= GateTriggerThreshold);
 		}
 	}

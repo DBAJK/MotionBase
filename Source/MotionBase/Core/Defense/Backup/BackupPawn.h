@@ -303,6 +303,14 @@ protected:
 	bool bShowFielderMarkers = true;
 
 private:
+	/**
+	 * 게임 창이 포커스를 잃는 순간 이동/회전 키가 눌려 있으면 Released 이벤트를 영영 못 받아
+	 * 그 방향으로 계속 움직이거나 도는 상태로 고정돼 버린다 (알트탭·헤드셋 전환 시 실제로 발생).
+	 * 포커스를 잃으면 이동·회전 플래그를 전부 끈다.
+	 */
+	void HandleApplicationActivationChanged(bool bIsActive);
+	FDelegateHandle ApplicationActivationHandle;
+
 	// ── PC 이동 입력 (BindKey 눌림/뗌 → 플래그, 다른 폰들과 동일 패턴) ──
 	void OnFwdPressed()    { bMoveFwd = true; }
 	void OnFwdReleased()   { bMoveFwd = false; }
@@ -532,7 +540,9 @@ private:
 	// ── 게이트 자동 저하 상태 ──
 	// 세션 단위로 유지한다(시행마다 리셋 금지) — 한 번 저하됐으면 남은 시행 내내 유지돼야
 	// 하고, 프로브 누적도 시행 경계에서 끊기면 GateProbeSec 을 영영 못 채운다.
-	bool  bGateRequired = true;      // false = 트리거 없이 스틱만으로 이동.
+	// 이 기기/런타임에서는 트리거 입력이 전혀 안 잡히는 게 실기로 확인됐다(BackupGate 진단
+	// 로그: 제네릭·Vive 키 둘 다 0). 4초짜리 자동 저하를 기다릴 이유가 없어 처음부터 꺼둔다.
+	bool  bGateRequired = false;     // false = 트리거 없이 스틱만으로 이동.
 	bool  bGateEverObserved = false; // 트리거가 한 번이라도 잡힌 적 있는가.
 	float AxisWithoutGateSec = 0.0f; // 게이트 없이 스틱만 들어온 누적 시간.
 	float DisplacedCm = 0.0f;       // 큐 이후 누적 순 변위(직선 거리).

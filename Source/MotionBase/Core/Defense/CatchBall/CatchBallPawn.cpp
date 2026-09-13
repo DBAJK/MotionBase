@@ -18,6 +18,7 @@
 #include "UI/ModeSelectHUD.h"
 #include "UI/VRInfoPanel.h"
 #include "AI/DrillCatalog.h"
+#include "Framework/Application/SlateApplication.h"
 #include "AI/AIFeedbackService.h"
 #include "Analysis/WeaknessDetector.h"
 #include "Scoring/ScoringService.h"
@@ -114,6 +115,13 @@ void ACatchBallPawn::BeginPlay()
 		LocomotionViveXKey    = FKey(*FString::Printf(TEXT("Vive_%s_Trackpad_X"), Side));
 		LocomotionGenericYKey = FKey(*FString::Printf(TEXT("MotionController_%s_Thumbstick_Y"), Side));
 		LocomotionViveYKey    = FKey(*FString::Printf(TEXT("Vive_%s_Trackpad_Y"), Side));
+		LocomotionGenericClickKey = FKey(*FString::Printf(TEXT("MotionController_%s_Thumbstick_Down"), Side));
+		LocomotionViveClickKey    = FKey(*FString::Printf(TEXT("Vive_%s_Trackpad_Click"), Side));
+	}
+
+	if (const UWorld* World = GetWorld())
+	{
+		LocomotionUnlockTimeSec = World->GetTimeSeconds() + 1.5f;
 	}
 
 	// 나가기 제스처를 이 종목에 맞게 조인다.
@@ -147,7 +155,16 @@ void ACatchBallPawn::BeginPlay()
 	FeedbackService = NewObject<UAIFeedbackService>(this);
 	FeedbackService->OnFeedbackReady.AddDynamic(this, &ACatchBallPawn::HandleCoachingReady);
 
+	ApplicationActivationHandle = FSlateApplication::Get().OnApplicationActivationStateChanged()
+		.AddUObject(this, &ACatchBallPawn::HandleApplicationActivationChanged);
+
 	StartSession();
+}
+
+void ACatchBallPawn::HandleApplicationActivationChanged(bool bIsActive)
+{
+	if (bIsActive) { return; }
+	bMoveRight = bMoveLeft = bMoveFwd = bMoveBack = false;
 }
 
 void ACatchBallPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -549,6 +566,11 @@ void ACatchBallPawn::FlushSessionToSave()
 
 void ACatchBallPawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().OnApplicationActivationStateChanged().Remove(ApplicationActivationHandle);
+	}
+
 	// 모드 복귀·앱 종료로 폰이 사라지기 전에 세션을 확정 저장한다.
 	// 다음 진입의 SetActiveMode 가 누적을 비우므로 여기서 flush 하지 않으면 기록이 사라진다.
 	FlushSessionToSave();
@@ -932,6 +954,12 @@ void ACatchBallPawn::TickVRLocomotion(float DeltaSeconds)
 		return;
 	}
 
+	const UWorld* World = GetWorld();
+	if (World && World->GetTimeSeconds() < LocomotionUnlockTimeSec)
+	{
+		return;
+	}
+
 	// Vive 컨트롤러 가운데 '원형 트랙패드'로 이동한다. 문제는 UE 가 이 패드를 두 이름 중
 	// 하나로 잡는다는 것:
 	//   · MotionController_<Side>_Thumbstick_X/Y  (OpenXR 제네릭)
@@ -949,6 +977,16 @@ void ACatchBallPawn::TickVRLocomotion(float DeltaSeconds)
 	float AxisX = ReadAxis(LocomotionGenericXKey, LocomotionViveXKey); // 좌우(+우)
 	float AxisY = ReadAxis(LocomotionGenericYKey, LocomotionViveYKey); // 앞뒤(+앞)
 
+	// 트랙패드를 실제로 눌렀을 때(클릭)만 이동을 인정한다 — 터치 센서는 오탐이 잦아서
+	// 못 믿는다(위 주석 참고). 클릭은 물리 버튼이라 훨씬 확실하다.
+	const bool bClicking = PC->IsInputKeyDown(LocomotionGenericClickKey) || PC->IsInputKeyDown(LocomotionViveClickKey);
+
+	if (!bClicking)
+	{
+		AxisX = 0.0f;
+		AxisY = 0.0f;
+	}
+
 	// 데드존 (손떨림/드리프트 무시).
 	if (FMath::Abs(AxisX) < StickDeadzone) { AxisX = 0.0f; }
 	if (FMath::Abs(AxisY) < StickDeadzone) { AxisY = 0.0f; }
@@ -957,6 +995,14 @@ void ACatchBallPawn::TickVRLocomotion(float DeltaSeconds)
 	{
 		return;
 	}
+
+	// 트랙패드 좌표는 컨트롤러 몸체 기준 고정값이다 — 이 폰은 글러브 컨트롤러를 실제
+	// 글러브처럼 비스듬히 쥐고 쓰므로, 컨트롤러가 돌아간 만큼(Roll) 트랙패드 값도 같이
+	// 돌아가 있다. 컨트롤러의 현재 Roll 만큼 거꾸로 돌려서 "내가 누른 방향"을 되찾는다.
+	const float ControllerRoll = GloveController ? GloveController->GetComponentRotation().Roll : 0.0f;
+	const FVector2D Corrected = FVector2D(AxisX, AxisY).GetRotated(-ControllerRoll);
+	AxisX = Corrected.X;
+	AxisY = Corrected.Y;
 
 	FVector Move(AxisY, AxisX, 0.0f);
 	if (Move.SizeSquared() > 1.0f)

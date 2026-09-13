@@ -289,6 +289,14 @@ private:
 	// ── 입력 핸들러 ──
 	void OnSpacePressed();     // Feed=포구 시도 / Ready=충전 시작
 	void OnSpaceReleased();    // Ready=발사
+
+	/**
+	 * 게임 창이 포커스를 잃는 순간 스페이스바를 누르고 있으면 Released 이벤트를 영영 못 받아
+	 * bCharging 이 계속 true 로 남는다 (알트탭·헤드셋 전환 시 실제로 발생). ThrowBall 을 부르지
+	 * 않고 충전만 조용히 취소한다 — 포커스를 잃은 순간 의도치 않게 송구가 나가면 안 된다.
+	 */
+	void HandleApplicationActivationChanged(bool bIsActive);
+	FDelegateHandle ApplicationActivationHandle;
 	void ReturnToModeSelect(); // M
 
 	// ── 세션 진행 ──

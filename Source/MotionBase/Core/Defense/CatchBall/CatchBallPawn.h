@@ -248,6 +248,14 @@ protected:
 	float DynamicStepDown = 0.08f;
 
 private:
+	/**
+	 * 게임 창이 포커스를 잃는 순간 이동 키가 눌려 있으면 Released 이벤트를 영영 못 받아,
+	 * 그 방향으로 계속 움직이는 상태로 고정돼 버린다 (알트탭·헤드셋 전환 시 실제로 발생).
+	 * 포커스를 잃으면 이동 플래그를 전부 끈다.
+	 */
+	void HandleApplicationActivationChanged(bool bIsActive);
+	FDelegateHandle ApplicationActivationHandle;
+
 	// ── 입력 핸들러 (BindKey 눌림/뗌 → 플래그) ──
 	void OnRightPressed()  { bMoveRight = true; }
 	void OnRightReleased() { bMoveRight = false; }
@@ -419,6 +427,23 @@ private:
 	 */
 	FKey LocomotionGenericXKey, LocomotionViveXKey;
 	FKey LocomotionGenericYKey, LocomotionViveYKey;
+
+	/**
+	 * "터치" 키(Vive_%s_Trackpad_Touch)는 실기에서 안 믿을 만했다 — 세션 시작 직후 한동안
+	 * 손도 안 댔는데 계속 true 로 찍혔고, 세션 중간에도 축 값이 튀는 걸 걸러주지 못했다.
+	 * 대신 **클릭**(트랙패드를 실제로 눌러야 켜지는 기계식 버튼)으로 게이팅한다 — 터치 센서와
+	 * 달리 물리적으로 눌러야만 신호가 나서 오탐 여지가 훨씬 적다. 트랙패드를 누르고 있는
+	 * 동안에만 이동하고, 떼면 즉시 멈춘다(별도 draft 없이 축 값을 그대로 무시).
+	 * (미등록 키면 IsInputKeyDown 이 false 를 안전하게 돌려준다 — 축 키와 같은 패턴.)
+	 */
+	FKey LocomotionGenericClickKey, LocomotionViveClickKey;
+
+	/**
+	 * 세션 시작 직후 잠깐(1.5초) 트랙패드 입력을 아예 무시한다 — 실기에서 확인된 문제로,
+	 * OpenXR 액션 바인딩이 완전히 붙기 전 한동안 축 값이 이전 세션의 잔상 같은 값을 그대로
+	 * 돌려준다. 클릭 게이팅과 별개로, 시작 직후 구간은 시간으로 한 번 더 확실히 거른다.
+	 */
+	float LocomotionUnlockTimeSec = 0.0f;
 
 	/** VR 상태 패널 내용 갱신 (bVR 일 때 매 틱). */
 	void RefreshVrPanel();
