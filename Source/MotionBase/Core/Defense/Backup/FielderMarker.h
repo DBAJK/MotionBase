@@ -10,6 +10,19 @@ class UTextRenderComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UStaticMesh;
+class UMaterialInterface;
+
+/**
+ * 인스턴싱 렌더러로 넘기는 부위 한 개 (AFielderCrowd 가 소비).
+ * 한 프레임 안에서만 쓰이는 전달용이라 USTRUCT 로 만들지 않는다.
+ */
+struct FFielderPartInstance
+{
+	UStaticMesh* Mesh = nullptr;
+	uint8 Group = 0;
+	FLinearColor Color = FLinearColor::White;
+	FTransform WorldTransform;
+};
 
 /** 유니폼 색 그룹 — 부위마다 어느 색을 쓰는지. */
 UENUM()
@@ -73,6 +86,22 @@ public:
 
 	EFieldPosition GetPosition() const { return Position; }
 
+	// ── 인스턴싱 렌더러(AFielderCrowd) 연동 ──
+	// 몸의 **모양은 계속 이 클래스가 정의한다.** 크라우드는 여기서 만들어진 부위 트랜스폼을
+	// 읽어 인스턴스로 옮기고 원본을 끌 뿐이라, 자세를 고칠 때 손댈 곳은 여전히 여기 한 곳이다.
+
+	/** 몸 전체(머리 위 이름표 제외) 표시/숨김. */
+	void SetBodyVisible(bool bVisible);
+
+	/** 지금 몸을 그리고 있는가. 본인 자리는 Configure 에서 이미 꺼져 있다. */
+	bool IsBodyVisible() const { return bBodyVisible; }
+
+	/** 조립된 부위를 (메시·색그룹·색·월드 트랜스폼)으로 넘긴다. */
+	void CollectBodyParts(TArray<struct FFielderPartInstance>& Out) const;
+
+	/** 부위에 쓰는 기본 머티리얼 (엔진 BasicShapeMaterial). 크라우드가 MID 를 만들 때 쓴다. */
+	UMaterialInterface* GetShapeMaterial() const { return ShapeMaterial; }
+
 	/** 본인 자리 이름표 색 (앰버) — HUD 미니맵의 MapPosSelf 와 톤을 맞춘다. */
 	static const FLinearColor SelfTint;
 	/** 동료 이름표 색. */
@@ -131,8 +160,19 @@ private:
 	/** 색 그룹 → 실제 색. */
 	FLinearColor ColorFor(EFielderPart Group) const;
 
-	/** 몸 전체(머리 위 이름표 제외) 표시/숨김. */
-	void SetBodyVisible(bool bVisible);
+	/** 몸이 켜져 있는지 — SetBodyVisible 이 갱신한다. */
+	bool bBodyVisible = true;
+
+	/**
+	 * 이름표 회전을 다시 적용할 최소 각도 변화(도). 이보다 작게 변하면 건너뛴다.
+	 * 0 으로 두면 매 프레임 갱신(예전 동작)으로 되돌아간다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Fielder", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+	float LabelYawEpsilonDeg = 1.5f;
+
+	/** 마지막으로 적용한 이름표 yaw (도). */
+	float LastLabelYaw = 0.0f;
+	bool  bLabelYawApplied = false;
 
 	/** 조립된 부위들. PartGroups 와 인덱스가 1:1 대응한다. */
 	UPROPERTY()
