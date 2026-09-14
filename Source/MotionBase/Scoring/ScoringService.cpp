@@ -271,6 +271,22 @@ FScoreResult UScoringService::ScoreSession(const TArray<FSwingMetrics>& History,
 	return R;
 }
 
+namespace
+{
+	/**
+	 * 수비의 옛 성공률 채점(ScoreDefenseSession) 세션인가.
+	 * 옛 식은 성공률 × 100 이라 3축 채점보다 훨씬 높게 나온다 — 섞으면 옛 기록이 최고점에 박혀
+	 * 새로 플레이해도 종합이 안 바뀐다(저장 데이터에서 확인: 포구 70·백업 100 이 전부 옛 식).
+	 * 3축 채점은 ConsistencySampleCount 를, 옛 식은 SuccessCount 를 Details 에 남긴다.
+	 */
+	bool IsLegacyDefenseOverallScore(const FSessionResult& S)
+	{
+		return S.Mode == EGameModeId::Defense
+			&& S.Average.Details.Contains(TEXT("SuccessCount"))
+			&& !S.Average.Details.Contains(TEXT("ConsistencySampleCount"));
+	}
+}
+
 FOverallScore UScoringService::ComputeOverall(const TArray<FSessionResult>& History,
 	const TArray<FOverallCategoryDef>& Categories, const FOverallScoreConfig& Config)
 {
@@ -279,6 +295,18 @@ FOverallScore UScoringService::ComputeOverall(const TArray<FSessionResult>& Hist
 
 	float PlayedMaxPoints = 0.0f; // 실시한 종목들의 만점 합 — 100 환산의 분모.
 	bool  bAnyUncalibrated = false;
+	int32 LatestHistoryIndex = INDEX_NONE; // 전 종목 통틀어 가장 최근 유효 세션의 이력 위치.
+
+	// 난이도 계수를 곱한 뒤 상한으로 clamp — Beginner 는 상한에 못 닿고, Pro 는 더 쉽게 닿는다.
+	auto LevelOf = [](const FSessionResult& S)
+	{
+		return static_cast<EDifficultyLevel>(
+			FMath::Clamp(S.DifficultyLevel, 0, static_cast<int32>(EDifficultyLevel::Pro)));
+	};
+	auto Adjust = [&Config, &LevelOf](const FSessionResult& S)
+	{
+		return FMath::Clamp(S.Average.TotalScore * Config.MultiplierFor(LevelOf(S)), 0.0f, Config.MaxCategoryScore);
+	};
 
 	for (const FOverallCategoryDef& Def : Categories)
 	{
@@ -287,9 +315,11 @@ FOverallScore UScoringService::ComputeOverall(const TArray<FSessionResult>& Hist
 		Cat.MaxPoints   = Def.MaxPoints;
 		Cat.bIsOffense  = Def.bIsOffense;
 
-		// 이 종목의 세션 중 (난이도 계수 적용 후) 최고점을 찾는다.
-		for (const FSessionResult& S : History)
+		// 이 종목의 유효 세션을 저장 순서(=시간순)로 모은다.
+		TArray<int32> Eligible;
+		for (int32 h = 0; h < History.Num(); ++h)
 		{
+			const FSessionResult& S = History[h];
 			if (S.Mode != Def.Mode)
 			{
 				continue;
@@ -304,23 +334,48 @@ FOverallScore UScoringService::ComputeOverall(const TArray<FSessionResult>& Hist
 			{
 				continue; // 시도 부족·헛스윙 등으로 점수가 성립하지 않은 세션.
 			}
+			if (S.AttemptCount < Config.MinAttemptsForOverall)
+			{
+				continue; // 1~2회짜리 판 — 표본이 너무 적어 최고점 후보로 믿을 수 없다.
+			}
+			if (Config.bExcludeLegacyDefenseScoring && IsLegacyDefenseOverallScore(S))
+			{
+				continue;
+			}
+			Eligible.Add(h);
+		}
 
-			const EDifficultyLevel Level = static_cast<EDifficultyLevel>(
-				FMath::Clamp(S.DifficultyLevel, 0, static_cast<int32>(EDifficultyLevel::Pro)));
-
-			const float Raw = S.Average.TotalScore;
-			// 계수를 곱한 뒤 상한으로 clamp — Beginner 는 상한에 못 닿고, Pro 는 더 쉽게 닿는다.
-			const float Adjusted = FMath::Clamp(Raw * Config.MultiplierFor(Level), 0.0f, Config.MaxCategoryScore);
+		// 최근 창 안에서만 최고점을 찾는다 (0 = 역대 전체).
+		const int32 FirstInWindow = (Config.RecentSessionWindow > 0)
+			? FMath::Max(Eligible.Num() - Config.RecentSessionWindow, 0)
+			: 0;
+		for (int32 e = FirstInWindow; e < Eligible.Num(); ++e)
+		{
+			const FSessionResult& S = History[Eligible[e]];
+			const float Adjusted = Adjust(S);
 
 			if (!Cat.bPlayed || Adjusted > Cat.BestScore)
 			{
 				Cat.bPlayed        = true;
 				Cat.BestScore      = Adjusted;
-				Cat.RawBestScore   = Raw;
-				Cat.BestDifficulty = Level;
+				Cat.RawBestScore   = S.Average.TotalScore;
+				Cat.BestDifficulty = LevelOf(S);
 			}
-
+			++Cat.SessionsConsidered;
 			bAnyUncalibrated |= S.Average.bUncalibrated;
+		}
+
+		if (Eligible.Num() > 0)
+		{
+			const FSessionResult& Last = History[Eligible.Last()];
+			Cat.LatestScore      = Adjust(Last);
+			Cat.LatestDifficulty = LevelOf(Last);
+
+			if (Eligible.Last() > LatestHistoryIndex)
+			{
+				LatestHistoryIndex = Eligible.Last();
+				Out.LatestCategoryIndex = Out.Categories.Num(); // 아래 Add 로 들어갈 자리.
+			}
 		}
 
 		if (Cat.bPlayed)

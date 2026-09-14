@@ -791,8 +791,10 @@ void AModeSelectHUD::DrawOverallScore(float X, float Y, float PanelW, float S, U
 	y += TH + 6.0f * S;
 
 	// 완료도 — 총점이 "왜 이 숫자인지"를 설명하는 값이라 총점 바로 밑에 붙인다.
-	DrawText(FString::Printf(TEXT("완료 %d / %d 종목  ·  실시 종목 기준 환산"),
-		Overall.PlayedCount, Overall.CategoryCount), TextSecondary, X, y, FontBody, 0.8f * S);
+	// ModeManager 와 같은 기본 설정값을 읽는다 (종합 계산이 FOverallScoreConfig() 기본값을 쓴다).
+	DrawText(FString::Printf(TEXT("완료 %d / %d 종목  ·  종목별 최근 %d회 중 최고"),
+		Overall.PlayedCount, Overall.CategoryCount, FOverallScoreConfig().RecentSessionWindow),
+		TextSecondary, X, y, FontBody, 0.8f * S);
 	y += 24.0f * S;
 
 	if (Overall.bUncalibrated)
@@ -832,8 +834,10 @@ void AModeSelectHUD::DrawOverallScore(float X, float Y, float PanelW, float S, U
 		FString Line;
 		if (bPlayed)
 		{
-			Line = FString::Printf(TEXT("%s   %.0f   (%s)"), *Cat.DisplayName, Cat.BestScore,
-				*UModeManager::GetDifficultyDisplayName(Cat.BestDifficulty).ToString());
+			// 최근 점수를 같이 보여준다 — 최고점만 있으면 새로 플레이해도 줄이 안 바뀌어
+			// 결과가 반영 안 된 것처럼 보인다.
+			Line = FString::Printf(TEXT("%s   %.0f   (%s)   ·   최근 %.0f"), *Cat.DisplayName, Cat.BestScore,
+				*UModeManager::GetDifficultyDisplayName(Cat.BestDifficulty).ToString(), Cat.LatestScore);
 		}
 		else
 		{

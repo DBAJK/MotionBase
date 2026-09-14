@@ -145,9 +145,16 @@ void AMotionBaseGameMode::ApplyPendingPawnSwap()
 
 	APawn* OldPawn = PC->GetPawn();
 
-	// 새 폰을 기존 폰 자리에 놓는다 (없으면 원점). 시점이 튀지 않고,
-	// 모드 폰이 자기 위치 기준으로 배치하는 액터(APitchingZone 등)도 그대로 맞는다.
-	const FTransform SpawnTM = OldPawn ? OldPawn->GetActorTransform() : FTransform::Identity;
+	// 새 폰은 항상 '홈' — 게임 시작 때 첫 폰이 섰던 PlayerStart — 에 놓는다.
+	// ⚠️ 예전엔 기존 폰 자리를 그대로 썼는데, 수비 폰(포구·백업)은 플레이 중 폰 자체를 이동시킨다.
+	//    그래서 수비 → 메뉴 → 타격으로 넘어가면 타석이 아니라 수비하다 멈춘 자리에서 타격이 시작됐다
+	//    (APitchingZone 등 폰 기준으로 배치되는 액터도 같이 어긋남).
+	// 엔진 RestartPlayer 와 같게 위치 + Yaw 만 쓴다. PlayerStart 가 없으면 예전처럼 기존 폰 자리.
+	FTransform SpawnTM = OldPawn ? OldPawn->GetActorTransform() : FTransform::Identity;
+	if (const AActor* Home = FindPlayerStart(PC))
+	{
+		SpawnTM = FTransform(FRotator(0.0f, Home->GetActorRotation().Yaw, 0.0f), Home->GetActorLocation());
+	}
 
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;

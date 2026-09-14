@@ -136,7 +136,7 @@ private:
 	void ApplyAnimated();
 
 	/** 보드 소속 컴포넌트 전부의 표시 여부. */
-	void SetAllVisible(bool bVisible);
+	void SetAllVisible(bool bShow);
 
 	UPROPERTY() TObjectPtr<UFont> BoardFont;
 	UPROPERTY() TObjectPtr<UStaticMesh> CubeMesh;

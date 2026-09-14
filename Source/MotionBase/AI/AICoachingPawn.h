@@ -85,6 +85,22 @@ private:
 	EGameModeId FocusMode = EGameModeId::Batting;
 	FName       FocusDrill = NAME_None;
 
+	/** focus 세션 요약 — 화면에 "어떤 기록을 보고 한 코칭인지"를 보여준다. */
+	FDateTime FocusStartedAt;
+	float     FocusScore = 0.0f;
+	int32     FocusDifficulty = 1;
+	int32     FocusAttempts = 0;
+
+	/**
+	 * 코칭 문장·추천 운동을 몇 초마다 다음 페이지로 넘길지.
+	 * 패널이 4줄뿐이라 예전엔 코칭 앞 60자·운동 2개에서 잘려 매번 같은 화면처럼 보였다.
+	 */
+	UPROPERTY(EditAnywhere, Category = "AICoaching", meta = (ClampMin = "1.0"))
+	float PageIntervalSec = 5.0f;
+
+	float PageTimer = 0.0f;
+	int32 PageIndex = 0;
+
 	bool bHasData        = false;   // 분석에 쓸 기록이 있었는지
 	bool bAwaitingCoaching = false; // AI 응답 대기 중
 

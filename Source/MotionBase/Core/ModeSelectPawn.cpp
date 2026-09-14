@@ -827,8 +827,11 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 		}
 		else
 		{
-			VrPanel->SetRow(ExtraRow++, FString::Printf(TEXT("종합  %.0f / 100   (%d/%d 완료)"),
-				Overall.Total, Overall.PlayedCount, Overall.CategoryCount),
+			// 미보정 경고는 총점 줄에 붙인다 — 남는 행이 3줄뿐인데 "방금 반영된 판" 줄이 필요하다.
+			// (100점 만점은 정밀해 보이지만 기준 상수는 아직 실측 보정 전이라 표시는 반드시 남긴다.)
+			VrPanel->SetRow(ExtraRow++, FString::Printf(TEXT("종합  %.0f / 100   (%d/%d 완료)%s"),
+				Overall.Total, Overall.PlayedCount, Overall.CategoryCount,
+				Overall.bUncalibrated ? TEXT("  *미보정") : TEXT("")),
 				FColor(255, 200, 120));
 
 			// 종목별 한 줄 — 짧은 한글 이름이라 4개가 한 행에 들어간다. 미실시는 "-".
@@ -845,11 +848,15 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 				VrPanel->SetRow(ExtraRow++, ByCat, FColor(150, 156, 168));
 			}
 
-			// 미보정 경고는 평면 HUD 와 같은 이유로 여기서도 반드시 띄운다 —
-			// 100점 만점은 정밀해 보이지만 기준 상수는 아직 실측 보정 전이다.
-			if (Overall.bUncalibrated && ExtraRow < UVRInfoPanel::MaxRows)
+			// 방금 반영된 판 — 종목 점수는 최근 몇 회 중 최고점이라, 새로 한 판이 최고점을 못 넘으면
+			// 숫자가 그대로다. 그러면 "결과가 반영 안 됐다"로 읽혀서 최근 판을 따로 보여준다.
+			if (Overall.Categories.IsValidIndex(Overall.LatestCategoryIndex) && ExtraRow < UVRInfoPanel::MaxRows)
 			{
-				VrPanel->SetRow(ExtraRow++, TEXT("* 채점 기준 미보정"), FColor(230, 150, 90));
+				const FOverallCategoryScore& Last = Overall.Categories[Overall.LatestCategoryIndex];
+				VrPanel->SetRow(ExtraRow++, FString::Printf(TEXT("최근 기록  %s %.0f점 (%s)"),
+					*Last.DisplayName, Last.LatestScore,
+					*UModeManager::GetDifficultyDisplayName(Last.LatestDifficulty).ToString()),
+					FColor(150, 200, 255));
 			}
 		}
 	}

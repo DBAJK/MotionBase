@@ -1,6 +1,6 @@
 # MotionBase — SporTrack : Baseball
 
-비착용형(Non-HMD) XR 야구 콘텐츠. **Unreal Engine 단독(C++ + Blueprint)**, HTC Vive Pro 기반.
+비착용형(Non-HMD) XR 야구 콘텐츠. **Unreal Engine 단독(C++ + Blueprint)**, HTC VIVE Pro 2 기반 (개발 PC 실측 기기).
 2026 AI·가상융합(XR) 서비스 개발자 경진대회 / 과제6 (㈜뉴작).
 
 > **정본 브리프**: [history/CLAUDE_1.md](history/CLAUDE_1.md) — 프로젝트 개요·기술 결정·측정/점수 체계·열린 이슈의 원본.
@@ -53,4 +53,8 @@
   런처가 `5.8`을 HKLM에 등록 안 해서 버전 문자열로는 연결 실패 → GUID 사용. 다른 PC/뉴작 환경에선 재연결 필요.
   - UE 5.7+에서 `Get Motion Controller Data` 폐기 → `Get Motion Controller State` 사용 (Vive 속도 추출 시 주의).
 - Vive 연동은 **OpenXR 플러그인** 사용 (구형 SteamVR 플러그인은 UE 5.1 폐기).
+- 개발 PC 헤드셋은 **VIVE Pro 2**(한 눈 2448², VIVE Console + SteamVR). SteamVR 렌더 해상도는 사용자 지정 100% 로 고정하고
+  프로젝트 `vr.PixelDensity` 로 조절한다 (자동 배율 142% 가 겹치면 RTX 3060 Ti 에 과부하).
+- ⚠️ VR 프리뷰가 안 뜨고 SteamVR 로그(`Steam/logs/vrserver.txt`)에 `VRInitError_Init_AnotherAppLaunching` 이 반복되면
+  SteamVR Home(`steamtours`)이 종료 중 멈춘 것 → SteamVR 완전 재시작(안 되면 재부팅). SteamVR Home 은 꺼 둔다.
 - AI API 키 등 비밀값은 `Config/Secrets.ini`(gitignore)로 분리.

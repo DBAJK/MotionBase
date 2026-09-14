@@ -137,6 +137,18 @@ bool UModeManager::FinalizeSession(const FScoreResult& SessionAverage, const FWe
 		return false;
 	}
 
+	// ⚠️ 붙이기 직전에 디스크의 최신 슬롯을 다시 읽는다. 메모리의 SaveData 는 이 프로세스가 시작할 때
+	//    읽은 사본이라, 게임 인스턴스가 둘 이상 떠 있으면(협동 PIE·스탠드얼론 동시 실행) 서로 상대가
+	//    저장한 세션을 모른 채 이력 전체를 덮어써 기록이 사라진다 (09-13 세션 7건 유실 확인).
+	if (UGameplayStatics::DoesSaveGameExist(UMotionBaseSaveGame::DefaultSlotName, UMotionBaseSaveGame::DefaultUserIndex))
+	{
+		if (UMotionBaseSaveGame* OnDisk = Cast<UMotionBaseSaveGame>(UGameplayStatics::LoadGameFromSlot(
+			UMotionBaseSaveGame::DefaultSlotName, UMotionBaseSaveGame::DefaultUserIndex)))
+		{
+			SaveData = OnDisk;
+		}
+	}
+
 	FSessionResult Session;
 	Session.Mode = ActiveMode;
 	Session.DrillId = ActiveDrill;   // 수비 세부 종목 — 추세 분석이 종목별로 갈라지는 근거.

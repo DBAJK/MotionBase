@@ -808,7 +808,6 @@ void AVRBattingPawn::RefreshVrPanel()
 	// (데스크톱 미러는 ISessionResultView 로 전체 결과 패널을 따로 그린다.)
 	if (bSessionOver)
 	{
-<<<<<<< HEAD
 		VrPanel->HideAll();
 		VrPanel->HideBackCard();
 		if (ResultBoard)
@@ -837,15 +836,7 @@ void AVRBattingPawn::RefreshVrPanel()
 	// (한글 코칭은 KRFont 가 있으면 렌더된다. 없으면 데스크톱 로그로 확인.)
 	if (CoachingShowTimer > 0.0f)
 	{
-		VrPanel->SetTitle(FString::Printf(TEXT("Session result    score %.1f"), SessionScore.TotalScore),
-=======
-		// 헤드셋 안 결과 요약 — 데스크톱 미러는 ISessionResultView 로 전체 패널을 그리지만,
-		// 헤드셋에서는 3D 텍스트라 줄 수가 한정돼 핵심 숫자만 압축해 보여준다.
-		VrPanel->SetTitle(
-			bSessionOver
-				? FString::Printf(TEXT("세션 종료!  %d구    점수 %.1f"), TotalPitches, SessionScore.TotalScore)
-				: FString::Printf(TEXT("세션 결과    점수 %.1f"), SessionScore.TotalScore),
->>>>>>> main
+		VrPanel->SetTitle(FString::Printf(TEXT("세션 결과    점수 %.1f"), SessionScore.TotalScore),
 			FColor(150, 210, 255));
 
 		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
@@ -875,24 +866,7 @@ void AVRBattingPawn::RefreshVrPanel()
 		}
 		VrPanel->HideRowsFrom(Row);
 
-<<<<<<< HEAD
-		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended exercises"),
-=======
-		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
-		// '뒤로' 카드는 내린다 — 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
-		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
-		if (bSessionOver)
-		{
-			VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("다시 하기")), EndMenu.Color(0));
-			VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("메뉴로")),   EndMenu.Color(1));
-			VrPanel->HideFooter();
-			VrPanel->HideBackCard();
-			VrPanel->SetHint(TEXT("배트로 카드를 겨눈 채 유지하세요   ( [R] / [M] )"), FColor(110, 116, 128));
-			return;
-		}
-
 		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("AI 응답 대기 중...") : TEXT("추천 운동"),
->>>>>>> main
 			FColor(150, 156, 168));
 		VrPanel->SetHint(TEXT("트리거 = 다시 요청 · 배트 들기 = 나가기 · [M/R]"),
 			FColor(110, 116, 128));
@@ -901,13 +875,6 @@ void AVRBattingPawn::RefreshVrPanel()
 
 	const bool bTracking = Bat && Bat->IsTracking();
 
-<<<<<<< HEAD
-	const TCHAR* StanceEn = (SessionStance == EBattingStance::Left) ? TEXT("Lefty") : TEXT("Righty");
-
-	// 제목: 난이도·타석. 추적 끊기면 붉게.
-	VrPanel->SetTitle(
-		FString::Printf(TEXT("VR Batting   [%s / %s]"), BattingDifficultyEn(SessionDifficulty), StanceEn),
-=======
 	// UModeManager::GetDifficultyDisplayName 과 같은 어휘("초보"/"아마추어"/"프로")를 쓴다.
 	auto DiffKo = [](EDifficultyLevel D) -> const TCHAR*
 	{
@@ -923,7 +890,6 @@ void AVRBattingPawn::RefreshVrPanel()
 	// 제목: 난이도·타석. 추적 끊기면 붉게.
 	VrPanel->SetTitle(
 		FString::Printf(TEXT("VR 타격   [%s / %s]"), DiffKo(SessionDifficulty), StanceKo),
->>>>>>> main
 		bTracking ? FColor(228, 233, 244) : FColor(235, 90, 90));
 
 	int32 Row = 0;

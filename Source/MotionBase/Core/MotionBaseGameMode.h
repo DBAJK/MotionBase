@@ -66,7 +66,10 @@ protected:
 	 */
 	void RequestPawnSwap(TSubclassOf<APawn> NewPawnClass);
 
-	/** 예약된 교체를 실행. 새 폰은 기존 폰과 같은 트랜스폼에 생성된다. */
+	/**
+	 * 예약된 교체를 실행. 새 폰은 항상 PlayerStart(홈) 트랜스폼에 생성된다 —
+	 * 수비 폰이 이동시킨 자리를 다음 모드가 물려받지 않게. (PlayerStart 가 없으면 기존 폰 자리)
+	 */
 	void ApplyPendingPawnSwap();
 
 	UPROPERTY(Transient)

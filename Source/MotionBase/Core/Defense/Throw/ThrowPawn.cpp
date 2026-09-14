@@ -1111,7 +1111,6 @@ void AThrowPawn::RefreshVrPanel()
 	// 세션 종료 — 컴팩트 패널을 비우고 결과 보드(큰 점수·측정 지표·AI 코칭·버튼)를 세운다.
 	if (bSessionOver)
 	{
-<<<<<<< HEAD
 		VrPanel->HideAll();
 		VrPanel->HideBackCard();
 		if (ResultBoard)
@@ -1119,43 +1118,6 @@ void AThrowPawn::RefreshVrPanel()
 			ResultBoard->CopyAnchorFrom(VrPanel);
 			ResultBoard->Show(BuildResultBoardData());
 		}
-=======
-		VrPanel->SetTitle(
-			FString::Printf(TEXT("AI 운동 추천    (%d / %d 명중)"), SuccessCount, TotalThrows),
-			FColor(150, 210, 255));
-
-		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
-		//    요약 1줄 + 코칭 2줄 + 드릴 1개로 압축. 전체 리포트는 데스크톱 결과 화면이 담당.
-		//    종료 화면은 마지막 두 줄을 선택 카드에 내주므로 내용이 한 줄 줄어든다.
-		const int32 MaxContentRows = EndCardFirstRow;
-		int32 Row = 0;
-		const float AvgT = GetAverageTransferSec();
-		VrPanel->SetRow(Row++, FString::Printf(TEXT("평균 %.0f km/h    전환 %s"),
-			GetAverageReleaseKmh(),
-			(AvgT >= 0.0f) ? *FString::Printf(TEXT("%.2fs"), AvgT) : TEXT("--")),
-			FColor(150, 200, 255));
-
-		for (const FString& L : ThrowWrap(CoachingText, 30, 2))
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
-		}
-		for (const FTrainingDrill& D : LastDrills)
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, D.CompactLabel(), FColor(255, 200, 120));
-		}
-		VrPanel->HideRowsFrom(Row);
-
-		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
-		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
-		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
-		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("다시 하기")), EndMenu.Color(0));
-		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("메뉴로")),   EndMenu.Color(1));
-		VrPanel->HideFooter();
-		VrPanel->HideBackCard();
-		VrPanel->SetHint(TEXT("컨트롤러로 카드를 겨눈 채 유지하세요"), FColor(110, 116, 128));
->>>>>>> main
 		return;
 	}
 

@@ -9,23 +9,47 @@
 #include "Serialization/JsonWriter.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Guid.h"
+#include "Misc/MonitoredProcess.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformMisc.h"
+#include "Async/Async.h"
 #include "Containers/Ticker.h"
+
+namespace
+{
+	/** Config/Secrets.ini (gitignore) 의 [AI] 값 하나를 읽는다. 임의 경로 ini — GConfig 가 캐시한다. */
+	FString ReadSecret(const TCHAR* Key)
+	{
+		const FString SecretsPath = FPaths::ProjectConfigDir() / TEXT("Secrets.ini");
+		FString Value;
+		if (GConfig)
+		{
+			GConfig->GetString(TEXT("AI"), Key, Value, SecretsPath);
+		}
+		return Value.TrimStartAndEnd();
+	}
+}
 
 FString UAIFeedbackService::LoadApiKey() const
 {
-	// Config/Secrets.ini (gitignore) 를 임의 경로 ini 로 읽는다. GConfig 가 캐시한다.
-	const FString SecretsPath = FPaths::ProjectConfigDir() / TEXT("Secrets.ini");
-	FString Key;
-	if (GConfig)
-	{
-		GConfig->GetString(TEXT("AI"), TEXT("ApiKey"), Key, SecretsPath);
-	}
-	return Key.TrimStartAndEnd();
+	return ReadSecret(TEXT("ApiKey"));
+}
+
+bool UAIFeedbackService::IsCliBackendEnabled() const
+{
+#if PLATFORM_WINDOWS
+	return ReadSecret(TEXT("Backend")).Equals(TEXT("ClaudeCodeCli"), ESearchCase::IgnoreCase);
+#else
+	return false;
+#endif
 }
 
 bool UAIFeedbackService::IsConfigured() const
 {
-	return !LoadApiKey().IsEmpty();
+	// API 키가 우선. 키가 없어도 CLI 백엔드가 켜져 있고 실행 파일이 있으면 호출할 수 있다.
+	return !LoadApiKey().IsEmpty() || (IsCliBackendEnabled() && !ResolveClaudeCliPath().IsEmpty());
 }
 
 FString UAIFeedbackService::BuildSystemPrompt(ECoachDomain Domain) const
@@ -244,6 +268,13 @@ void UAIFeedbackService::DispatchRequest(const FString& Body, const FString& Mod
 	const FString ApiKey = LoadApiKey();
 	if (ApiKey.IsEmpty())
 	{
+		// 키가 없고 개발용 CLI 백엔드가 켜져 있으면 그쪽으로 보낸다 (Secrets.ini [AI] Backend=ClaudeCodeCli).
+		if (IsCliBackendEnabled())
+		{
+			DispatchCliRequest(Body, OnComplete);
+			return;
+		}
+
 		// 키가 없으면 조용히 건너뛴다 — 약점 리포트·드릴·저작 해설은 이미 화면에 있다.
 		UE_LOG(LogMotionBase, Log,
 			TEXT("AIFeedback: API 키 미설정 (Config/Secrets.ini [AI] ApiKey). AI 호출 생략."));
@@ -402,4 +433,262 @@ void UAIFeedbackService::RequestPlayExplanation(const FBackupExplainRequest& Req
 			// 실패해도 조용히 넘어간다 — 호출부가 저작 해설로 되돌아간다.
 			Self->OnPlayExplanationReady.Broadcast(bSuccess, Key, bSuccess ? Text : FString());
 		});
+}
+
+// ── 개발용 백엔드: Claude Code CLI ──────────────────────────────────────────
+// ⚠️ 로그인된 개인 Claude 구독으로 호출한다 — 본인 개발·테스트 전용.
+//    시연·부스처럼 다른 사람이 쓰는 환경에서는 API 키(Secrets.ini [AI] ApiKey)를 쓸 것.
+
+FString UAIFeedbackService::ResolveClaudeCliPath() const
+{
+#if PLATFORM_WINDOWS
+	IFileManager& FM = IFileManager::Get();
+
+	// 1) Secrets.ini 에 명시한 경로가 있으면 그것만 본다 (틀렸으면 자동 탐색으로 넘어가지 않는다).
+	const FString Configured = ReadSecret(TEXT("ClaudeCliPath"));
+	if (!Configured.IsEmpty())
+	{
+		return FM.FileExists(*Configured) ? Configured : FString();
+	}
+
+	const FString UserProfile = FPlatformMisc::GetEnvironmentVariable(TEXT("USERPROFILE"));
+	const FString AppData = FPlatformMisc::GetEnvironmentVariable(TEXT("APPDATA"));
+
+	// 2) 단독 설치 (네이티브 설치 / npm -g)
+	for (const FString& Candidate : { UserProfile / TEXT(".local/bin/claude.exe"), AppData / TEXT("npm/claude.cmd") })
+	{
+		if (FM.FileExists(*Candidate))
+		{
+			return Candidate;
+		}
+	}
+
+	// 3) Claude 데스크톱 앱 번들 — 앱이 업데이트될 때마다 버전 폴더가 바뀌므로 가장 최근 것을 고른다.
+	//    ⚠️ 스토어(MSIX) 설치본은 %APPDATA% 가 앱 안에서만 가상화돼 보인다. 앱 밖(에디터·게임)에서는
+	//    실제 파일이 %LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Roaming 아래에 있으므로 두 곳 모두 본다.
+	TArray<FString> BundleRoots = { AppData / TEXT("Claude/claude-code") };
+	const FString PackagesDir = FPlatformMisc::GetEnvironmentVariable(TEXT("LOCALAPPDATA")) / TEXT("Packages");
+	TArray<FString> PackageDirs;
+	FM.FindFiles(PackageDirs, *(PackagesDir / TEXT("Claude_*")), /*Files=*/false, /*Directories=*/true);
+	for (const FString& Package : PackageDirs)
+	{
+		BundleRoots.Add(PackagesDir / Package / TEXT("LocalCache/Roaming/Claude/claude-code"));
+	}
+
+	FString Best;
+	FDateTime BestTime = FDateTime::MinValue();
+	for (const FString& BundleRoot : BundleRoots)
+	{
+		TArray<FString> VersionDirs;
+		FM.FindFiles(VersionDirs, *(BundleRoot / TEXT("*")), /*Files=*/false, /*Directories=*/true);
+		for (const FString& Dir : VersionDirs)
+		{
+			const FString Exe = BundleRoot / Dir / TEXT("claude.exe");
+			const FDateTime Stamp = FM.GetTimeStamp(*Exe); // 없으면 MinValue
+			if (Stamp > BestTime)
+			{
+				BestTime = Stamp;
+				Best = Exe;
+			}
+		}
+	}
+	return Best;
+#else
+	return FString();
+#endif
+}
+
+void UAIFeedbackService::DispatchCliRequest(const FString& Body,
+	TFunction<void(UAIFeedbackService*, bool, const FString&)> OnComplete)
+{
+	// HTTP 경로와 같은 요청 본문에서 model / system / 사용자 메시지를 꺼낸다 —
+	// 프롬프트 빌더를 백엔드마다 따로 두지 않기 위함.
+	FString Model;
+	FString System;
+	FString User;
+	{
+		TSharedPtr<FJsonObject> Json;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Body);
+		if (FJsonSerializer::Deserialize(Reader, Json) && Json.IsValid())
+		{
+			Json->TryGetStringField(TEXT("model"), Model);
+			Json->TryGetStringField(TEXT("system"), System);
+			const TArray<TSharedPtr<FJsonValue>>* Messages = nullptr;
+			if (Json->TryGetArrayField(TEXT("messages"), Messages) && Messages && Messages->Num() > 0)
+			{
+				const TSharedPtr<FJsonObject> First = (*Messages)[0].IsValid() ? (*Messages)[0]->AsObject() : nullptr;
+				if (First.IsValid())
+				{
+					First->TryGetStringField(TEXT("content"), User);
+				}
+			}
+		}
+	}
+	if (User.IsEmpty())
+	{
+		OnComplete(this, false, TEXT("AI 코칭 요청 실패 (본문 파싱)"));
+		return;
+	}
+	if (Model.IsEmpty())
+	{
+		Model = ModelId;
+	}
+
+	FString CliPath = ResolveClaudeCliPath();
+	if (CliPath.IsEmpty())
+	{
+		UE_LOG(LogMotionBase, Warning,
+			TEXT("AIFeedback: Backend=ClaudeCodeCli 인데 claude 실행 파일을 찾지 못함 (Secrets.ini [AI] ClaudeCliPath 로 지정 가능)."));
+		OnComplete(this, false, TEXT("AI 코칭 미설정 (Claude Code CLI 없음)"));
+		return;
+	}
+
+	// 프롬프트는 임시 파일로 넘긴다 — 여러 줄·따옴표를 명령줄 인자로 이스케이프하는 것보다 안전하다.
+	// 작업 폴더도 여기로 둔다: 프로젝트 루트에서 실행하면 CLI 가 CLAUDE.md 를 프롬프트에 섞는다.
+	const FString WorkDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("AI/ClaudeCli"));
+	IFileManager::Get().MakeDirectory(*WorkDir, /*Tree=*/true);
+	const FString RequestId = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	FString SystemFile = WorkDir / (RequestId + TEXT("_system.txt"));
+	FString UserFile = WorkDir / (RequestId + TEXT("_user.txt"));
+	FFileHelper::SaveStringToFile(System, *SystemFile, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	FFileHelper::SaveStringToFile(User, *UserFile, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	FPaths::MakePlatformFilename(SystemFile);
+	FPaths::MakePlatformFilename(UserFile);
+	FPaths::MakePlatformFilename(CliPath);
+
+	// cmd.exe 를 거치는 이유: 사용자 프롬프트를 표준 입력(<)으로 넣고, npm 설치본(claude.cmd)도 같은 경로로 띄우기 위해.
+	//   --tools ""           : 도구 전부 끔 (문장 생성만)
+	//   --setting-sources "" : 사용자 settings(훅·권한 등)를 읽지 않음
+	const FString Params = FString::Printf(
+		TEXT("/d /s /c \"\"%s\" -p --output-format json --model %s --system-prompt-file \"%s\" --tools \"\" --setting-sources \"\" --no-session-persistence < \"%s\"\""),
+		*CliPath, *Model, *SystemFile, *UserFile);
+
+	const TSharedPtr<FMonitoredProcess> Proc =
+		MakeShared<FMonitoredProcess>(TEXT("cmd.exe"), Params, WorkDir, /*InHidden=*/true, /*InCreatePipes=*/true);
+
+	// 완료·취소 콜백은 **모니터 스레드**에서 불린다 → 게임 스레드로 넘겨 처리한다.
+	// ⚠️ 콜백 안에서 Proc 을 TSharedPtr 로 붙잡지 말 것: 마지막 참조가 모니터 스레드에서 풀리면
+	//    소멸자가 자기 스레드의 종료를 기다려 멈춘다. 그래서 raw 포인터로 식별만 한다.
+	const FMonitoredProcess* RawProc = Proc.Get();
+	TWeakObjectPtr<UAIFeedbackService> WeakThis(this);
+	auto Finish = [WeakThis, RawProc, OnComplete, SystemFile, UserFile](bool bCanceled, int32 ReturnCode, const FString& Output)
+	{
+		AsyncTask(ENamedThreads::GameThread,
+			[WeakThis, RawProc, OnComplete, SystemFile, UserFile, bCanceled, ReturnCode, Output]()
+			{
+				IFileManager::Get().Delete(*SystemFile, /*RequireExists=*/false, /*EvenReadOnly=*/false, /*Quiet=*/true);
+				IFileManager::Get().Delete(*UserFile, /*RequireExists=*/false, /*EvenReadOnly=*/false, /*Quiet=*/true);
+
+				UAIFeedbackService* Self = WeakThis.Get();
+				if (!Self)
+				{
+					return; // 서비스가 이미 사라짐 (BeginDestroy 가 프로세스를 정리했다)
+				}
+				Self->RunningCliProcesses.RemoveAll(
+					[RawProc](const TSharedPtr<FMonitoredProcess>& P) { return P.Get() == RawProc; });
+
+				if (bCanceled)
+				{
+					UE_LOG(LogMotionBase, Warning, TEXT("AIFeedback: Claude Code CLI 시간 초과 (%.0f초) — 취소"), Self->CliTimeoutSec);
+					OnComplete(Self, false, TEXT("AI 코칭 요청 실패 (시간 초과)"));
+					return;
+				}
+
+				// 출력은 JSON 한 덩어리. 앞뒤에 다른 줄이 섞여도 되게 첫 '{' ~ 마지막 '}' 만 파싱한다.
+				TSharedPtr<FJsonObject> Json;
+				int32 Start = INDEX_NONE;
+				int32 End = INDEX_NONE;
+				if (Output.FindChar(TEXT('{'), Start) && Output.FindLastChar(TEXT('}'), End) && End > Start)
+				{
+					const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Output.Mid(Start, End - Start + 1));
+					FJsonSerializer::Deserialize(Reader, Json);
+				}
+				if (!Json.IsValid())
+				{
+					UE_LOG(LogMotionBase, Warning, TEXT("AIFeedback: Claude Code CLI 출력 파싱 실패 (exit %d) — %s"),
+						ReturnCode, *Output.Left(500));
+					OnComplete(Self, false, TEXT("AI 코칭 응답 파싱 실패"));
+					return;
+				}
+
+				FString Result;
+				bool bJsonError = false;
+				Json->TryGetStringField(TEXT("result"), Result);
+				Json->TryGetBoolField(TEXT("is_error"), bJsonError);
+				Result.TrimStartAndEndInline();
+
+				if (bJsonError || ReturnCode != 0 || Result.IsEmpty())
+				{
+					UE_LOG(LogMotionBase, Warning, TEXT("AIFeedback: Claude Code CLI 오류 (exit %d) — %s"), ReturnCode, *Result);
+					// 가장 흔한 원인은 CLI 미로그인 — 화면에서 바로 알 수 있게 따로 표시한다.
+					const bool bNotLoggedIn = Result.Contains(TEXT("Not logged in")) || Result.Contains(TEXT("/login"));
+					OnComplete(Self, false, bNotLoggedIn
+						? TEXT("AI 코칭 오류 (Claude Code 로그인 필요)")
+						: TEXT("AI 코칭 오류 (Claude Code CLI)"));
+					return;
+				}
+
+				OnComplete(Self, true, Result);
+			});
+	};
+
+	Proc->OnCompleted().BindLambda([RawProc, Finish](int32 ReturnCode)
+		{
+			// bIsRunning 이 내려간 뒤 호출되므로 전체 출력 버퍼를 읽어도 안전하다.
+			Finish(/*bCanceled=*/false, ReturnCode, RawProc->GetFullOutputWithoutDelegate());
+		});
+	Proc->OnCanceled().BindLambda([Finish]()
+		{
+			Finish(/*bCanceled=*/true, -1, FString());
+		});
+
+	if (!Proc->Launch())
+	{
+		IFileManager::Get().Delete(*SystemFile, false, false, true);
+		IFileManager::Get().Delete(*UserFile, false, false, true);
+		OnComplete(this, false, TEXT("AI 코칭 요청 실패 (Claude Code CLI 실행 불가)"));
+		return;
+	}
+	// 완료 처리는 게임 스레드 태스크로 오므로, 지금(게임 스레드) 추가하는 게 항상 먼저다.
+	RunningCliProcesses.Add(Proc);
+
+	UE_LOG(LogMotionBase, Log, TEXT("AIFeedback: Claude Code CLI 요청 (model=%s, %d chars)"), *Model, User.Len());
+
+	// CLI 는 요청마다 프로세스를 새로 띄워 HTTP 보다 느리다 — 넉넉히 두되 무한정 매달리지 않게 끊는다.
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+		[WeakThis, RawProc](float) -> bool
+		{
+			UAIFeedbackService* Self = WeakThis.Get();
+			if (!Self)
+			{
+				return false;
+			}
+			const TSharedPtr<FMonitoredProcess>* Found = Self->RunningCliProcesses.FindByPredicate(
+				[RawProc](const TSharedPtr<FMonitoredProcess>& P) { return P.Get() == RawProc; });
+			if (!Found)
+			{
+				return false; // 이미 끝남
+			}
+			if ((*Found)->GetDuration().GetTotalSeconds() > Self->CliTimeoutSec)
+			{
+				(*Found)->Cancel(/*InKillTree=*/true); // cmd.exe 아래 claude 까지 같이 끊는다
+				return false;
+			}
+			return true;
+		}), 1.0f);
+}
+
+void UAIFeedbackService::BeginDestroy()
+{
+	// 진행 중인 CLI 프로세스를 끊는다. 소멸자가 모니터 스레드 종료를 기다리므로 여기서 비워도 안전하다.
+	for (const TSharedPtr<FMonitoredProcess>& P : RunningCliProcesses)
+	{
+		if (P.IsValid())
+		{
+			P->Cancel(/*InKillTree=*/true);
+		}
+	}
+	RunningCliProcesses.Empty();
+
+	Super::BeginDestroy();
 }

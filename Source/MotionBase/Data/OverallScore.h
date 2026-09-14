@@ -67,6 +67,21 @@ struct FOverallCategoryScore
 	UPROPERTY(BlueprintReadOnly, Category = "Overall")
 	EDifficultyLevel BestDifficulty = EDifficultyLevel::Amateur;
 
+	/**
+	 * 가장 최근 유효 세션의 점수 (난이도 계수 적용 후, 0~100). 없으면 -1.
+	 * 최고점만 보여주면 새로 플레이해도 숫자가 안 바뀌어 "결과가 반영 안 된다"로 읽힌다 —
+	 * 방금 한 판이 어땠는지를 최고점 옆에 같이 보여주기 위한 값.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Overall")
+	float LatestScore = -1.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Overall")
+	EDifficultyLevel LatestDifficulty = EDifficultyLevel::Amateur;
+
+	/** 최고점 후보로 본 세션 수 (최근 창 안의 유효 세션). */
+	UPROPERTY(BlueprintReadOnly, Category = "Overall")
+	int32 SessionsConsidered = 0;
+
 	/** 이 칸에서 실제로 딴 점수 (0 ~ MaxPoints). */
 	UPROPERTY(BlueprintReadOnly, Category = "Overall")
 	float EarnedPoints = 0.0f;
@@ -134,6 +149,10 @@ struct FOverallScore
 
 	UPROPERTY(BlueprintReadOnly, Category = "Overall")
 	TArray<FOverallCategoryScore> Categories;
+
+	/** 가장 최근에 유효 세션이 저장된 종목의 Categories 인덱스. 없으면 INDEX_NONE. ("방금 반영된 판" 표시용) */
+	UPROPERTY(BlueprintReadOnly, Category = "Overall")
+	int32 LatestCategoryIndex = INDEX_NONE;
 };
 
 /**
@@ -172,6 +191,21 @@ struct FOverallScoreConfig
 	/** 한 종목의 점수 상한. 계수를 곱한 뒤 여기로 clamp 한다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Overall")
 	float MaxCategoryScore = 100.0f;
+
+	/**
+	 * 종목별 최고점을 찾을 최근 유효 세션 수. 0 이면 역대 전체.
+	 * ⚠️ 역대 최고점을 쓰면 옛 기록이 최고점에 박혀 새로 플레이해도 종합이 안 바뀐다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Overall", meta = (ClampMin = "0"))
+	int32 RecentSessionWindow = 5;
+
+	/** 시도 수가 이보다 적은 세션은 종합에서 뺀다 (1~2회짜리 판의 100점이 최고점으로 박히는 것 방지). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Overall", meta = (ClampMin = "1"))
+	int32 MinAttemptsForOverall = 3;
+
+	/** 수비의 옛 성공률 채점(ScoreDefenseSession) 세션을 뺄지 — 3축 채점과 기준이 달라 섞으면 왜곡된다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Overall")
+	bool bExcludeLegacyDefenseScoring = true;
 
 	float MultiplierFor(EDifficultyLevel Level) const
 	{

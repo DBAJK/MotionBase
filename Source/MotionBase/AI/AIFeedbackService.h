@@ -4,6 +4,8 @@
 #include "Data/TrainingFeedback.h"
 #include "AIFeedbackService.generated.h"
 
+class FMonitoredProcess;
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnFeedbackReady, bool, bSuccess, const FString&, FeedbackText);
 
 /**
@@ -59,7 +61,9 @@ struct FBackupExplainRequest
  *      - LLM 이 숫자를 지어낼 필요가 없다 (근거 숫자를 프롬프트에 그대로 넣는다)
  *
  * UE HTTP 모듈로 Anthropic Messages API 를 직접 async 호출 (별도 백엔드 없음, CLAUDE §3).
- * API 키는 Config/Secrets.ini (gitignore) 의 [AI] ApiKey. 키가 없으면 호출을 건너뛴다.
+ * API 키는 Config/Secrets.ini (gitignore) 의 [AI] ApiKey.
+ * 키가 없고 [AI] Backend=ClaudeCodeCli 면 **개발용**으로 로그인된 Claude Code CLI(claude -p)를 대신 호출한다
+ * (개인 구독 사용 — 시연·부스 환경 금지). 둘 다 없으면 호출을 건너뛴다.
  */
 UCLASS()
 class MOTIONBASE_API UAIFeedbackService : public UObject
@@ -118,9 +122,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MotionBase|AI")
 	void RequestPlayExplanation(const FBackupExplainRequest& Req);
 
-	/** API 키가 설정돼 있는지 (호출 전 UI 에서 확인용). */
+	/**
+	 * AI 호출이 가능한지 (호출 전 UI 에서 확인용).
+	 * API 키가 있거나, 개발용 Claude Code CLI 백엔드가 켜져 있고 실행 파일을 찾았으면 true.
+	 */
 	UFUNCTION(BlueprintPure, Category = "MotionBase|AI")
 	bool IsConfigured() const;
+
+	/** 진행 중인 Claude Code CLI 프로세스를 끊는다. */
+	virtual void BeginDestroy() override;
 
 	UPROPERTY(BlueprintAssignable, Category = "MotionBase|AI")
 	FOnFeedbackReady OnFeedbackReady;
@@ -156,11 +166,18 @@ public:
 
 	/**
 	 * 출력 언어. 모든 시스템 프롬프트가 이 값을 "write ... in %s" 자리에 꽂아 쓴다.
-	 * 기본은 영어 — VR 3D 패널에 한글 폰트(Content/Fonts/KRFont)가 아직 없어서 한국어로
-	 * 바꾸면 글자가 깨진다. 폰트가 준비되면 여기만 "Korean"으로 바꾸면 된다(코드 수정 불필요).
+	 * 기본은 한국어 — VR 3D 패널·결과 보드가 한글 전체 음절을 담은 Content/Fonts/KRFont 를 쓴다.
+	 * (프롬프트 규칙 자체는 영어로 두고 출력 언어만 지정한다.)
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|AI")
-	FString OutputLanguage = TEXT("English");
+	FString OutputLanguage = TEXT("Korean");
+
+	/**
+	 * 개발용 Claude Code CLI 백엔드의 시간 제한(초). CLI 는 요청마다 프로세스를 새로 띄우므로
+	 * HTTP(15초)보다 느리다. 넘기면 프로세스를 끊고 실패("시간 초과")로 처리한다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|AI")
+	float CliTimeoutSec = 60.0f;
 
 private:
 	/**
@@ -173,6 +190,27 @@ private:
 
 	/** Config/Secrets.ini 의 [AI] ApiKey 를 읽는다 (없으면 빈 문자열). */
 	FString LoadApiKey() const;
+
+	/** Config/Secrets.ini 의 [AI] Backend=ClaudeCodeCli 인지 (Windows 전용). */
+	bool IsCliBackendEnabled() const;
+
+	/**
+	 * claude 실행 파일 경로. [AI] ClaudeCliPath → 단독 설치(~/.local/bin, npm -g)
+	 * → Claude 데스크톱 앱 번들(최신 버전 폴더; 스토어 설치본의 Packages 실제 경로 포함) 순으로 찾는다.
+	 * 없으면 빈 문자열.
+	 */
+	FString ResolveClaudeCliPath() const;
+
+	/**
+	 * 개발용 백엔드 — DispatchRequest 와 **같은 요청 본문**에서 model/system/사용자 메시지를 꺼내
+	 * Claude Code CLI(claude -p)로 보낸다. 로그인된 개인 구독으로 동작하므로 본인 개발·테스트 전용.
+	 * 결과는 HTTP 경로와 같은 OnComplete 계약으로 돌려준다.
+	 */
+	void DispatchCliRequest(const FString& Body,
+		TFunction<void(UAIFeedbackService*, bool, const FString&)> OnComplete);
+
+	/** 실행 중인 CLI 프로세스. 완료·취소 시 게임 스레드에서 제거한다 (소멸자가 모니터 스레드를 기다림). */
+	TArray<TSharedPtr<FMonitoredProcess>> RunningCliProcesses;
 
 	/** 코치 역할·규칙을 정하는 시스템 프롬프트 (도메인별). */
 	FString BuildSystemPrompt(ECoachDomain Domain) const;

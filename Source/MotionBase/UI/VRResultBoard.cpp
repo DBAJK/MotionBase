@@ -71,7 +71,8 @@ namespace
 	const FLinearColor ButtonDone      (0.120f, 0.460f, 0.200f);
 	const FLinearColor FillLinear      (0.300f, 0.900f, 0.450f);
 
-	const FColor TextTitle (242, 246, 255);
+	// ⚠️ 'TextTitle' 로 두면 unity 빌드에서 ModeSelectHUD.cpp 의 using namespace ModeSelectStyle 과 충돌한다.
+	const FColor TextHeading (242, 246, 255);
 	const FColor TextBody  (214, 222, 238);
 	const FColor TextMuted (150, 162, 184);
 	const FColor TextBlue  (150, 200, 255);
@@ -411,11 +412,11 @@ void UVRResultBoard::CopyAnchorFrom(const USceneComponent* Anchor)
 	SetRelativeLocationAndRotation(Anchor->GetRelativeLocation(), Anchor->GetRelativeRotation());
 }
 
-void UVRResultBoard::SetAllVisible(bool bVisible)
+void UVRResultBoard::SetAllVisible(bool bShow)
 {
 	for (USceneComponent* Part : AllParts)
 	{
-		if (Part) { Part->SetVisibility(bVisible); }
+		if (Part) { Part->SetVisibility(bShow); }
 	}
 }
 
@@ -458,7 +459,7 @@ void UVRResultBoard::Show(const FVRResultBoardData& Data)
 	{
 		const bool bHas = Current.Meters.IsValidIndex(i);
 		SetLine(MeterLabels[i], bHas ? Current.Meters[i].Label : FString(), TextBody, 6.5f, WingTextW * 0.62f);
-		SetLine(MeterValues[i], bHas ? Current.Meters[i].ValueText : FString(), TextTitle, 6.5f, WingTextW * 0.36f);
+		SetLine(MeterValues[i], bHas ? Current.Meters[i].ValueText : FString(), TextHeading, 6.5f, WingTextW * 0.36f);
 		if (MeterTracks[i]) { MeterTracks[i]->SetVisibility(bShowing && bHas); }
 		if (bHas && MeterFillMats[i])
 		{
@@ -508,7 +509,7 @@ void UVRResultBoard::ApplyAnimated()
 	const FString ScoreStr = Current.bScoreValid
 		? FString::Printf(TEXT("%.0f"), Current.Score * A)
 		: FString(TEXT("--"));
-	SetLine(ScoreText, ScoreStr, Current.bNewRecord ? TextAmber : TextTitle, ScoreSize, 0.0f);
+	SetLine(ScoreText, ScoreStr, Current.bNewRecord ? TextAmber : TextHeading, ScoreSize, 0.0f);
 
 	if (ScoreText && ScoreMaxText)
 	{
@@ -547,7 +548,7 @@ void UVRResultBoard::ApplyAnimated()
 		PlaceFill(ButtonFills[i], SegCenter, U - FillW * 0.5f, ButtonZ - ButtonH * 0.5f + 3.0f,
 			FillW, 2.4f, DepthFill, P);
 
-		SetLine(ButtonTexts[i], Labels[i], bHover ? TextTitle : TextBody, 8.0f, ButtonW - 6.0f);
+		SetLine(ButtonTexts[i], Labels[i], bHover ? TextHeading : TextBody, 8.0f, ButtonW - 6.0f);
 	}
 
 	SetLine(HintText, TEXT("aim at a button and hold"), TextMuted, 5.0f, CenterW);

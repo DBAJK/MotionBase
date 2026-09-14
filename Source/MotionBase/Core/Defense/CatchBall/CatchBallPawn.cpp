@@ -1151,7 +1151,6 @@ void ACatchBallPawn::RefreshVrPanel()
 	// 세션 종료 — 컴팩트 패널을 비우고 결과 보드(큰 점수·타입별 성공률·AI 코칭·버튼)를 세운다.
 	if (bSessionOver)
 	{
-<<<<<<< HEAD
 		VrPanel->HideAll();
 		VrPanel->HideBackCard();
 		if (ResultBoard)
@@ -1159,58 +1158,6 @@ void ACatchBallPawn::RefreshVrPanel()
 			ResultBoard->CopyAnchorFrom(VrPanel);
 			ResultBoard->Show(BuildResultBoardData());
 		}
-=======
-		VrPanel->SetTitle(
-			FString::Printf(TEXT("AI 운동 추천    (%d / %d 포구)"), SuccessCount, TotalPitches),
-			FColor(150, 210, 255));
-
-		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
-		//    타입 성공률 1줄 + 코칭 2줄 + 드릴 1개로 압축. 전체 리포트는 데스크톱 결과 화면이 담당.
-		//    종료 화면은 마지막 두 줄을 선택 카드에 내주므로 내용이 한 줄 줄어든다.
-		const int32 MaxContentRows = EndCardFirstRow;
-		int32 Row = 0;
-
-		// 타구 타입별 성공률 — AI 문장보다 먼저, 근거 숫자를 눈으로 확인할 수 있게.
-		{
-			FString Line;
-			const ECatchBallType Types[NumBallTypes] =
-				{ ECatchBallType::GroundBall, ECatchBallType::FlyBall, ECatchBallType::LineDrive };
-			const TCHAR* Short[NumBallTypes] = { TEXT("땅볼"), TEXT("뜬공"), TEXT("라인") };
-			for (int32 i = 0; i < NumBallTypes; ++i)
-			{
-				int32 A = 0, S = 0;
-				GetTypeStats(Types[i], A, S);
-				if (A <= 0) { continue; }
-				if (!Line.IsEmpty()) { Line += TEXT("   "); }
-				Line += FString::Printf(TEXT("%s %d/%d"), Short[i], S, A);
-			}
-			if (!Line.IsEmpty() && Row < MaxContentRows)
-			{
-				VrPanel->SetRow(Row++, Line, FColor(150, 200, 255));
-			}
-		}
-
-		for (const FString& L : WrapCatchPanel(CoachingText, 30, 2))
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
-		}
-		for (const FTrainingDrill& D : LastDrills)
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, D.CompactLabel(), FColor(255, 200, 120));
-		}
-		VrPanel->HideRowsFrom(Row);
-
-		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
-		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
-		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
-		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("다시 하기")), EndMenu.Color(0));
-		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("메뉴로")),   EndMenu.Color(1));
-		VrPanel->HideFooter();
-		VrPanel->HideBackCard();
-		VrPanel->SetHint(TEXT("글러브로 카드를 겨눈 채 유지하세요"), FColor(110, 116, 128));
->>>>>>> main
 		return;
 	}
 

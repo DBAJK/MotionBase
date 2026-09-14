@@ -31,9 +31,9 @@ namespace
 	// ── 화면 표시 + LLM 프롬프트 공용 라벨 ──
 	// UEnum::GetValueAsString 을 쓰지 않는 이유: "EBackupRole::CutoffRelay" 같은 식별자가
 	// 그대로 나가면 코치 문장에 코드 이름이 섞인다. 야구 용어로 읽히는 문구를 따로 둔다.
-	// Phase 5: Content/Fonts/KRFont 도입 후 영문에서 한글로 전환 — AI 시스템 프롬프트는
-	// 영어로 남아 있지만(OutputLanguage), 한글 근거 문구가 섞여 들어가도 LLM 이 맥락상
-	// 문제없이 이해한다.
+	// Phase 5: Content/Fonts/KRFont 도입 후 영문에서 한글로 전환 — AI 시스템 프롬프트 규칙은
+	// 영어로 남아 있지만(출력 언어는 OutputLanguage = 한국어), 한글 근거 문구가 섞여 들어가도
+	// LLM 이 맥락상 문제없이 이해한다.
 	FString RoleLabel(EBackupRole Role)
 	{
 		switch (Role)
@@ -1772,7 +1772,6 @@ void ABackupPawn::RefreshVrPanel()
 	// 세션 종료 — 컴팩트 패널을 비우고 결과 보드(큰 점수·판단 지표·AI 코칭·버튼)를 세운다.
 	if (bSessionOver)
 	{
-<<<<<<< HEAD
 		VrPanel->HideAll();
 		VrPanel->HideBackCard();
 		if (ResultBoard)
@@ -1780,45 +1779,6 @@ void ABackupPawn::RefreshVrPanel()
 			ResultBoard->CopyAnchorFrom(VrPanel);
 			ResultBoard->Show(BuildResultBoardData());
 		}
-=======
-		VrPanel->SetTitle(
-			FString::Printf(TEXT("AI 판단 추천    (%d / %d 정답)"), SuccessCount, TotalTrials),
-			FColor(150, 210, 255));
-
-		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
-		//    종료 화면은 마지막 두 줄을 선택 카드에 내주므로 내용이 한 줄 줄어든다.
-		const int32 MaxContentRows = EndCardFirstRow;
-		int32 Row = 0;
-
-		const float AvgD = GetAverageDecisionSec();
-		const float AvgP = GetAveragePathEfficiency();
-		if (Row < MaxContentRows && (AvgD >= 0.0f || AvgP >= 0.0f))
-		{
-			VrPanel->SetRow(Row++, FString::Printf(TEXT("평균 판단 %.2fs   경로효율 %.0f%%"),
-				FMath::Max(AvgD, 0.0f), FMath::Max(AvgP, 0.0f) * 100.0f), FColor(150, 200, 255));
-		}
-
-		for (const FString& L : WrapBackupPanel(CoachingText, 30, 2))
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
-		}
-		for (const FTrainingDrill& D : LastDrills)
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, D.CompactLabel(), FColor(255, 200, 120));
-		}
-		VrPanel->HideRowsFrom(Row);
-
-		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
-		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
-		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
-		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("다시 하기")), EndMenu.Color(0));
-		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("메뉴로")),   EndMenu.Color(1));
-		VrPanel->HideFooter();
-		VrPanel->HideBackCard();
-		VrPanel->SetHint(TEXT("컨트롤러로 카드를 겨눈 채 유지하세요"), FColor(110, 116, 128));
->>>>>>> main
 		return;
 	}
 

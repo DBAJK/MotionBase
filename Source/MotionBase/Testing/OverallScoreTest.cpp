@@ -202,4 +202,67 @@ bool FOverallScoreDrillIdTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOverallScoreRecentWindowTest,
+	"MotionBase.Overall.RecentWindow",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FOverallScoreRecentWindowTest::RunTest(const FString& Parameters)
+{
+	// 옛 최고점이 창 밖으로 밀려나면 종합이 최근 기록을 따라가야 한다 —
+	// 역대 최고점을 쓰면 새로 플레이해도 종합이 영영 안 바뀐다(실데이터에서 확인된 문제).
+	FOverallScoreConfig C = NoMultiplierConfig();
+	C.RecentSessionWindow = 3;
+
+	TArray<FSessionResult> H;
+	H.Add(MakeSession(EGameModeId::Batting, NAME_None, 95.0f)); // 오래된 최고점
+	H.Add(MakeSession(EGameModeId::Batting, NAME_None, 40.0f));
+	H.Add(MakeSession(EGameModeId::Batting, NAME_None, 60.0f));
+	H.Add(MakeSession(EGameModeId::Batting, NAME_None, 30.0f));
+
+	const FOverallScore R = UScoringService::ComputeOverall(H, UModeManager::BuildOverallCategories(), C);
+	TestEqual(TEXT("창(3) 밖의 95 는 빠지고 최근 3회 최고 60"), R.Categories[0].BestScore, 60.0f, 0.01f);
+	TestEqual(TEXT("후보 세션 수 = 창 크기"), R.Categories[0].SessionsConsidered, 3);
+	TestEqual(TEXT("최근 점수는 마지막 판 30"), R.Categories[0].LatestScore, 30.0f, 0.01f);
+
+	C.RecentSessionWindow = 0; // 0 = 역대 전체
+	const FOverallScore RAll = UScoringService::ComputeOverall(H, UModeManager::BuildOverallCategories(), C);
+	TestEqual(TEXT("창 0 이면 역대 최고 95"), RAll.Categories[0].BestScore, 95.0f, 0.01f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FOverallScoreEligibilityTest,
+	"MotionBase.Overall.Eligibility",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FOverallScoreEligibilityTest::RunTest(const FString& Parameters)
+{
+	const FOverallScoreConfig C = NoMultiplierConfig(); // 기본 MinAttemptsForOverall = 3
+	const FName Backup = UModeManager::GetDefenseDrillIdName(2);
+
+	TArray<FSessionResult> H;
+
+	// 시도 2회짜리 100점 — 표본이 너무 적어 최고점으로 박히면 안 된다.
+	FSessionResult Tiny = MakeSession(EGameModeId::Defense, Backup, 100.0f);
+	Tiny.AttemptCount = 2;
+	H.Add(Tiny);
+
+	// 옛 성공률 채점 세션 — 3축 채점과 기준이 달라 섞으면 안 된다.
+	FSessionResult Legacy = MakeSession(EGameModeId::Defense, Backup, 90.0f);
+	Legacy.Average.Details.Add(TEXT("SuccessCount"), 9.0f);
+	H.Add(Legacy);
+
+	// 현재 3축 채점 세션 (ConsistencySampleCount 가 표식).
+	FSessionResult Current = MakeSession(EGameModeId::Defense, Backup, 45.0f);
+	Current.Average.Details.Add(TEXT("ConsistencySampleCount"), 3.0f);
+	H.Add(Current);
+
+	const FOverallScore R = UScoringService::ComputeOverall(H, UModeManager::BuildOverallCategories(), C);
+	const FOverallCategoryScore& Cat = R.Categories[3]; // 타격·포구·송구·백업 순
+	TestTrue(TEXT("현재 채점 세션이 있어 실시로 잡힌다"), Cat.bPlayed);
+	TestEqual(TEXT("시도 부족·옛 채점은 빠지고 45 가 최고점"), Cat.BestScore, 45.0f, 0.01f);
+	TestEqual(TEXT("후보는 1건"), Cat.SessionsConsidered, 1);
+	TestEqual(TEXT("가장 최근 갱신 종목은 백업(3)"), R.LatestCategoryIndex, 3);
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
