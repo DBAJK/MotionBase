@@ -17,6 +17,7 @@
 #include "Core/Defense/CatchBall/CatchBallHUD.h"
 #include "UI/ModeSelectHUD.h"
 #include "UI/VRInfoPanel.h"
+#include "UI/VRResultBoard.h"
 #include "AI/DrillCatalog.h"
 #include "AI/AIFeedbackService.h"
 #include "Analysis/WeaknessDetector.h"
@@ -36,24 +37,6 @@ namespace
 		case ECatchBallType::LineDrive:  return TEXT("Line drive");
 		default:                         return TEXT("Mixed");
 		}
-	}
-
-	// TextRender 는 자동 줄바꿈이 없다 → 글자수로 하드 랩(한글 한 글자=한 글리프라 안전).
-	TArray<FString> WrapCatchPanel(const FString& In, int32 MaxCharsPerLine, int32 MaxLines)
-	{
-		TArray<FString> Lines;
-		int32 i = 0;
-		const int32 Len = In.Len();
-		while (i < Len && Lines.Num() < MaxLines)
-		{
-			Lines.Add(In.Mid(i, MaxCharsPerLine));
-			i += MaxCharsPerLine;
-		}
-		if (i < Len && Lines.Num() > 0)
-		{
-			Lines.Last().Append(TEXT(" …"));
-		}
-		return Lines;
 	}
 }
 
@@ -89,6 +72,9 @@ ACatchBallPawn::ACatchBallPawn()
 	VrPanel = CreateDefaultSubobject<UVRInfoPanel>(TEXT("VrPanel"));
 	VrPanel->SetupAttachment(Capsule);
 	VrPanel->SetPlacement(UVRInfoPanel::DefaultDistanceCm, 70.0f); // 캡슐 중심 기준 눈높이
+
+	ResultBoard = CreateDefaultSubobject<UVRResultBoard>(TEXT("ResultBoard"));
+	ResultBoard->SetupAttachment(Capsule);
 }
 
 void ACatchBallPawn::BeginPlay()
@@ -131,6 +117,12 @@ void ACatchBallPawn::BeginPlay()
 			VrPanel->SetStatusCompact();
 			VrPanel->ShowBackCard(TEXT("EXIT - aim glove here & hold"), FColor(255, 190, 90));
 		}
+	}
+
+	// 결과 보드도 VR 에서만 (PC 는 평면 HUD 가 결과를 그린다).
+	if (ResultBoard && bVR)
+	{
+		ResultBoard->BuildBoard();
 	}
 
 	// AI 운동 추천 서비스 (키가 없으면 요청 시 조용히 생략됨).
@@ -684,11 +676,11 @@ void ACatchBallPawn::Tick(float DeltaSeconds)
 			// 공이 날아오는 동안(bPitchActive)에는 진행을 동결한다 — 뜬공을 잡으려고
 			// 글러브를 들고 기다리는 자세가 나가기로 오인되면 세션이 통째로 날아간다.
 			// (리셋이 아니라 동결이라, 투구 사이 틈에 계속 들고 있으면 정상적으로 나갈 수 있다.)
-			// 세션 종료 화면 — 패널 하단 카드를 겨눠 '다시 하기 / 메뉴로'를 고른다.
+			// 세션 종료 화면 — 결과 보드 버튼을 겨눠 '다시 하기 / 메뉴로'를 고른다.
 			// 제스처보다 먼저 본다: 명시적으로 고른 선택이 우연한 자세보다 우선한다.
-			if (bSessionOver && VrPanel)
+			if (bSessionOver && ResultBoard)
 			{
-				const int32 Chosen = EndMenu.Update(VrPanel, EndCardFirstRow, /*CardCount=*/2,
+				const int32 Chosen = ResultBoard->UpdateButtons(EndMenu,
 					GloveController->GetComponentLocation(), GloveController->GetForwardVector(),
 					GloveController->IsTracked(), DeltaSeconds);
 				if (Chosen == 0)
@@ -998,65 +990,67 @@ float ACatchBallPawn::GetTypeSuccessRate(ECatchBallType Type) const
 	return (A > 0) ? (static_cast<float>(S) / A) : -1.0f; // -1 = 시행 없음
 }
 
+FVRResultBoardData ACatchBallPawn::BuildResultBoardData() const
+{
+	FVRResultBoardData D;
+	D.Heading = FString::Printf(TEXT("FIELDING - CATCH   %s"), *CatchTypeName(SessionType));
+
+	// 저장되는 점수(FlushSessionToSave)와 같은 산식 — 화면과 기록이 달라지면 안 된다.
+	const FScoreResult Score = UScoringService::ScoreDefenseSession(SuccessCount, SessionResults.Num());
+	D.bScoreValid   = Score.bValid;
+	D.Score         = Score.TotalScore;
+	D.bUncalibrated = Score.bUncalibrated;
+	D.ResultLine    = FString::Printf(TEXT("Caught %d / %d"), SuccessCount, SessionResults.Num());
+
+	// 타구 타입별 성공률(측정 지표 ②) — AI 문장보다 먼저, 근거 숫자를 눈으로 확인할 수 있게.
+	const ECatchBallType Types[NumBallTypes] =
+		{ ECatchBallType::GroundBall, ECatchBallType::FlyBall, ECatchBallType::LineDrive };
+	const TCHAR* Names[NumBallTypes] = { TEXT("Grounders"), TEXT("Fly balls"), TEXT("Line drives") };
+	const FLinearColor Colors[NumBallTypes] =
+		{ FLinearColor(1.0f, 0.60f, 0.12f), FLinearColor(0.36f, 0.62f, 1.0f), FLinearColor(0.42f, 0.85f, 0.55f) };
+	for (int32 i = 0; i < NumBallTypes; ++i)
+	{
+		int32 A = 0, S = 0;
+		GetTypeStats(Types[i], A, S);
+		if (A <= 0) { continue; } // 안 나온 유형은 0%로 그리지 않는다.
+
+		FVRResultMeter& M = D.Meters.AddDefaulted_GetRef();
+		M.Label = FString::Printf(TEXT("%s  %d/%d"), Names[i], S, A);
+		M.Value01 = static_cast<float>(S) / A;
+		M.ValueText = FString::Printf(TEXT("%.0f%%"), M.Value01 * 100.0f);
+		M.Color = Colors[i];
+	}
+
+	D.StatLine = FString::Printf(TEXT("Ball speed x%.1f"), BallSpeedScale);
+	D.CoachingText = CoachingText;
+	D.bAwaitingCoaching = bAwaitingCoaching;
+	for (const FTrainingDrill& Drill : LastDrills)
+	{
+		D.Drills.Add(Drill.CompactLabel(28));
+	}
+	return D;
+}
+
 void ACatchBallPawn::RefreshVrPanel()
 {
 	if (!VrPanel) { return; }
 
-	// 세션 종료 → AI 운동 추천 오버레이 (코칭 문장 + 추천 드릴).
-	// 한글 코칭은 KRFont 가 있으면 렌더된다. 없으면 데스크톱 로그로 확인.
+	// 세션 종료 — 컴팩트 패널을 비우고 결과 보드(큰 점수·타입별 성공률·AI 코칭·버튼)를 세운다.
 	if (bSessionOver)
 	{
-		VrPanel->SetTitle(
-			FString::Printf(TEXT("AI exercise tips    (Caught %d / %d)"), SuccessCount, TotalPitches),
-			FColor(150, 210, 255));
-
-		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
-		//    타입 성공률 1줄 + 코칭 2줄 + 드릴 1개로 압축. 전체 리포트는 데스크톱 결과 화면이 담당.
-		//    종료 화면은 마지막 두 줄을 선택 카드에 내주므로 내용이 한 줄 줄어든다.
-		const int32 MaxContentRows = EndCardFirstRow;
-		int32 Row = 0;
-
-		// 타구 타입별 성공률 — AI 문장보다 먼저, 근거 숫자를 눈으로 확인할 수 있게.
-		{
-			FString Line;
-			const ECatchBallType Types[NumBallTypes] =
-				{ ECatchBallType::GroundBall, ECatchBallType::FlyBall, ECatchBallType::LineDrive };
-			const TCHAR* Short[NumBallTypes] = { TEXT("GB"), TEXT("FB"), TEXT("LD") };
-			for (int32 i = 0; i < NumBallTypes; ++i)
-			{
-				int32 A = 0, S = 0;
-				GetTypeStats(Types[i], A, S);
-				if (A <= 0) { continue; }
-				if (!Line.IsEmpty()) { Line += TEXT("   "); }
-				Line += FString::Printf(TEXT("%s %d/%d"), Short[i], S, A);
-			}
-			if (!Line.IsEmpty() && Row < MaxContentRows)
-			{
-				VrPanel->SetRow(Row++, Line, FColor(150, 200, 255));
-			}
-		}
-
-		for (const FString& L : WrapCatchPanel(CoachingText, 30, 2))
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
-		}
-		for (const FTrainingDrill& D : LastDrills)
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, D.CompactLabel(), FColor(255, 200, 120));
-		}
-		VrPanel->HideRowsFrom(Row);
-
-		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
-		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
-		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
-		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("PLAY AGAIN")),   EndMenu.Color(0));
-		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("BACK TO MENU")), EndMenu.Color(1));
-		VrPanel->HideFooter();
+		VrPanel->HideAll();
 		VrPanel->HideBackCard();
-		VrPanel->SetHint(TEXT("aim the glove at a card and hold"), FColor(110, 116, 128));
+		if (ResultBoard)
+		{
+			ResultBoard->CopyAnchorFrom(VrPanel);
+			ResultBoard->Show(BuildResultBoardData());
+		}
 		return;
+	}
+
+	if (ResultBoard)
+	{
+		ResultBoard->Hide();
 	}
 
 	// 제목: 진행 + 성공 수.

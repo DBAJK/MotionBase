@@ -14,6 +14,7 @@
 #include "Components/SceneComponent.h"
 #include "Components/TextRenderComponent.h"
 #include "UI/VRInfoPanel.h"
+#include "UI/VRResultBoard.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
@@ -37,6 +38,17 @@ namespace
 			Lines.Last().Append(TEXT(" …"));
 		}
 		return Lines;
+	}
+
+	// 3D 텍스트 구조 라벨은 영어로 표기.
+	const TCHAR* BattingDifficultyEn(EDifficultyLevel D)
+	{
+		switch (D)
+		{
+		case EDifficultyLevel::Beginner: return TEXT("Beginner");
+		case EDifficultyLevel::Pro:      return TEXT("Pro");
+		default:                         return TEXT("Amateur");
+		}
 	}
 }
 
@@ -67,6 +79,9 @@ AVRBattingPawn::AVRBattingPawn()
 	VrPanel = CreateDefaultSubobject<UVRInfoPanel>(TEXT("VrPanel"));
 	VrPanel->SetupAttachment(VROrigin);
 	VrPanel->SetPlacement(UVRInfoPanel::DefaultDistanceCm, UVRInfoPanel::DefaultHeightCm);
+
+	ResultBoard = CreateDefaultSubobject<UVRResultBoard>(TEXT("ResultBoard"));
+	ResultBoard->SetupAttachment(VROrigin);
 }
 
 void AVRBattingPawn::BeginPlay()
@@ -95,6 +110,10 @@ void AVRBattingPawn::BeginPlay()
 		VrPanel->BuildPanel();
 		VrPanel->SetStatusCompact();
 		VrPanel->ShowBackCard(TEXT("EXIT - aim bat here & hold"), FColor(255, 190, 90));
+	}
+	if (ResultBoard)
+	{
+		ResultBoard->BuildBoard();
 	}
 
 	// 세션 파라미터 (모드 선택에서 고른 난이도·타석).
@@ -334,6 +353,12 @@ void AVRBattingPawn::EndSession()
 		PitchingZone->SetAutoPitch(false); // 마지막 공에서 이미 껐지만, 재시작 경로를 위해 멱등하게.
 	}
 
+	// 신기록 비교 기준 — 이번 판은 아직 저장 전이라 이력에 섞이지 않는다.
+	if (const UModeManager* MM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr)
+	{
+		BestScoreBeforeSession = MM->GetBestTotalScore(EGameModeId::Batting);
+	}
+
 	// 세션 결과 + 약점·드릴·AI 코칭을 자동으로 띄운다 (수비 모드들과 같은 흐름).
 	// 트리거를 눌러야만 결과가 보이던 예전 동작은, 끝이 없는 세션이라 그랬던 것이다.
 	RequestCoaching();
@@ -496,6 +521,67 @@ bool AVRBattingPawn::GetSessionSummary(FSessionSummary& OutSummary) const
 	return true;
 }
 
+FVRResultBoardData AVRBattingPawn::BuildResultBoardData() const
+{
+	FVRResultBoardData D;
+	D.Heading = FString::Printf(TEXT("BATTING   %s / %s"), BattingDifficultyEn(SessionDifficulty),
+		(SessionStance == EBattingStance::Left) ? TEXT("Lefty") : TEXT("Righty"));
+
+	D.bScoreValid   = SessionScore.bValid;
+	D.Score         = SessionScore.TotalScore;
+	D.bUncalibrated = SessionScore.bUncalibrated;
+
+	// 신기록 판정은 데스크톱 결과 화면(GetSessionSummary)과 같은 규칙.
+	if (SessionScore.bValid)
+	{
+		D.bNewRecord = (BestScoreBeforeSession < 0.0f) || (SessionScore.TotalScore > BestScoreBeforeSession);
+		if (BestScoreBeforeSession < 0.0f)
+		{
+			D.RecordLine = TEXT("FIRST RECORD!");
+		}
+		else if (D.bNewRecord)
+		{
+			D.RecordLine = FString::Printf(TEXT("NEW RECORD!   (prev best %.0f)"), BestScoreBeforeSession);
+		}
+		else
+		{
+			D.RecordLine = FString::Printf(TEXT("Best  %.0f"), BestScoreBeforeSession);
+		}
+	}
+
+	D.ResultLine = (SwingCount > 0)
+		? FString::Printf(TEXT("Contact %d / %d    HR %d    Hits %d"), ContactCount, SwingCount, HomeRunCount, HitCount)
+		: FString::Printf(TEXT("No swings  -  %d pitches taken"), TakeCount);
+
+	if (SessionScore.bValid)
+	{
+		auto AddMeter = [&D](const TCHAR* Label, float Value01, const FLinearColor& Color)
+		{
+			FVRResultMeter& M = D.Meters.AddDefaulted_GetRef();
+			M.Label = Label;
+			M.Value01 = FMath::Clamp(Value01, 0.0f, 1.0f);
+			M.ValueText = FString::Printf(TEXT("%.0f%%"), M.Value01 * 100.0f);
+			M.Color = Color;
+		};
+		AddMeter(TEXT("Accuracy"),    SessionScore.Accuracy,    FLinearColor(0.36f, 0.62f, 1.0f));
+		AddMeter(TEXT("Efficiency"),  SessionScore.Efficiency,  FLinearColor(1.0f, 0.60f, 0.12f));
+		AddMeter(TEXT("Consistency"), SessionScore.Consistency, FLinearColor(0.42f, 0.85f, 0.55f));
+	}
+
+	D.StatLine = (ContactCount > 0)
+		? FString::Printf(TEXT("Max carry %.0f m  ·  avg %.0f m  ·  takes %d"),
+			MaxCarryDistanceM, SumCarryDistanceM / ContactCount, TakeCount)
+		: FString::Printf(TEXT("Takes %d"), TakeCount);
+
+	D.CoachingText = CoachingText;
+	D.bAwaitingCoaching = bAwaitingCoaching;
+	for (const FTrainingDrill& Drill : LastDrills)
+	{
+		D.Drills.Add(Drill.CompactLabel(28));
+	}
+	return D;
+}
+
 FWeaknessReport AVRBattingPawn::BuildSessionReport() const
 {
 	// VR 경로엔 카메라(MediaPipe) 포즈 입력이 없어 신체역학 축은 비어 있다.
@@ -642,11 +728,11 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 	//    (동결이라 투구 사이 틈에 배트를 세워 두면 정상적으로 나갈 수 있다.)
 	if (Bat)
 	{
-		// 세션 종료 화면 — 패널 하단 카드를 배트로 겨눠 '다시 하기 / 메뉴로'를 고른다.
+		// 세션 종료 화면 — 결과 보드 버튼을 배트로 겨눠 '다시 하기 / 메뉴로'를 고른다.
 		// 제스처보다 먼저 본다: 명시적으로 고른 선택이 우연한 자세보다 우선한다.
-		if (bSessionOver && VrPanel)
+		if (bSessionOver && ResultBoard)
 		{
-			const int32 Chosen = EndMenu.Update(VrPanel, EndCardFirstRow, /*CardCount=*/2,
+			const int32 Chosen = ResultBoard->UpdateButtons(EndMenu,
 				Bat->GetBatTipWorldLocation(), Bat->GetAimForwardVector(), Bat->IsTracking(), DeltaSeconds);
 			if (Chosen == 0)
 			{
@@ -699,22 +785,44 @@ void AVRBattingPawn::RefreshVrPanel()
 		return;
 	}
 
-	// AI 운동 추천 오버레이 — 세션이 끝났거나(상시), 플레이 중 트리거로 요청한 동안(한시) 띄운다.
-	// (한글 코칭은 KRFont 가 있으면 렌더된다. 없으면 데스크톱 로그로 확인.)
-	if (bSessionOver || CoachingShowTimer > 0.0f)
+	// 세션 종료 — 컴팩트 패널을 비우고 결과 보드(큰 점수·세부 막대·코칭·버튼)를 세운다.
+	// (데스크톱 미러는 ISessionResultView 로 전체 결과 패널을 따로 그린다.)
+	if (bSessionOver)
 	{
-		// 헤드셋 안 결과 요약 — 데스크톱 미러는 ISessionResultView 로 전체 패널을 그리지만,
-		// 헤드셋에서는 3D 텍스트라 줄 수가 한정돼 핵심 숫자만 압축해 보여준다.
-		VrPanel->SetTitle(
-			bSessionOver
-				? FString::Printf(TEXT("Session over!  %d pitches    score %.1f"), TotalPitches, SessionScore.TotalScore)
-				: FString::Printf(TEXT("Session result    score %.1f"), SessionScore.TotalScore),
+		VrPanel->HideAll();
+		VrPanel->HideBackCard();
+		if (ResultBoard)
+		{
+			// 마지막 타구·"SESSION OVER" 토스트(카메라 앞 3m)가 끝난 뒤에 세운다 —
+			// 불투명 보드(2.5m)가 먼저 서면 토스트를 가린다.
+			if (ResultTimer > 0.0f)
+			{
+				ResultBoard->Hide();
+			}
+			else
+			{
+				ResultBoard->CopyAnchorFrom(VrPanel);
+				ResultBoard->Show(BuildResultBoardData());
+			}
+		}
+		return;
+	}
+
+	if (ResultBoard)
+	{
+		ResultBoard->Hide();
+	}
+
+	// AI 운동 추천 오버레이 — 플레이 중 트리거로 요청한 동안(한시) 띄운다.
+	// (한글 코칭은 KRFont 가 있으면 렌더된다. 없으면 데스크톱 로그로 확인.)
+	if (CoachingShowTimer > 0.0f)
+	{
+		VrPanel->SetTitle(FString::Printf(TEXT("Session result    score %.1f"), SessionScore.TotalScore),
 			FColor(150, 210, 255));
 
 		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
 		//    핵심만 압축: 요약 1줄 + 코칭 2줄 + 드릴 1개. 전체 리포트는 데스크톱 결과 화면이 담당.
-		//    세션이 끝난 화면은 마지막 두 줄을 선택 카드에 내주므로 내용이 한 줄 줄어든다.
-		const int32 MaxContentRows = bSessionOver ? EndCardFirstRow : 4;
+		constexpr int32 MaxContentRows = 4;
 
 		int32 Row = 0;
 		if (Row < MaxContentRows)
@@ -739,19 +847,6 @@ void AVRBattingPawn::RefreshVrPanel()
 		}
 		VrPanel->HideRowsFrom(Row);
 
-		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
-		// '뒤로' 카드는 내린다 — 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
-		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
-		if (bSessionOver)
-		{
-			VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("PLAY AGAIN")),   EndMenu.Color(0));
-			VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("BACK TO MENU")), EndMenu.Color(1));
-			VrPanel->HideFooter();
-			VrPanel->HideBackCard();
-			VrPanel->SetHint(TEXT("aim the bat at a card and hold   ( [R] / [M] )"), FColor(110, 116, 128));
-			return;
-		}
-
 		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended exercises"),
 			FColor(150, 156, 168));
 		VrPanel->SetHint(TEXT("trigger = request again · raise bat = exit · [M/R]"),
@@ -761,21 +856,11 @@ void AVRBattingPawn::RefreshVrPanel()
 
 	const bool bTracking = Bat && Bat->IsTracking();
 
-	// 3D 텍스트는 한글 폰트가 없어 영어로 표기.
-	auto DiffEn = [](EDifficultyLevel D) -> const TCHAR*
-	{
-		switch (D)
-		{
-		case EDifficultyLevel::Beginner: return TEXT("Beginner");
-		case EDifficultyLevel::Pro:      return TEXT("Pro");
-		default:                         return TEXT("Amateur");
-		}
-	};
 	const TCHAR* StanceEn = (SessionStance == EBattingStance::Left) ? TEXT("Lefty") : TEXT("Righty");
 
 	// 제목: 난이도·타석. 추적 끊기면 붉게.
 	VrPanel->SetTitle(
-		FString::Printf(TEXT("VR Batting   [%s / %s]"), DiffEn(SessionDifficulty), StanceEn),
+		FString::Printf(TEXT("VR Batting   [%s / %s]"), BattingDifficultyEn(SessionDifficulty), StanceEn),
 		bTracking ? FColor(228, 233, 244) : FColor(235, 90, 90));
 
 	int32 Row = 0;

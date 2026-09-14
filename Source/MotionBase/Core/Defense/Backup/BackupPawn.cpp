@@ -19,6 +19,7 @@
 #include "GameFramework/PlayerController.h"
 #include "UI/ModeSelectHUD.h"
 #include "UI/VRInfoPanel.h"
+#include "UI/VRResultBoard.h"
 #include "AI/DrillCatalog.h"
 #include "AI/AIFeedbackService.h"
 #include "Analysis/WeaknessDetector.h"
@@ -135,6 +136,9 @@ ABackupPawn::ABackupPawn()
 	VrPanel = CreateDefaultSubobject<UVRInfoPanel>(TEXT("VrPanel"));
 	VrPanel->SetupAttachment(Capsule);
 	VrPanel->SetPlacement(UVRInfoPanel::DefaultDistanceCm, 70.0f);
+
+	ResultBoard = CreateDefaultSubobject<UVRResultBoard>(TEXT("ResultBoard"));
+	ResultBoard->SetupAttachment(Capsule);
 }
 
 void ABackupPawn::BeginPlay()
@@ -166,6 +170,12 @@ void ABackupPawn::BeginPlay()
 			VrPanel->SetStatusCompact();
 			VrPanel->ShowBackCard(TEXT("EXIT - aim here & hold"), FColor(255, 190, 90));
 		}
+	}
+
+	// 결과 보드도 VR 에서만 (PC 는 평면 HUD 가 결과를 그린다).
+	if (ResultBoard && bVR)
+	{
+		ResultBoard->BuildBoard();
 	}
 
 	// 포지션은 메뉴에서 ModeManager 에 지정해 둔 값을 읽는다 — ActiveDifficulty/ActiveStance 와
@@ -1141,11 +1151,11 @@ void ABackupPawn::Tick(float DeltaSeconds)
 			// 시행이 진행 중(Live)일 땐 나가기 제스처를 동결한다 — 백업 이동 중 팔이
 			// 위로 향할 수 있는데(스틱 조작 자세) 그게 나가기로 오인되면 세션이 날아간다.
 			const bool bGestureAllowed = (Phase != EBackupPhase::Live);
-			// 세션 종료 화면 — 패널 하단 카드를 겨눠 '다시 하기 / 메뉴로'를 고른다.
+			// 세션 종료 화면 — 결과 보드 버튼을 겨눠 '다시 하기 / 메뉴로'를 고른다.
 			// 제스처보다 먼저 본다: 명시적으로 고른 선택이 우연한 자세보다 우선한다.
-			if (bSessionOver && VrPanel)
+			if (bSessionOver && ResultBoard)
 			{
-				const int32 Chosen = EndMenu.Update(VrPanel, EndCardFirstRow, /*CardCount=*/2,
+				const int32 Chosen = ResultBoard->UpdateButtons(EndMenu,
 					MoveController->GetComponentLocation(), MoveController->GetForwardVector(),
 					MoveController->IsTracked(), DeltaSeconds);
 				if (Chosen == 0)
@@ -1612,50 +1622,81 @@ void ABackupPawn::UpdateFielderLabels()
 
 // ── VR 상태 패널 ──
 
+FVRResultBoardData ABackupPawn::BuildResultBoardData() const
+{
+	FVRResultBoardData D;
+	D.Heading = FString::Printf(TEXT("FIELDING - BACKUP   %s"), *UBackupPlaybook::PositionName(Position));
+
+	// 저장되는 점수(FlushSessionToSave)와 같은 산식 — 화면과 기록이 달라지면 안 된다.
+	const int32 N = SessionResults.Num();
+	const FScoreResult Score = UScoringService::ScoreDefenseSession(SuccessCount, N);
+	D.bScoreValid   = Score.bValid;
+	D.Score         = Score.TotalScore;
+	D.bUncalibrated = Score.bUncalibrated;
+	D.ResultLine    = FString::Printf(TEXT("Correct %d / %d"), SuccessCount, N);
+
+	if (N > 0)
+	{
+		FVRResultMeter& Correct = D.Meters.AddDefaulted_GetRef();
+		Correct.Label = TEXT("Correct zone");
+		Correct.Value01 = static_cast<float>(SuccessCount) / N;
+		Correct.ValueText = FString::Printf(TEXT("%.0f%%"), Correct.Value01 * 100.0f);
+		Correct.Color = FLinearColor(0.42f, 0.85f, 0.55f);
+	}
+
+	const float AvgP = GetAveragePathEfficiency();
+	if (AvgP >= 0.0f)
+	{
+		FVRResultMeter& Route = D.Meters.AddDefaulted_GetRef();
+		Route.Label = TEXT("Route");
+		Route.Value01 = FMath::Clamp(AvgP, 0.0f, 1.0f);
+		Route.ValueText = FString::Printf(TEXT("%.0f%%"), Route.Value01 * 100.0f);
+		Route.Color = FLinearColor(0.36f, 0.62f, 1.0f);
+	}
+
+	const float AvgD = GetAverageDecisionSec();
+	if (AvgD >= 0.0f)
+	{
+		FVRResultMeter& Decision = D.Meters.AddDefaulted_GetRef();
+		Decision.Label = TEXT("Decision");
+		// 빠를수록 좋다 — 판단 기준 시간(Field.TargetDecisionSec) 이하면 만점.
+		Decision.Value01 = (AvgD > 0.0f) ? FMath::Clamp(Field.TargetDecisionSec / AvgD, 0.0f, 1.0f) : 1.0f;
+		Decision.ValueText = FString::Printf(TEXT("%.2f s"), AvgD);
+		Decision.Color = FLinearColor(1.0f, 0.60f, 0.12f);
+	}
+
+	D.StatLine = FString::Printf(TEXT("Decision target %.1f s  ·  ball speed x%.1f"),
+		Field.TargetDecisionSec, BallSpeedScale);
+	D.CoachingText = CoachingText;
+	D.bAwaitingCoaching = bAwaitingCoaching;
+	for (const FTrainingDrill& Drill : LastDrills)
+	{
+		D.Drills.Add(Drill.CompactLabel(28));
+	}
+	return D;
+}
+
 void ABackupPawn::RefreshVrPanel()
 {
 	if (!VrPanel) { return; }
 
+	// 세션 종료 — 컴팩트 패널을 비우고 결과 보드(큰 점수·판단 지표·AI 코칭·버튼)를 세운다.
 	if (bSessionOver)
 	{
-		VrPanel->SetTitle(
-			FString::Printf(TEXT("AI judgment tips    (Correct %d / %d)"), SuccessCount, TotalTrials),
-			FColor(150, 210, 255));
-
-		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
-		//    종료 화면은 마지막 두 줄을 선택 카드에 내주므로 내용이 한 줄 줄어든다.
-		const int32 MaxContentRows = EndCardFirstRow;
-		int32 Row = 0;
-
-		const float AvgD = GetAverageDecisionSec();
-		const float AvgP = GetAveragePathEfficiency();
-		if (Row < MaxContentRows && (AvgD >= 0.0f || AvgP >= 0.0f))
-		{
-			VrPanel->SetRow(Row++, FString::Printf(TEXT("avg decision %.2fs   route %.0f%%"),
-				FMath::Max(AvgD, 0.0f), FMath::Max(AvgP, 0.0f) * 100.0f), FColor(150, 200, 255));
-		}
-
-		for (const FString& L : WrapBackupPanel(CoachingText, 30, 2))
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
-		}
-		for (const FTrainingDrill& D : LastDrills)
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, D.CompactLabel(), FColor(255, 200, 120));
-		}
-		VrPanel->HideRowsFrom(Row);
-
-		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
-		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
-		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
-		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("PLAY AGAIN")),   EndMenu.Color(0));
-		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("BACK TO MENU")), EndMenu.Color(1));
-		VrPanel->HideFooter();
+		VrPanel->HideAll();
 		VrPanel->HideBackCard();
-		VrPanel->SetHint(TEXT("aim the controller at a card and hold"), FColor(110, 116, 128));
+		if (ResultBoard)
+		{
+			ResultBoard->CopyAnchorFrom(VrPanel);
+			ResultBoard->Show(BuildResultBoardData());
+		}
 		return;
+	}
+
+	// 협동 세션은 GameState 가 새 판을 열 수 있어(RestartSession 을 안 거침) 여기서 내린다.
+	if (ResultBoard)
+	{
+		ResultBoard->Hide();
 	}
 
 	VrPanel->SetTitle(

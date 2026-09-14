@@ -17,32 +17,12 @@
 #include "Core/Defense/Throw/ThrowHUD.h"
 #include "UI/ModeSelectHUD.h"
 #include "UI/VRInfoPanel.h"
+#include "UI/VRResultBoard.h"
 #include "AI/DrillCatalog.h"
 #include "AI/AIFeedbackService.h"
 #include "Analysis/WeaknessDetector.h"
 #include "Scoring/ScoringService.h"
 #include "Core/ModeManager.h"
-
-namespace
-{
-	// TextRender 는 자동 줄바꿈이 없다 → 글자수로 하드 랩.
-	TArray<FString> ThrowWrap(const FString& In, int32 MaxCharsPerLine, int32 MaxLines)
-	{
-		TArray<FString> Lines;
-		int32 i = 0;
-		const int32 Len = In.Len();
-		while (i < Len && Lines.Num() < MaxLines)
-		{
-			Lines.Add(In.Mid(i, MaxCharsPerLine));
-			i += MaxCharsPerLine;
-		}
-		if (i < Len && Lines.Num() > 0)
-		{
-			Lines.Last().Append(TEXT(" …"));
-		}
-		return Lines;
-	}
-}
 
 AThrowPawn::AThrowPawn()
 {
@@ -76,6 +56,9 @@ AThrowPawn::AThrowPawn()
 	VrPanel = CreateDefaultSubobject<UVRInfoPanel>(TEXT("VrPanel"));
 	VrPanel->SetupAttachment(Capsule);
 	VrPanel->SetPlacement(UVRInfoPanel::DefaultDistanceCm, 70.0f);
+
+	ResultBoard = CreateDefaultSubobject<UVRResultBoard>(TEXT("ResultBoard"));
+	ResultBoard->SetupAttachment(Capsule);
 }
 
 void AThrowPawn::BeginPlay()
@@ -122,6 +105,12 @@ void AThrowPawn::BeginPlay()
 			VrPanel->SetStatusCompact();
 			VrPanel->ShowBackCard(TEXT("EXIT - aim here & hold"), FColor(255, 190, 90));
 		}
+	}
+
+	// 결과 보드도 VR 에서만 (PC 는 평면 HUD 가 결과를 그린다).
+	if (ResultBoard && bVR)
+	{
+		ResultBoard->BuildBoard();
 	}
 
 	// AI 운동 추천 서비스 (키가 없으면 요청 시 조용히 생략됨).
@@ -794,11 +783,11 @@ void AThrowPawn::Tick(float DeltaSeconds)
 			// 시행이 도는 동안엔 동결 — 급구를 받으려 손을 들거나 와인드업으로 팔이 올라간
 			// 자세를 나가기로 오인하지 않게. 판정이 끝난 뒤(Done) 틈에서만 진행이 쌓인다.
 			const bool bGestureAllowed = (Phase == EThrowPhase::Done) || bSessionOver;
-			// 세션 종료 화면 — 패널 하단 카드를 겨눠 '다시 하기 / 메뉴로'를 고른다.
+			// 세션 종료 화면 — 결과 보드 버튼을 겨눠 '다시 하기 / 메뉴로'를 고른다.
 			// 제스처보다 먼저 본다: 명시적으로 고른 선택이 우연한 자세보다 우선한다.
-			if (bSessionOver && VrPanel)
+			if (bSessionOver && ResultBoard)
 			{
-				const int32 Chosen = EndMenu.Update(VrPanel, EndCardFirstRow, /*CardCount=*/2,
+				const int32 Chosen = ResultBoard->UpdateButtons(EndMenu,
 					ThrowController->GetComponentLocation(), ThrowController->GetForwardVector(),
 					ThrowController->IsTracked(), DeltaSeconds);
 				if (Chosen == 0)
@@ -944,49 +933,87 @@ void AThrowPawn::Tick(float DeltaSeconds)
 	}
 }
 
+FVRResultBoardData AThrowPawn::BuildResultBoardData() const
+{
+	FVRResultBoardData D;
+	D.Heading = TEXT("FIELDING - THROW");
+
+	// 저장되는 점수(FlushSessionToSave)와 같은 산식 — 화면과 기록이 달라지면 안 된다.
+	const int32 N = SessionResults.Num();
+	const FScoreResult Score = UScoringService::ScoreDefenseSession(SuccessCount, N);
+	D.bScoreValid   = Score.bValid;
+	D.Score         = Score.TotalScore;
+	D.bUncalibrated = Score.bUncalibrated;
+	D.ResultLine    = FString::Printf(TEXT("On target %d / %d"), SuccessCount, N);
+
+	// 측정 지표 3종 — 정확도 · 구속 · 전환 시간. 막대 기준은 코칭 기준값(TargetReleaseKmh/TargetTransferSec).
+	if (N > 0)
+	{
+		FVRResultMeter& Acc = D.Meters.AddDefaulted_GetRef();
+		Acc.Label = TEXT("On target");
+		Acc.Value01 = static_cast<float>(SuccessCount) / N;
+		Acc.ValueText = FString::Printf(TEXT("%.0f%%"), Acc.Value01 * 100.0f);
+		Acc.Color = FLinearColor(0.42f, 0.85f, 0.55f);
+
+		const float Kmh = GetAverageReleaseKmh();
+		FVRResultMeter& Speed = D.Meters.AddDefaulted_GetRef();
+		Speed.Label = TEXT("Arm speed");
+		Speed.Value01 = FMath::Clamp(Kmh / FMath::Max(TargetReleaseKmh, 1.0f), 0.0f, 1.0f);
+		Speed.ValueText = FString::Printf(TEXT("%.0f km/h"), Kmh);
+		Speed.Color = FLinearColor(1.0f, 0.60f, 0.12f);
+
+		const float AvgT = GetAverageTransferSec();
+		FVRResultMeter& Transfer = D.Meters.AddDefaulted_GetRef();
+		Transfer.Label = TEXT("Transfer");
+		// 빠를수록 좋다 — 목표 이하면 만점.
+		Transfer.Value01 = (AvgT > 0.0f) ? FMath::Clamp(TargetTransferSec / AvgT, 0.0f, 1.0f) : 0.0f;
+		Transfer.ValueText = (AvgT >= 0.0f) ? FString::Printf(TEXT("%.2f s"), AvgT) : FString(TEXT("--"));
+		Transfer.Color = FLinearColor(0.36f, 0.62f, 1.0f);
+	}
+
+	// 베이스별 성공 — 시행이 없던 베이스는 적지 않는다.
+	{
+		const EBaseType Bases[NumBases] = { EBaseType::First, EBaseType::Second, EBaseType::Third, EBaseType::Home };
+		const TCHAR* Short[NumBases] = { TEXT("1B"), TEXT("2B"), TEXT("3B"), TEXT("HOME") };
+		for (int32 i = 0; i < NumBases; ++i)
+		{
+			int32 A = 0, S = 0;
+			GetBaseStats(Bases[i], A, S);
+			if (A <= 0) { continue; }
+			if (!D.StatLine.IsEmpty()) { D.StatLine += TEXT("   "); }
+			D.StatLine += FString::Printf(TEXT("%s %d/%d"), Short[i], S, A);
+		}
+	}
+
+	D.CoachingText = CoachingText;
+	D.bAwaitingCoaching = bAwaitingCoaching;
+	for (const FTrainingDrill& Drill : LastDrills)
+	{
+		D.Drills.Add(Drill.CompactLabel(28));
+	}
+	return D;
+}
+
 void AThrowPawn::RefreshVrPanel()
 {
 	if (!VrPanel) { return; }
 
-	// 세션 종료 → AI 운동 추천 오버레이.
+	// 세션 종료 — 컴팩트 패널을 비우고 결과 보드(큰 점수·측정 지표·AI 코칭·버튼)를 세운다.
 	if (bSessionOver)
 	{
-		VrPanel->SetTitle(
-			FString::Printf(TEXT("AI exercise tips    (On-target %d / %d)"), SuccessCount, TotalThrows),
-			FColor(150, 210, 255));
-
-		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
-		//    요약 1줄 + 코칭 2줄 + 드릴 1개로 압축. 전체 리포트는 데스크톱 결과 화면이 담당.
-		//    종료 화면은 마지막 두 줄을 선택 카드에 내주므로 내용이 한 줄 줄어든다.
-		const int32 MaxContentRows = EndCardFirstRow;
-		int32 Row = 0;
-		const float AvgT = GetAverageTransferSec();
-		VrPanel->SetRow(Row++, FString::Printf(TEXT("avg %.0f km/h    transfer %s"),
-			GetAverageReleaseKmh(),
-			(AvgT >= 0.0f) ? *FString::Printf(TEXT("%.2fs"), AvgT) : TEXT("--")),
-			FColor(150, 200, 255));
-
-		for (const FString& L : ThrowWrap(CoachingText, 30, 2))
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, L, FColor(228, 233, 244));
-		}
-		for (const FTrainingDrill& D : LastDrills)
-		{
-			if (Row >= MaxContentRows) { break; }
-			VrPanel->SetRow(Row++, D.CompactLabel(), FColor(255, 200, 120));
-		}
-		VrPanel->HideRowsFrom(Row);
-
-		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
-		// '뒤로' 카드는 내린다: 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
-		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
-		VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("PLAY AGAIN")),   EndMenu.Color(0));
-		VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("BACK TO MENU")), EndMenu.Color(1));
-		VrPanel->HideFooter();
+		VrPanel->HideAll();
 		VrPanel->HideBackCard();
-		VrPanel->SetHint(TEXT("aim the controller at a card and hold"), FColor(110, 116, 128));
+		if (ResultBoard)
+		{
+			ResultBoard->CopyAnchorFrom(VrPanel);
+			ResultBoard->Show(BuildResultBoardData());
+		}
 		return;
+	}
+
+	if (ResultBoard)
+	{
+		ResultBoard->Hide();
 	}
 
 	// 제목: 진행 + 목표 베이스 (지정된 곳이 항상 눈에 보이게).

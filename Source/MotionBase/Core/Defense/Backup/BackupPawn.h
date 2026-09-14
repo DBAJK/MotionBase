@@ -14,6 +14,8 @@ class UCameraComponent;
 class UCapsuleComponent;
 class UMotionControllerComponent;
 class UVRInfoPanel;
+class UVRResultBoard;
+struct FVRResultBoardData;
 class UAIFeedbackService;
 class ACatchBall;
 class AFielderMarker;
@@ -137,6 +139,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, Category = "Backup|VR")
 	TObjectPtr<UVRInfoPanel> VrPanel;
+
+	/** VR 세션 종료 결과 보드 — 큰 점수·세부 막대·AI 코칭·다시하기/메뉴 버튼 (VrPanel 자리에 선다). */
+	UPROPERTY(VisibleAnywhere, Category = "Backup|VR")
+	TObjectPtr<UVRResultBoard> ResultBoard;
 
 	/** 실측 다이아몬드 좌표 + 백업 존 기하 (⚠️ 실측 캘리브레이션 대상 — 전부 EditAnywhere). */
 	UPROPERTY(EditAnywhere, Category = "Backup|Field")
@@ -539,8 +545,8 @@ private:
 	/** 세션 종료 화면의 선택 카드(PLAY AGAIN / BACK TO MENU) 겨눔 상태. */
 	FVREndCardMenu EndMenu;
 
-	/** 종료 화면에서 선택 카드가 놓이는 첫 행 인덱스 (그 위쪽은 결과 내용). */
-	static constexpr int32 EndCardFirstRow = 3;
+	/** 종료 결과 보드에 올릴 내용을 이번 세션 값으로 채운다. */
+	FVRResultBoardData BuildResultBoardData() const;
 
 	/** 플레이 중 나가기 제스처 임계 — 이 종목의 자연 동작과 겹치지 않게 조인 값. */
 	static constexpr float LiveExitUpThreshold = 0.85f;
