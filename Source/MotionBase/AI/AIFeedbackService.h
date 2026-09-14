@@ -154,6 +154,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|AI")
 	int32 ExplanationMaxTokens = 200;
 
+	/**
+	 * 출력 언어. 모든 시스템 프롬프트가 이 값을 "write ... in %s" 자리에 꽂아 쓴다.
+	 * 기본은 영어 — VR 3D 패널에 한글 폰트(Content/Fonts/KRFont)가 아직 없어서 한국어로
+	 * 바꾸면 글자가 깨진다. 폰트가 준비되면 여기만 "Korean"으로 바꾸면 된다(코드 수정 불필요).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MotionBase|AI")
+	FString OutputLanguage = TEXT("English");
+
 private:
 	/**
 	 * 코치 도메인 — 시스템 프롬프트의 역할을 가른다.
@@ -186,7 +194,12 @@ private:
 	/**
 	 * 공통 HTTP 경로. 응답(성공/실패 + 텍스트)을 OnComplete 로 넘긴다.
 	 * 완료 콜백은 서비스가 살아 있을 때만 불리므로 첫 인자는 항상 유효하다.
+	 *
+	 * @param bIsRetry 재시도 호출인지 — 429/5xx(일시적 오류)는 짧은 대기 후 **한 번만** 자동
+	 *        재시도한다. 4xx(요청 자체가 잘못됨)는 재시도해도 같은 응답이 나오므로 즉시 실패
+	 *        사유를 돌려준다. 부스 시연 중 순간적인 API 과부하/타임아웃에 화면이 바로
+	 *        "미설정" 처럼 보이지 않게 하기 위함.
 	 */
 	void DispatchRequest(const FString& Body, const FString& Model,
-		TFunction<void(UAIFeedbackService*, bool, const FString&)> OnComplete);
+		TFunction<void(UAIFeedbackService*, bool, const FString&)> OnComplete, bool bIsRetry = false);
 };

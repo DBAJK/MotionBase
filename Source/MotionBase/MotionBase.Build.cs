@@ -26,7 +26,10 @@ public class MotionBase : ModuleRules
 			"NetCore"          // 협동 멀티플레이 복제 (DOREPLIFETIME / Net/UnrealNetwork.h)
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		PrivateDependencyModuleNames.AddRange(new string[]
+		{
+			"Slate"   // FSlateApplication::OnApplicationActivationStateChanged (창 포커스 상실 감지)
+		});
 
 		// 계산 계층은 UE 렌더/액터에 비의존한 순수 로직으로 유지 (헤드셋 없이 단위 테스트 가능)
 	}

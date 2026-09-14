@@ -165,9 +165,49 @@ public:
 	void TickHoverAnim(float DeltaSeconds, int32 HoverIndex, int32 VisibleRowCount);
 
 private:
+	/**
+	 * 텍스트 더티 체크 캐시 — 값이 안 바뀌었으면 SetText 를 건너뛴다.
+	 *
+	 * 왜 필요한가: 이 패널의 Set* 는 소유 폰의 Tick 에서 매 프레임 호출되는데(상태가 안 바뀌어도),
+	 * UTextRenderComponent::SetText 는 호출할 때마다 폰트 메트릭 조회→글리프 쿼드 생성→렌더
+	 * 프록시 재빌드를 일으킨다. 값이 실제로 같으면 이 비용을 스킵한다.
+	 * SetVisibility 는 여기서 걸지 않는다 — 엔진 쪽에서 이미 같은 값이면 no-op이고, 값이 정말
+	 * 바뀐 경우(예: 숨겼다 다시 보임)엔 텍스트가 그대로여도 반드시 다시 켜야 하기 때문.
+	 */
+	struct FTextCache
+	{
+		FString Text;
+		FColor  Color = FColor(0, 0, 0, 0);
+		bool    bSet = false;
+
+		/** 값이 실제로 바뀌었으면 캐시를 갱신하고 true(=다시 그려야 함)를 돌려준다. */
+		bool Update(const FString& NewText, const FColor& NewColor)
+		{
+			if (bSet && Text == NewText && Color == NewColor) { return false; }
+			Text = NewText;
+			Color = NewColor;
+			bSet = true;
+			return true;
+		}
+	};
+
+	FTextCache TitleCache;
+	TArray<FTextCache> RowCache; // BuildPanel 에서 MaxRows 크기로 초기화.
+	FTextCache FooterCache;
+	FTextCache HintCache;
+	FTextCache BackCache; // ShowBackCard / SetBackBelowRows 공용 — 둘 다 BackText 하나를 쓴다.
+
+	/**
+	 * DrawChrome(패널 테두리·카드 프레임·구분선)은 아무도 호버 중이 아니면 완전히 정적이다
+	 * (호버 중인 카드의 드웰 채움만 매 프레임 바뀐다). 그래서 호버 중이 아닐 때만 이 주기로
+	 * 저빈도 재호출하고, 호버 중엔 예전처럼 매 프레임 그린다(채움 애니메이션이 끊기지 않게).
+	 */
+	static constexpr float ChromeRedrawIntervalSec = 0.3f;
+	mutable float ChromeValidUntilSec = 0.0f;
+
 	/** 카드 사각 테두리 하나를 그린다 (행 컴포넌트의 월드 축 기준). */
 	void DrawCardFrame(const UTextRenderComponent* Card, const FColor& Color,
-		float Thickness, float FillProgress) const;
+		float Thickness, float FillProgress, float Duration) const;
 
 	/** 곡면 배치 파라미터 (ApplyCurvedLayout 이 채운다). 0 이면 평면 배치. */
 	float CurveRadiusCm = 0.0f;

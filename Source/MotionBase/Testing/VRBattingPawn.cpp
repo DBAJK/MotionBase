@@ -97,6 +97,17 @@ void AVRBattingPawn::BeginPlay()
 	// 룸스케일 기준(바닥) — 서 있는 타자의 실제 키가 반영되도록.
 	UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
 
+	// PostContactDelaySec 은 EditAnywhere 라 인스턴스/블루프린트에서 실수로 창(ContactTimeWindowSec)
+	// 보다 짧게 덮어쓸 수 있다 — 그러면 늦은 스윙 표본이 버퍼에 쌓이기 전에 분석해버려 전부
+	// TAKE로 오분류된다(재발 이력 있는 버그). 컴파일 타임에 못 잡으니 여기서 강제로 맞춘다.
+	if (PostContactDelaySec < USwingAnalyzer::ContactTimeWindowSec)
+	{
+		UE_LOG(LogMotionBase, Warning,
+			TEXT("[VRBatting] PostContactDelaySec(%.2f)이 ContactTimeWindowSec(%.2f)보다 짧습니다 — 늦은 스윙이 TAKE로 오분류됩니다. 자동으로 올립니다."),
+			PostContactDelaySec, USwingAnalyzer::ContactTimeWindowSec);
+		PostContactDelaySec = USwingAnalyzer::ContactTimeWindowSec;
+	}
+
 	// 나가기 제스처: 타격 준비 자세(배트를 세움)와 겹치므로 가장 빡빡하게 잡는다.
 	// 수직에서 ±18° 이내로 3초 — 스탠스에서 배트를 이 정도로 곧게 세워 3초를 버티긴 어렵다.
 	// (세션이 끝나면 EndSession 에서 풀어준다 — 그땐 오발동시킬 스윙 자체가 없다.)
@@ -109,7 +120,7 @@ void AVRBattingPawn::BeginPlay()
 	{
 		VrPanel->BuildPanel();
 		VrPanel->SetStatusCompact();
-		VrPanel->ShowBackCard(TEXT("EXIT - aim bat here & hold"), FColor(255, 190, 90));
+		VrPanel->ShowBackCard(TEXT("나가기 - 배트로 여기를 겨눈 채 유지"), FColor(255, 190, 90));
 	}
 	if (ResultBoard)
 	{
@@ -124,6 +135,14 @@ void AVRBattingPawn::BeginPlay()
 			SessionDifficulty = MM->GetActiveDifficulty();
 			SessionStance = MM->GetActiveStance();
 		}
+	}
+
+	// Tick 이 매 프레임 읽는 코칭 요청 트리거 키를 여기서 한 번만 만든다
+	// (SessionStance 가 세션 내내 안 바뀌므로 손도 안 바뀐다).
+	{
+		const TCHAR* Side = (SessionStance == EBattingStance::Left) ? TEXT("Left") : TEXT("Right");
+		TriggerGenericKey = FKey(*FString::Printf(TEXT("MotionController_%s_Trigger"), Side));
+		TriggerViveKey    = FKey(*FString::Printf(TEXT("Vive_%s_Trigger"), Side));
 	}
 
 	// 난이도 → 타구 판정 관대도 (점수 산식은 건드리지 않는다 — FScoringConfig 주석 참고).
@@ -268,8 +287,8 @@ void AVRBattingPawn::AnalyzeSwingNow()
 	if (!LastMetrics.bSwingDetected)
 	{
 		++TakeCount;
-		LastCall = TEXT("Take");
-		ShowResultText(TEXT("TAKE"), FLinearColor(0.7f, 0.7f, 0.75f));
+		LastCall = TEXT("지켜봄");
+		ShowResultText(TEXT("지켜봄"), FLinearColor(0.7f, 0.7f, 0.75f));
 		return;
 	}
 
@@ -299,8 +318,8 @@ void AVRBattingPawn::AnalyzeSwingNow()
 	if (!LastMetrics.bContacted)
 	{
 		++WhiffCount;
-		LastCall = TEXT("Whiff");
-		ShowResultText(TEXT("MISS"), FLinearColor(0.85f, 0.55f, 0.35f));
+		LastCall = TEXT("헛스윙");
+		ShowResultText(TEXT("헛스윙"), FLinearColor(0.85f, 0.55f, 0.35f));
 
 		UE_LOG(LogMotionBase, Log, TEXT("[VRBatting] #%d Whiff (closest %.1f cm) peak=%.1f m/s"),
 			SwingCount, LastMetrics.ContactDistanceCm, LastMetrics.PeakSpeedMps);
@@ -321,13 +340,13 @@ void AVRBattingPawn::AnalyzeSwingNow()
 	if (LastHit.Class == EHitClass::HomeRun) { ++HomeRunCount; }
 	else if (LastHit.Class == EHitClass::Hit) { ++HitCount; }
 
-	// 헤드셋 안 3D 결과 표시 + 푸터용 라벨 (영문 — 폰트 의존 없음).
+	// 헤드셋 안 3D 결과 표시 + 푸터용 라벨. UHitModel::GetClassDisplayName 과 같은 어휘를 쓴다.
 	switch (LastHit.Class)
 	{
-	case EHitClass::HomeRun: LastCall = TEXT("Home run"); ShowResultText(TEXT("HOME RUN!"), FLinearColor(1.0f, 0.85f, 0.15f)); break;
-	case EHitClass::Hit:     LastCall = TEXT("Hit");      ShowResultText(TEXT("HIT!"),      FLinearColor(0.35f, 0.9f, 0.4f));  break;
-	case EHitClass::Foul:    LastCall = TEXT("Foul");     ShowResultText(TEXT("FOUL"),      FLinearColor(0.75f, 0.75f, 0.8f)); break;
-	default:                 LastCall = TEXT("Out");      ShowResultText(TEXT("OUT"),       FLinearColor(1.0f, 0.55f, 0.2f));  break;
+	case EHitClass::HomeRun: LastCall = TEXT("홈런"); ShowResultText(TEXT("홈런!"), FLinearColor(1.0f, 0.85f, 0.15f)); break;
+	case EHitClass::Hit:     LastCall = TEXT("안타"); ShowResultText(TEXT("안타!"), FLinearColor(0.35f, 0.9f, 0.4f));  break;
+	case EHitClass::Foul:    LastCall = TEXT("파울"); ShowResultText(TEXT("파울"),  FLinearColor(0.75f, 0.75f, 0.8f)); break;
+	default:                 LastCall = TEXT("아웃"); ShowResultText(TEXT("아웃"),  FLinearColor(1.0f, 0.55f, 0.2f));  break;
 	}
 
 	// 타구 연출 — 좌타는 당겨치는 좌우각을 반전.
@@ -378,7 +397,7 @@ void AVRBattingPawn::EndSession()
 		VrPanel->RequestRecenter();
 	}
 
-	ShowResultText(FString::Printf(TEXT("SESSION OVER  %d / %d"), ContactCount, SwingCount),
+	ShowResultText(FString::Printf(TEXT("세션 종료  %d / %d"), ContactCount, SwingCount),
 		FLinearColor(1.0f, 0.85f, 0.15f));
 
 	UE_LOG(LogMotionBase, Log, TEXT("[VRBatting] 세션 종료 — %d구 (스윙 %d · 컨택 %d · 헛스윙 %d · 지켜본 공 %d) 총점 %.1f"),
@@ -460,7 +479,7 @@ void AVRBattingPawn::ResetSession()
 	EndMenu.Reset();
 	if (VrPanel)
 	{
-		VrPanel->ShowBackCard(TEXT("EXIT - aim bat here & hold"), FColor(255, 190, 90));
+		VrPanel->ShowBackCard(TEXT("나가기 - 배트로 여기를 겨눈 채 유지"), FColor(255, 190, 90));
 		VrPanel->RequestRecenter();
 	}
 	LastReport = FWeaknessReport();
@@ -610,7 +629,7 @@ void AVRBattingPawn::RequestCoaching()
 	}
 	if (SessionHistory.Num() == 0)
 	{
-		CoachingText = TEXT("Take a few swings first.");
+		CoachingText = TEXT("먼저 몇 번 스윙해보세요.");
 		return;
 	}
 
@@ -631,14 +650,14 @@ void AVRBattingPawn::RequestCoaching()
 	CoachingShowTimer = 14.0f; // 요청 순간부터 패널에 코칭 오버레이를 띄운다.
 	if (FeedbackService && FeedbackService->IsConfigured())
 	{
-		CoachingText = TEXT("Requesting AI coaching...");
+		CoachingText = TEXT("AI 코칭 요청 중...");
 		bAwaitingCoaching = true;
 		FeedbackService->RequestSwingCoaching(LastReport, LastDrills, LastChronic);
 	}
 	else
 	{
 		bAwaitingCoaching = false;
-		CoachingText = TEXT("AI coaching not configured (Config/Secrets.ini)");
+		CoachingText = TEXT("AI 코칭 미설정 (Config/Secrets.ini)");
 	}
 
 	UE_LOG(LogMotionBase, Log, TEXT("[VRBatting] 코칭 요청: 약점 %d개, 드릴 %d개"),
@@ -691,9 +710,9 @@ void AVRBattingPawn::Tick(float DeltaSeconds)
 	// (스윙은 배트 궤적으로 자동 판정되므로 트리거는 비어 있다 — 코칭 버튼으로 재활용.)
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
-		const TCHAR* Side = (SessionStance == EBattingStance::Left) ? TEXT("Left") : TEXT("Right");
-		const float Generic = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("MotionController_%s_Trigger"), Side)));
-		const float Vive    = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("Vive_%s_Trigger"), Side)));
+		// 키 자체는 BeginPlay 에서 캐싱해 뒀다(손이 세션 내내 안 바뀜).
+		const float Generic = PC->GetInputAnalogKeyState(TriggerGenericKey);
+		const float Vive    = PC->GetInputAnalogKeyState(TriggerViveKey);
 		const bool bHeld = FMath::Max(Generic, Vive) >= TriggerPressThreshold;
 		if (bHeld && !bTriggerHeldPrev)
 		{
@@ -789,6 +808,7 @@ void AVRBattingPawn::RefreshVrPanel()
 	// (데스크톱 미러는 ISessionResultView 로 전체 결과 패널을 따로 그린다.)
 	if (bSessionOver)
 	{
+<<<<<<< HEAD
 		VrPanel->HideAll();
 		VrPanel->HideBackCard();
 		if (ResultBoard)
@@ -818,6 +838,14 @@ void AVRBattingPawn::RefreshVrPanel()
 	if (CoachingShowTimer > 0.0f)
 	{
 		VrPanel->SetTitle(FString::Printf(TEXT("Session result    score %.1f"), SessionScore.TotalScore),
+=======
+		// 헤드셋 안 결과 요약 — 데스크톱 미러는 ISessionResultView 로 전체 패널을 그리지만,
+		// 헤드셋에서는 3D 텍스트라 줄 수가 한정돼 핵심 숫자만 압축해 보여준다.
+		VrPanel->SetTitle(
+			bSessionOver
+				? FString::Printf(TEXT("세션 종료!  %d구    점수 %.1f"), TotalPitches, SessionScore.TotalScore)
+				: FString::Printf(TEXT("세션 결과    점수 %.1f"), SessionScore.TotalScore),
+>>>>>>> main
 			FColor(150, 210, 255));
 
 		// ⚠️ 컴팩트 상태 패널(SetStatusCompact)은 행이 4줄을 넘으면 푸터·힌트와 겹친다.
@@ -830,7 +858,7 @@ void AVRBattingPawn::RefreshVrPanel()
 			const float ContactRate = (SwingCount > 0)
 				? (100.0f * ContactCount / SwingCount) : 0.0f;
 			VrPanel->SetRow(Row++,
-				FString::Printf(TEXT("swings %d  contact %.0f%%  HR %d  hits %d  takes %d"),
+				FString::Printf(TEXT("스윙 %d  컨택 %.0f%%  홈런 %d  안타 %d  지켜봄 %d"),
 					SwingCount, ContactRate, HomeRunCount, HitCount, TakeCount),
 				FColor(150, 200, 255));
 		}
@@ -847,20 +875,55 @@ void AVRBattingPawn::RefreshVrPanel()
 		}
 		VrPanel->HideRowsFrom(Row);
 
+<<<<<<< HEAD
 		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("Waiting for AI...") : TEXT("Recommended exercises"),
+=======
+		// 세션 종료 화면 — 패널 하단을 선택 카드 두 장으로 바꾼다.
+		// '뒤로' 카드는 내린다 — 카드와 각도가 거의 겹쳐 오선택을 만들고, 같은 일을
+		// BACK TO MENU 카드가 더 잘 보이는 자리에서 대신한다.
+		if (bSessionOver)
+		{
+			VrPanel->SetRow(EndCardFirstRow,     EndMenu.Label(0, TEXT("다시 하기")), EndMenu.Color(0));
+			VrPanel->SetRow(EndCardFirstRow + 1, EndMenu.Label(1, TEXT("메뉴로")),   EndMenu.Color(1));
+			VrPanel->HideFooter();
+			VrPanel->HideBackCard();
+			VrPanel->SetHint(TEXT("배트로 카드를 겨눈 채 유지하세요   ( [R] / [M] )"), FColor(110, 116, 128));
+			return;
+		}
+
+		VrPanel->SetFooter(bAwaitingCoaching ? TEXT("AI 응답 대기 중...") : TEXT("추천 운동"),
+>>>>>>> main
 			FColor(150, 156, 168));
-		VrPanel->SetHint(TEXT("trigger = request again · raise bat = exit · [M/R]"),
+		VrPanel->SetHint(TEXT("트리거 = 다시 요청 · 배트 들기 = 나가기 · [M/R]"),
 			FColor(110, 116, 128));
 		return;
 	}
 
 	const bool bTracking = Bat && Bat->IsTracking();
 
+<<<<<<< HEAD
 	const TCHAR* StanceEn = (SessionStance == EBattingStance::Left) ? TEXT("Lefty") : TEXT("Righty");
 
 	// 제목: 난이도·타석. 추적 끊기면 붉게.
 	VrPanel->SetTitle(
 		FString::Printf(TEXT("VR Batting   [%s / %s]"), BattingDifficultyEn(SessionDifficulty), StanceEn),
+=======
+	// UModeManager::GetDifficultyDisplayName 과 같은 어휘("초보"/"아마추어"/"프로")를 쓴다.
+	auto DiffKo = [](EDifficultyLevel D) -> const TCHAR*
+	{
+		switch (D)
+		{
+		case EDifficultyLevel::Beginner: return TEXT("초보");
+		case EDifficultyLevel::Pro:      return TEXT("프로");
+		default:                         return TEXT("아마추어");
+		}
+	};
+	const TCHAR* StanceKo = (SessionStance == EBattingStance::Left) ? TEXT("좌타") : TEXT("우타");
+
+	// 제목: 난이도·타석. 추적 끊기면 붉게.
+	VrPanel->SetTitle(
+		FString::Printf(TEXT("VR 타격   [%s / %s]"), DiffKo(SessionDifficulty), StanceKo),
+>>>>>>> main
 		bTracking ? FColor(228, 233, 244) : FColor(235, 90, 90));
 
 	int32 Row = 0;
@@ -868,13 +931,13 @@ void AVRBattingPawn::RefreshVrPanel()
 	// 추적 경고 / 동적 난이도.
 	if (!bTracking)
 	{
-		VrPanel->SetRow(Row++, TEXT("! Controller not tracked - check SteamVR / base stations"),
+		VrPanel->SetRow(Row++, TEXT("! 컨트롤러 추적 안 됨 - SteamVR / 베이스 스테이션 확인"),
 			FColor(235, 90, 90));
 	}
 	else if (PitchingZone)
 	{
 		VrPanel->SetRow(Row++,
-			FString::Printf(TEXT("Dynamic difficulty %.0f%%  (up on good hits, down on misses)"),
+			FString::Printf(TEXT("동적 난이도 %.0f%%  (잘 치면 상승 · 놓치면 하강)"),
 				PitchingZone->GetDynamicLevel() * 100.0f),
 			FColor(255, 180, 90));
 	}
@@ -884,8 +947,8 @@ void AVRBattingPawn::RefreshVrPanel()
 	{
 		const float Remain = PitchingZone->GetArrivalWorldTime() - (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
 		VrPanel->SetRow(Row++,
-			FString::Printf(TEXT("%s incoming - %.2fs to plate"),
-				CurrentPitchType == EPitchType::Breaking ? TEXT("Breaking ball") : TEXT("Fastball"),
+			FString::Printf(TEXT("%s 접근 중 - 도달까지 %.2fs"),
+				CurrentPitchType == EPitchType::Breaking ? TEXT("변화구") : TEXT("직구"),
 				FMath::Max(0.0f, Remain)),
 			FColor(240, 220, 90));
 	}
@@ -895,31 +958,31 @@ void AVRBattingPawn::RefreshVrPanel()
 	if (bHasResult)
 	{
 		VrPanel->SetFooter(
-			FString::Printf(TEXT("Last: %s | bat %.1f m/s | ball %.1f m/s / %.0f m | score %.1f"),
+			FString::Printf(TEXT("직전: %s | 배트 %.1f m/s | 타구 %.1f m/s / %.0f m | 점수 %.1f"),
 				*LastCall, LastMetrics.ContactSpeedMps, LastHit.ExitVelocityMps, LastHit.CarryDistanceM,
 				LastSwingScore.TotalScore),
 			FColor(120, 220, 130));
 	}
 	else if (!LastCall.IsEmpty())
 	{
-		VrPanel->SetFooter(FString::Printf(TEXT("Last: %s"), *LastCall), FColor(180, 184, 192));
+		VrPanel->SetFooter(FString::Printf(TEXT("직전: %s"), *LastCall), FColor(180, 184, 192));
 	}
 	else
 	{
-		VrPanel->SetFooter(TEXT("Watch the ball and swing on time"), FColor(150, 156, 168));
+		VrPanel->SetFooter(TEXT("공을 보고 타이밍에 맞춰 스윙하세요"), FColor(150, 156, 168));
 	}
 
 	// 힌트: 세션 집계 + 조작. 배트를 위로 드는 중이면 나가기 진행바를 크게 보여준다.
 	if (ExitGesture.IsHolding())
 	{
 		VrPanel->SetHint(
-			FString::Printf(TEXT("Raise bat to exit  %s"), *ExitGesture.ProgressBar()),
+			FString::Printf(TEXT("배트를 들어 나가기  %s"), *ExitGesture.ProgressBar()),
 			FColor(255, 190, 90));
 	}
 	else
 	{
 		VrPanel->SetHint(
-			FString::Printf(TEXT("Pitch %d / %d · swings %d (contact %d · whiff %d) · HR %d · hits %d · takes %d | avg %.1f    ·    trigger = AI coaching · raise bat = exit   [M/R]"),
+			FString::Printf(TEXT("투구 %d / %d · 스윙 %d (컨택 %d · 헛스윙 %d) · 홈런 %d · 안타 %d · 지켜봄 %d | 평균 %.1f    ·    트리거 = AI 코칭 · 배트 들기 = 나가기   [M/R]"),
 				GetPitchNumber(), TotalPitches,
 				SwingCount, ContactCount, WhiffCount, HomeRunCount, HitCount, TakeCount, SessionScore.TotalScore),
 			FColor(110, 116, 128));

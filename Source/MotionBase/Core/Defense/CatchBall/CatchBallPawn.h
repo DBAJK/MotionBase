@@ -6,6 +6,7 @@
 #include "Data/TrainingFeedback.h"
 #include "UI/VRExitGesture.h"
 #include "UI/VREndCardMenu.h"
+#include "Core/DynamicDifficulty.h"
 #include "CatchBallPawn.generated.h"
 
 class UCameraComponent;
@@ -220,7 +221,47 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "CatchBall")
 	TSubclassOf<ACatchBall> CatchBallClass;
 
+	// ── 동적 난이도 (기록·성적 기반 자동 상승) ──
+	// PitchingZone(타격)과 같은 계약: 세션 시작 시 과거 평균으로 시드, 시도마다 성과로 조정.
+	// ⚠️ 헤드룸 값은 실측 캘리브레이션 대상 — 하드코딩 확정 금지.
+
+	/** 기록·성적 기반으로 캐치 반경·체공시간을 자동 조절할지. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	bool bDynamicDifficulty = true;
+
+	/** 동적 상승 최대 반경 축소(cm) — DynamicLevel=1 일 때 유형별 반경에서 이만큼 줄어든다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicRadiusReductionCm = 25.0f;
+
+	/** 반경이 아무리 줄어도 이 아래로는 안 내려간다(완전히 못 잡는 반경을 막는 하한). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicRadiusFloorCm = 30.0f;
+
+	/** 동적 상승 최대 체공시간 축소(초). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicFlightReductionSec = 0.4f;
+
+	/** 체공시간이 아무리 줄어도 이 아래로는 안 내려간다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicFlightFloorSec = 0.5f;
+
+	/** 성공 1회당 동적 수준 상승폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicStepUp = 0.12f;
+
+	/** 실패(헛손질/놓침) 1회당 동적 수준 하강폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CatchBall|Difficulty")
+	float DynamicStepDown = 0.08f;
+
 private:
+	/**
+	 * 게임 창이 포커스를 잃는 순간 이동 키가 눌려 있으면 Released 이벤트를 영영 못 받아,
+	 * 그 방향으로 계속 움직이는 상태로 고정돼 버린다 (알트탭·헤드셋 전환 시 실제로 발생).
+	 * 포커스를 잃으면 이동 플래그를 전부 끈다.
+	 */
+	void HandleApplicationActivationChanged(bool bIsActive);
+	FDelegateHandle ApplicationActivationHandle;
+
 	// ── 입력 핸들러 (BindKey 눌림/뗌 → 플래그) ──
 	void OnRightPressed()  { bMoveRight = true; }
 	void OnRightReleased() { bMoveRight = false; }
@@ -348,6 +389,17 @@ private:
 	bool  bPitchActive = false;   // 공이 날아가는 중 (스페이스바 대기)
 	bool  bSessionOver = false;
 	float IntervalTimer = 0.0f;   // 다음 공까지 대기 타이머
+
+	/**
+	 * 낙구지점 마커(바닥 원 + VR 공중 원)는 한 투구 내내 안 바뀌는 정적 정보다(위치·반경 고정).
+	 * 매 프레임 대신 이 주기로만 다시 그린다. 내 캐치 반경 원(글러브/발밑을 따라 움직임)은
+	 * 실시간 위치가 필요해서 대상에서 제외 — 계속 매 프레임 그린다.
+	 */
+	static constexpr float LandingMarkerRedrawIntervalSec = 0.5f;
+	float LandingMarkerValidUntilSec = 0.0f;
+
+	/** 동적 난이도 상태 (0~1) — BuildTrial 이 반경·체공시간 계산에 쓴다. */
+	FDynamicDifficultyLevel DynamicDifficulty;
 	bool  bWaitingNext = false;
 
 	FCatchResult LastResult;
@@ -373,6 +425,31 @@ private:
 
 	/** VR 이동 — 컨트롤러 썸스틱/트랙패드로 포구 위치를 옮긴다 (걷기 대체). */
 	void TickVRLocomotion(float DeltaSeconds);
+
+	/**
+	 * TickVRLocomotion 이 매 틱 읽는 이동축 키 4개(제네릭/Vive × X/Y). 손(Side)이 세션 내내
+	 * 안 바뀌므로 BeginPlay 에서 한 번만 만들어 둔다 — 매 프레임 FString::Printf 로 FKey(내부
+	 * FName 조회)를 새로 만드는 비용을 없앤다.
+	 */
+	FKey LocomotionGenericXKey, LocomotionViveXKey;
+	FKey LocomotionGenericYKey, LocomotionViveYKey;
+
+	/**
+	 * "터치" 키(Vive_%s_Trackpad_Touch)는 실기에서 안 믿을 만했다 — 세션 시작 직후 한동안
+	 * 손도 안 댔는데 계속 true 로 찍혔고, 세션 중간에도 축 값이 튀는 걸 걸러주지 못했다.
+	 * 대신 **클릭**(트랙패드를 실제로 눌러야 켜지는 기계식 버튼)으로 게이팅한다 — 터치 센서와
+	 * 달리 물리적으로 눌러야만 신호가 나서 오탐 여지가 훨씬 적다. 트랙패드를 누르고 있는
+	 * 동안에만 이동하고, 떼면 즉시 멈춘다(별도 draft 없이 축 값을 그대로 무시).
+	 * (미등록 키면 IsInputKeyDown 이 false 를 안전하게 돌려준다 — 축 키와 같은 패턴.)
+	 */
+	FKey LocomotionGenericClickKey, LocomotionViveClickKey;
+
+	/**
+	 * 세션 시작 직후 잠깐(1.5초) 트랙패드 입력을 아예 무시한다 — 실기에서 확인된 문제로,
+	 * OpenXR 액션 바인딩이 완전히 붙기 전 한동안 축 값이 이전 세션의 잔상 같은 값을 그대로
+	 * 돌려준다. 클릭 게이팅과 별개로, 시작 직후 구간은 시간으로 한 번 더 확실히 거른다.
+	 */
+	float LocomotionUnlockTimeSec = 0.0f;
 
 	/** VR 상태 패널 내용 갱신 (bVR 일 때 매 틱). */
 	void RefreshVrPanel();

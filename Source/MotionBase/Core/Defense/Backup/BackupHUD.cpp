@@ -161,11 +161,11 @@ void ABackupHUD::DrawHUD()
 	const float PanelY = 28.0f * S;
 	DrawPanel(PanelX, PanelY, PanelW, PanelH, PanelBg, PanelLine);
 
-	const FString Progress = FString::Printf(TEXT("%s   Q %d / %d      Correct %d"),
+	const FString Progress = FString::Printf(TEXT("%s   문제 %d / %d      정답 %d"),
 		*UBackupPlaybook::PositionName(Pawn->GetPosition()), Pawn->GetTrialNumber(), Pawn->GetTotalTrials(), Pawn->GetSuccessCount());
 	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 12.0f * S, TextDim, 0.85f * S);
 
-	DrawLabel(FString::Printf(TEXT("ball speed x%.1f  ([ / ])"), Pawn->GetBallSpeedScale()),
+	DrawLabel(FString::Printf(TEXT("공 속도 x%.1f  ([ / ])"), Pawn->GetBallSpeedScale()),
 		PanelX + 20.0f * S, PanelY + 66.0f * S, TextDim, 0.75f * S);
 
 	{
@@ -173,16 +173,16 @@ void ABackupHUD::DrawHUD()
 		const float Shown = (Live >= 0.0f) ? Live : Pawn->GetLastDecisionSec();
 		if (Shown >= 0.0f)
 		{
-			DrawLabel(FString::Printf(TEXT("decide  %.1fs"), Shown),
+			DrawLabel(FString::Printf(TEXT("판단  %.1fs"), Shown),
 				PanelX + PanelW - 150.0f * S, PanelY + 12.0f * S,
 				(Shown > 1.5f) ? FLinearColor(0.95f, 0.55f, 0.30f, 1.0f) : TextDim, 0.85f * S);
 		}
 	}
 
 	DrawCentered(Pawn->GetSituationText(), W * 0.5f, PanelY + 38.0f * S, TextMain, 1.1f * S);
-	DrawCentered(FString::Printf(TEXT("Runners: %s"), *Pawn->GetRunnersText()),
+	DrawCentered(FString::Printf(TEXT("주자: %s"), *Pawn->GetRunnersText()),
 		W * 0.5f, PanelY + 66.0f * S, TextDim, 0.9f * S);
-	DrawCentered(Pawn->IsHoldTrial() ? TEXT("Judgment: is there a backup job here at all?") : TEXT("Judgment: where do you back up?"),
+	DrawCentered(Pawn->IsHoldTrial() ? TEXT("판단: 이 상황에서 백업 임무가 있는가?") : TEXT("판단: 어디로 백업할 것인가?"),
 		W * 0.5f, PanelY + 92.0f * S, Good, 0.85f * S);
 
 	// ── 탑다운 미니맵 — PC 검증의 핵심 도구 ──
@@ -217,7 +217,7 @@ void ABackupHUD::DrawHUD()
 	if (!Coaching.IsEmpty())
 	{
 		float PY = MapCenterY + MapRadius + 90.0f * S;
-		DrawCentered(TEXT("AI judgment tips"), W * 0.5f, PY, FLinearColor(0.6f, 0.82f, 1.0f, 1.0f), 1.0f * S);
+		DrawCentered(TEXT("AI 판단 코칭"), W * 0.5f, PY, FLinearColor(0.6f, 0.82f, 1.0f, 1.0f), 1.0f * S);
 		PY += 30.0f * S;
 
 		// 처방 목록이 들어갈 자리를 먼저 떼어두고, 코칭 문장은 남는 만큼만 그린다.
@@ -247,6 +247,6 @@ void ABackupHUD::DrawHUD()
 	}
 
 	// ── 조작 안내 ──
-	DrawCentered(TEXT("Hold WASD to move to your backup zone    -    Q / E (or arrows) to look around    -    M to exit"),
+	DrawCentered(TEXT("WASD를 눌러 백업 위치로 이동    -    Q / E(또는 화살표)로 시선 이동    -    M 나가기"),
 		W * 0.5f, H - 30.0f * S, TextDim, 0.75f * S);
 }

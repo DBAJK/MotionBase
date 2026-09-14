@@ -88,6 +88,22 @@ public:
 		const FBodyMechanicsScoringConfig& BodyConfig);
 
 	/**
+	 * 약점 축 하나를 문턱(MinReportSeverity) 통과 시에만 리포트에 추가한다.
+	 *
+	 * 포구·송구·백업의 `Build*Report` 가 거의 동일한 람다(점수 클램프 → Severity 계산 →
+	 * 문턱 비교)를 3벌 복붙하고 있었다 — 타격이 `DetectSwing` 을 갖는 것과 대칭으로 여기에
+	 * 흡수한다. 종목별 "무엇이 정확도/효율인가" 계산 자체는 각 폰이 그대로 한다 —
+	 * 이 함수는 그 결과를 리포트에 담는 마지막 단계(문턱·정렬)만 공유한다.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Feedback")
+	static void AddWeaknessIfSevere(UPARAM(ref) FWeaknessReport& Report, EWeaknessAxis Axis,
+		float Score, const FString& Evidence);
+
+	/** 심각도 내림차순 정렬 — 가장 시급한 약점이 앞으로 오게. 리포트 완성 마지막에 호출할 것. */
+	UFUNCTION(BlueprintCallable, Category = "MotionBase|Feedback")
+	static void SortWeaknessesBySeverity(UPARAM(ref) FWeaknessReport& Report);
+
+	/**
 	 * 저장 이력을 훑어 축별 만성 약점·추세를 판별한다 (계산 계층).
 	 * 최근 Window 개의 "리포트 있는" 해당 모드 세션을 시간순으로 모아, 축마다
 	 * 세션별 수행도 시계열을 만들고 기울기(개선/악화)와 만성 여부를 낸다.

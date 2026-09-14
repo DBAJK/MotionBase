@@ -72,11 +72,11 @@ void AThrowHUD::DrawHUD()
 		Pawn->GetThrowNumber(), Pawn->GetTotalThrows());
 	DrawLabel(Progress, PanelX + 20.0f * S, PanelY + 14.0f * S, TwTextMain, 1.1f * S);
 
-	const FString SuccessStr = FString::Printf(TEXT("On-target  %d"), Pawn->GetSuccessCount());
+	const FString SuccessStr = FString::Printf(TEXT("명중  %d"), Pawn->GetSuccessCount());
 	DrawLabel(SuccessStr, PanelX + PanelW - 140.0f * S, PanelY + 14.0f * S, TwGood, 1.1f * S);
 
 	// ── 지정된 목표 베이스 (측정 지표 ①의 전제 — 어디로 던지는지가 항상 보여야 한다) ──
-	const FString CallLine = FString::Printf(TEXT("THROW TO  %s"),
+	const FString CallLine = FString::Printf(TEXT("%s로 송구"),
 		*AThrowPawn::BaseName(Pawn->GetTargetBase()));
 	DrawCentered(CallLine, PanelX + PanelW * 0.5f, PanelY + 42.0f * S,
 		FLinearColor(1.0f, 0.75f, 0.35f, 1.0f), 1.3f * S);
@@ -88,20 +88,20 @@ void AThrowHUD::DrawHUD()
 		switch (Pawn->GetPhase())
 		{
 		case EThrowPhase::Feed:
-			StageLine = TEXT("Catch the feed  (Space at the right time)");
+			StageLine = TEXT("급구를 포구하세요  (타이밍에 맞춰 Space)");
 			StageColor = FLinearColor(1.0f, 0.75f, 0.35f, 1.0f);
 			break;
 		case EThrowPhase::Ready:
 		{
 			const float Live = Pawn->GetLiveTransferTime();
 			StageLine = (Live >= 0.0f)
-				? FString::Printf(TEXT("Ball in hand - transfer %.2fs"), Live)
-				: FString(TEXT("Ball in hand"));
+				? FString::Printf(TEXT("공을 쥠 - 전환 %.2fs"), Live)
+				: FString(TEXT("공을 쥠"));
 			StageColor = TwGood;
 			break;
 		}
 		case EThrowPhase::InFlight:
-			StageLine = TEXT("Ball away...");
+			StageLine = TEXT("공이 날아가는 중...");
 			break;
 		default:
 			StageLine = Pawn->GetLastMetricsLine();
@@ -127,8 +127,8 @@ void AThrowHUD::DrawHUD()
 		}
 
 		const float AvgT = Pawn->GetAverageTransferSec();
-		FString Summary = FString::Printf(TEXT("avg %.0f km/h"), Pawn->GetAverageReleaseKmh());
-		if (AvgT >= 0.0f) { Summary += FString::Printf(TEXT("   transfer %.2fs"), AvgT); }
+		FString Summary = FString::Printf(TEXT("평균 %.0f km/h"), Pawn->GetAverageReleaseKmh());
+		if (AvgT >= 0.0f) { Summary += FString::Printf(TEXT("   전환 %.2fs"), AvgT); }
 		if (!ByBase.IsEmpty()) { Summary = ByBase + TEXT("      ") + Summary; }
 
 		DrawCentered(Summary, W * 0.5f, PanelY + PanelH + 10.0f * S, TwTextDim, 0.78f * S);
@@ -156,15 +156,15 @@ void AThrowHUD::DrawHUD()
 	}
 
 	// 게이지 라벨
-	DrawCentered(TEXT("Hold Space to charge power, release to throw"),
+	DrawCentered(TEXT("Space를 눌러 파워 충전, 떼면 던지기"),
 		W * 0.5f, GaugeY - 26.0f * S, TwTextDim, 0.8f * S);
 
-	const FString PowerPct = FString::Printf(TEXT("Power %d%%"), FMath::RoundToInt(Power * 100.0f));
+	const FString PowerPct = FString::Printf(TEXT("파워 %d%%"), FMath::RoundToInt(Power * 100.0f));
 	DrawCentered(PowerPct, W * 0.5f, GaugeY + GaugeH + 6.0f * S,
 		Pawn->IsCharging() ? GaugeFill : TwTextDim, 0.85f * S);
 
 	// ── 조작 안내 ──
-	DrawCentered(TEXT("Space: catch the feed, then hold/release to throw    -    M to exit"),
+	DrawCentered(TEXT("Space: 급구 포구 후 누르고 있다 떼면 송구    -    M 나가기"),
 		W * 0.5f, H - 40.0f * S, TwTextDim, 0.75f * S);
 
 	// ── 판정 결과 (중앙) ──
@@ -186,7 +186,7 @@ void AThrowHUD::DrawHUD()
 	if (!Coaching.IsEmpty())
 	{
 		float PY = H * 0.52f;
-		DrawCentered(TEXT("AI exercise tips"), W * 0.5f, PY, FLinearColor(0.6f, 0.82f, 1.0f, 1.0f), 1.1f * S);
+		DrawCentered(TEXT("AI 운동 추천"), W * 0.5f, PY, FLinearColor(0.6f, 0.82f, 1.0f, 1.0f), 1.1f * S);
 		PY += 34.0f * S;
 
 		// 처방 목록 자리를 먼저 떼어두고 문장은 남는 만큼만 — 잘려야 할 쪽은 문장이다.

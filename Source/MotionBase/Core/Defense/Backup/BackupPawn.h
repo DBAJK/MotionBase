@@ -8,6 +8,7 @@
 #include "Data/TrainingFeedback.h"
 #include "UI/VRExitGesture.h"
 #include "UI/VREndCardMenu.h"
+#include "Core/DynamicDifficulty.h"
 #include "BackupPawn.generated.h"
 
 class UCameraComponent;
@@ -175,6 +176,31 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Backup", meta = (ClampMin = "0.0"))
 	float VRInputLatencyBiasSec = 0.15f;
 
+	// ── 동적 난이도 (기록·성적 기반 자동 상승) ──
+	// PitchingZone(타격)과 같은 계약: 세션 시작 시 과거 평균으로 시드, 시도마다 성과로 조정.
+	// ⚠️ 헤드룸 값은 실측 캘리브레이션 대상 — 하드코딩 확정 금지.
+	//
+	// 범위: "제한시간 단축"만 다룬다(Field.SlackFactor — 폰마다 독립된 값이라 협동 세션에서
+	// 다른 플레이어에게 안 새어 나간다). "핵심 시나리오 비중 상승"은 시나리오 선택이
+	// ABackupGameState(협동 세션 전체가 공유)에 있어, 플레이어 한 명의 개인 난이도로
+	// 공유 상태를 흔드는 게 맞는지 설계 결정이 더 필요해 이번 범위에서 제외했다.
+
+	/** 기록·성적 기반으로 도착 제한시간을 자동 조절할지. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Backup|Difficulty")
+	bool bDynamicDifficulty = true;
+
+	/** 동적 상승 최대 여유배율 축소 — Field.SlackFactor 에서 이만큼 줄어든다(하한은 1.0). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Backup|Difficulty")
+	float DynamicSlackReduction = 0.25f;
+
+	/** 정답 1회당 동적 수준 상승폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Backup|Difficulty")
+	float DynamicStepUp = 0.12f;
+
+	/** 오답/시간초과 1회당 동적 수준 하강폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Backup|Difficulty")
+	float DynamicStepDown = 0.08f;
+
 	/** Hold 시행에서 이 시간(초) 동안 게이트 입력이 없으면 성공. */
 	UPROPERTY(EditAnywhere, Category = "Backup", meta = (ClampMin = "0.5"))
 	float HoldWindowSec = 2.5f;
@@ -284,6 +310,14 @@ protected:
 	bool bShowFielderMarkers = true;
 
 private:
+	/**
+	 * 게임 창이 포커스를 잃는 순간 이동/회전 키가 눌려 있으면 Released 이벤트를 영영 못 받아
+	 * 그 방향으로 계속 움직이거나 도는 상태로 고정돼 버린다 (알트탭·헤드셋 전환 시 실제로 발생).
+	 * 포커스를 잃으면 이동·회전 플래그를 전부 끈다.
+	 */
+	void HandleApplicationActivationChanged(bool bIsActive);
+	FDelegateHandle ApplicationActivationHandle;
+
 	// ── PC 이동 입력 (BindKey 눌림/뗌 → 플래그, 다른 폰들과 동일 패턴) ──
 	void OnFwdPressed()    { bMoveFwd = true; }
 	void OnFwdReleased()   { bMoveFwd = false; }
@@ -470,6 +504,12 @@ private:
 	int32 TrialIndex = 0;
 	int32 SuccessCount = 0;
 
+	/** 동적 난이도 상태 (0~1) — SpawnNextTrial 이 Field.SlackFactor 계산에 쓴다. */
+	FDynamicDifficultyLevel DynamicDifficulty;
+
+	/** StartSession 에서 캡처한 디자이너 기본 여유배율 — 매 시행 재계산이 누적되지 않게 기준선으로 쓴다. */
+	float BaseSlackFactor = 1.35f;
+
 	/**
 	 * 마지막으로 처리한 GameState 시행 시리얼. 이 값과 달라지면 새 시행으로 본다.
 	 * -1 로 시작해 "아직 아무 시행도 못 봤음"을 나타낸다 (시리얼은 0부터 시작).
@@ -507,7 +547,9 @@ private:
 	// ── 게이트 자동 저하 상태 ──
 	// 세션 단위로 유지한다(시행마다 리셋 금지) — 한 번 저하됐으면 남은 시행 내내 유지돼야
 	// 하고, 프로브 누적도 시행 경계에서 끊기면 GateProbeSec 을 영영 못 채운다.
-	bool  bGateRequired = true;      // false = 트리거 없이 스틱만으로 이동.
+	// 이 기기/런타임에서는 트리거 입력이 전혀 안 잡히는 게 실기로 확인됐다(BackupGate 진단
+	// 로그: 제네릭·Vive 키 둘 다 0). 4초짜리 자동 저하를 기다릴 이유가 없어 처음부터 꺼둔다.
+	bool  bGateRequired = false;     // false = 트리거 없이 스틱만으로 이동.
 	bool  bGateEverObserved = false; // 트리거가 한 번이라도 잡힌 적 있는가.
 	float AxisWithoutGateSec = 0.0f; // 게이트 없이 스틱만 들어온 누적 시간.
 	float DisplacedCm = 0.0f;       // 큐 이후 누적 순 변위(직선 거리).

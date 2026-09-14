@@ -64,12 +64,14 @@ void UVRInfoPanel::BuildPanel()
 
 	RowTexts.Reset();
 	RowSizes.Reset();
+	RowCache.Reset();
 	for (int32 i = 0; i < MaxRows; ++i)
 	{
 		UTextRenderComponent* Row = CreateText(*FString::Printf(TEXT("VrRow%d"), i), VrRowSizeIdle);
 		if (Row) { Row->SetRelativeLocation(FVector(0.0f, 0.0f, RowTopZ - i * RowStepZ)); }
 		RowTexts.Add(Row);
 		RowSizes.Add(VrRowSizeIdle);
+		RowCache.AddDefaulted();
 	}
 
 	BackText = CreateText(TEXT("VrBack"), 13.0f);
@@ -127,16 +129,22 @@ void UVRInfoPanel::HideAll()
 void UVRInfoPanel::SetTitle(const FString& Text, const FColor& Color)
 {
 	if (!TitleText) { return; }
-	TitleText->SetText(FText::FromString(Text));
-	TitleText->SetTextRenderColor(Color);
+	if (TitleCache.Update(Text, Color))
+	{
+		TitleText->SetText(FText::FromString(Text));
+		TitleText->SetTextRenderColor(Color);
+	}
 	TitleText->SetVisibility(true);
 }
 
 void UVRInfoPanel::SetRow(int32 Index, const FString& Text, const FColor& Color)
 {
 	if (!RowTexts.IsValidIndex(Index) || !RowTexts[Index]) { return; }
-	RowTexts[Index]->SetText(FText::FromString(Text));
-	RowTexts[Index]->SetTextRenderColor(Color);
+	if (!RowCache.IsValidIndex(Index) || RowCache[Index].Update(Text, Color))
+	{
+		RowTexts[Index]->SetText(FText::FromString(Text));
+		RowTexts[Index]->SetTextRenderColor(Color);
+	}
 	RowTexts[Index]->SetVisibility(true);
 }
 
@@ -164,8 +172,11 @@ void UVRInfoPanel::SetBackBelowRows(int32 RowCount, const FString& Text, const F
 	BackText->SetVisibility(bShow);
 	if (!bShow) { return; }
 	BackText->SetRelativeLocation(FVector(0.0f, 0.0f, RowTopZ - RowCount * RowStepZ - 14.0f));
-	BackText->SetText(FText::FromString(Text));
-	BackText->SetTextRenderColor(LiftColor(Color));
+	if (BackCache.Update(Text, Color))
+	{
+		BackText->SetText(FText::FromString(Text));
+		BackText->SetTextRenderColor(LiftColor(Color));
+	}
 }
 
 void UVRInfoPanel::SetStatusCompact()
@@ -188,8 +199,11 @@ void UVRInfoPanel::ShowBackCard(const FString& Label, const FColor& Color)
 {
 	if (!BackText) { return; }
 	BackText->SetRelativeLocation(FVector(0.0f, 0.0f, BackCardZ));
-	BackText->SetText(FText::FromString(Label));
-	BackText->SetTextRenderColor(LiftColor(Color));
+	if (BackCache.Update(Label, Color))
+	{
+		BackText->SetText(FText::FromString(Label));
+		BackText->SetTextRenderColor(LiftColor(Color));
+	}
 	BackText->SetVisibility(true);
 }
 
@@ -235,8 +249,10 @@ bool UVRInfoPanel::UpdateBackDwell(const FVector& AimOrigin, const FVector& AimD
 	const float Progress = (DwellSec > 0.0f) ? FMath::Clamp(BackDwellTimer / DwellSec, 0.0f, 1.0f) : 0.0f;
 
 	// 카드 테두리(호버 시 안쪽이 차오른다) + 조준 광선·조준점·드웰 링.
+	// (이 '뒤로/EXIT' 카드는 호버·드웰 상호작용 경로라 Phase 2 저빈도화 대상에서 제외 —
+	//  Duration=-1(매 프레임)을 그대로 유지한다.)
 	DrawCardFrame(BackText, bHovering ? FColor(255, 190, 90) : FColor(120, 130, 150),
-		bHovering ? 1.3f : 0.5f, bHovering ? Progress : 0.0f);
+		bHovering ? 1.3f : 0.5f, bHovering ? Progress : 0.0f, -1.0f);
 	if (bTracked)
 	{
 		DrawPointerRay(AimOrigin, AimDir, Progress, bHovering);
@@ -248,16 +264,22 @@ bool UVRInfoPanel::UpdateBackDwell(const FVector& AimOrigin, const FVector& AimD
 void UVRInfoPanel::SetFooter(const FString& Text, const FColor& Color)
 {
 	if (!FooterText) { return; }
-	FooterText->SetText(FText::FromString(Text));
-	FooterText->SetTextRenderColor(LiftColor(Color));
+	if (FooterCache.Update(Text, Color))
+	{
+		FooterText->SetText(FText::FromString(Text));
+		FooterText->SetTextRenderColor(LiftColor(Color));
+	}
 	FooterText->SetVisibility(true);
 }
 
 void UVRInfoPanel::SetHint(const FString& Text, const FColor& Color)
 {
 	if (!HintText) { return; }
-	HintText->SetText(FText::FromString(Text));
-	HintText->SetTextRenderColor(LiftColor(Color));
+	if (HintCache.Update(Text, Color))
+	{
+		HintText->SetText(FText::FromString(Text));
+		HintText->SetTextRenderColor(LiftColor(Color));
+	}
 	HintText->SetVisibility(true);
 }
 
@@ -350,7 +372,7 @@ void UVRInfoPanel::TickHoverAnim(float DeltaSeconds, int32 HoverIndex, int32 Vis
 }
 
 void UVRInfoPanel::DrawCardFrame(const UTextRenderComponent* Card, const FColor& Color,
-	float Thickness, float FillProgress) const
+	float Thickness, float FillProgress, float Duration) const
 {
 	const UWorld* World = GetWorld();
 	if (!World || !Card) { return; }
@@ -364,10 +386,10 @@ void UVRInfoPanel::DrawCardFrame(const UTextRenderComponent* Card, const FColor&
 	const FVector P2 = C + Rt + Up;   // 우상
 	const FVector P3 = C - Rt + Up;   // 좌상
 
-	DrawDebugLine(World, P0, P1, Color, false, -1.0f, 0, Thickness);
-	DrawDebugLine(World, P1, P2, Color, false, -1.0f, 0, Thickness);
-	DrawDebugLine(World, P2, P3, Color, false, -1.0f, 0, Thickness);
-	DrawDebugLine(World, P3, P0, Color, false, -1.0f, 0, Thickness);
+	DrawDebugLine(World, P0, P1, Color, false, Duration, 0, Thickness);
+	DrawDebugLine(World, P1, P2, Color, false, Duration, 0, Thickness);
+	DrawDebugLine(World, P2, P3, Color, false, Duration, 0, Thickness);
+	DrawDebugLine(World, P3, P0, Color, false, Duration, 0, Thickness);
 
     // 드웰 채움 — 카드 안쪽을 왼쪽부터 가로선 몇 줄로 칠해 "차오른다"를 보여준다.
 	if (FillProgress > 0.0f)
@@ -379,7 +401,7 @@ void UVRInfoPanel::DrawCardFrame(const UTextRenderComponent* Card, const FColor&
 		{
 			const float T = -1.0f + 2.0f * (static_cast<float>(i) / (Scanlines + 1));
 			const FVector Base = Left + Card->GetUpVector() * (CardHalfH * T);
-			DrawDebugLine(World, Base, Base + Span, Color, false, -1.0f, 0, Thickness * 0.6f);
+			DrawDebugLine(World, Base, Base + Span, Color, false, Duration, 0, Thickness * 0.6f);
 		}
 	}
 }
@@ -388,6 +410,21 @@ void UVRInfoPanel::DrawChrome(int32 VisibleRowCount, int32 HoverIndex, float Dwe
 {
 	const UWorld* World = GetWorld();
 	if (!World) { return; }
+
+	// 아무도 호버 중이 아니면 이 함수가 그리는 모든 것(테두리·카드 프레임·구분선)이 완전히
+	// 정적이다 — 저빈도로만 다시 그린다. 호버 중엔 그 카드의 드웰 채움이 매 프레임 바뀌므로
+	// 예전처럼 매 프레임 그린다(끊기면 "차오르는" 애니메이션이 뚝뚝 끊겨 보인다).
+	const bool bAnyHover = (HoverIndex != INDEX_NONE);
+	if (!bAnyHover)
+	{
+		if (World->GetTimeSeconds() < ChromeValidUntilSec) { return; }
+		ChromeValidUntilSec = World->GetTimeSeconds() + ChromeRedrawIntervalSec;
+	}
+	else
+	{
+		ChromeValidUntilSec = 0.0f; // 호버가 끝나는 즉시 다음 저빈도 판단을 새로 시작하게.
+	}
+	const float Duration = bAnyHover ? -1.0f : (ChromeRedrawIntervalSec * 1.5f);
 
 	const FColor Frame(60, 70, 88);
 	const FColor FrameHover(255, 190, 90);
@@ -402,10 +439,10 @@ void UVRInfoPanel::DrawChrome(int32 VisibleRowCount, int32 HoverIndex, float Dwe
 		const FVector Bot = C - Up * 148.0f;
 
 		const FVector A = Top - Rt, B = Top + Rt, D = Bot + Rt, E = Bot - Rt;
-		DrawDebugLine(World, A, B, AccentColor, false, -1.0f, 0, 0.8f);
-		DrawDebugLine(World, B, D, Frame,  false, -1.0f, 0, 0.5f);
-		DrawDebugLine(World, D, E, AccentColor, false, -1.0f, 0, 0.8f);
-		DrawDebugLine(World, E, A, Frame,  false, -1.0f, 0, 0.5f);
+		DrawDebugLine(World, A, B, AccentColor, false, Duration, 0, 0.8f);
+		DrawDebugLine(World, B, D, Frame,  false, Duration, 0, 0.5f);
+		DrawDebugLine(World, D, E, AccentColor, false, Duration, 0, 0.8f);
+		DrawDebugLine(World, E, A, Frame,  false, Duration, 0, 0.5f);
 	}
 
 	// ── 제목 밑줄 ──
@@ -414,7 +451,7 @@ void UVRInfoPanel::DrawChrome(int32 VisibleRowCount, int32 HoverIndex, float Dwe
 		const FVector C  = TitleText->GetComponentLocation();
 		const FVector Rt = TitleText->GetRightVector() * (CardHalfW + 10.0f);
 		const FVector Dn = TitleText->GetUpVector() * -12.0f;
-		DrawDebugLine(World, C - Rt + Dn, C + Rt + Dn, AccentColor, false, -1.0f, 0, 0.7f);
+		DrawDebugLine(World, C - Rt + Dn, C + Rt + Dn, AccentColor, false, Duration, 0, 0.7f);
 	}
 
 	// ── 행 카드 프레임 ──
@@ -423,7 +460,7 @@ void UVRInfoPanel::DrawChrome(int32 VisibleRowCount, int32 HoverIndex, float Dwe
 		if (!RowTexts[i] || !RowTexts[i]->IsVisible()) { continue; }
 		const bool bHovered = (HoverIndex == i);
 		DrawCardFrame(RowTexts[i], bHovered ? FrameHover : Frame,
-			bHovered ? 1.2f : 0.4f, bHovered ? DwellProgress : 0.0f);
+			bHovered ? 1.2f : 0.4f, bHovered ? DwellProgress : 0.0f, Duration);
 	}
 
 	// ── 뒤로 카드 ──
@@ -431,7 +468,7 @@ void UVRInfoPanel::DrawChrome(int32 VisibleRowCount, int32 HoverIndex, float Dwe
 	{
 		const bool bHovered = (HoverIndex == VisibleRowCount);
 		DrawCardFrame(BackText, bHovered ? FrameHover : Frame,
-			bHovered ? 1.2f : 0.4f, bHovered ? DwellProgress : 0.0f);
+			bHovered ? 1.2f : 0.4f, bHovered ? DwellProgress : 0.0f, Duration);
 	}
 
 	// ── 푸터 구분선 ──
@@ -440,7 +477,7 @@ void UVRInfoPanel::DrawChrome(int32 VisibleRowCount, int32 HoverIndex, float Dwe
 		const FVector C  = FooterText->GetComponentLocation();
 		const FVector Rt = FooterText->GetRightVector() * (CardHalfW + 10.0f);
 		const FVector Up = FooterText->GetUpVector() * 14.0f;
-		DrawDebugLine(World, C - Rt + Up, C + Rt + Up, Frame, false, -1.0f, 0, 0.4f);
+		DrawDebugLine(World, C - Rt + Up, C + Rt + Up, Frame, false, Duration, 0, 0.4f);
 	}
 }
 

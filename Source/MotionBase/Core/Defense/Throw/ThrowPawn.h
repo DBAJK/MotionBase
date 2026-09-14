@@ -6,6 +6,7 @@
 #include "Data/TrainingFeedback.h"
 #include "UI/VRExitGesture.h"
 #include "UI/VREndCardMenu.h"
+#include "Core/DynamicDifficulty.h"
 #include "ThrowPawn.generated.h"
 
 class UCameraComponent;
@@ -256,12 +257,52 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Throw")
 	TSubclassOf<ACatchBall> BallClass;
 
+	// ── 동적 난이도 (기록·성적 기반 자동 상승) ──
+	// PitchingZone(타격)과 같은 계약: 세션 시작 시 과거 평균으로 시드, 시도마다 성과로 조정.
+	// ⚠️ 헤드룸 값은 실측 캘리브레이션 대상 — 하드코딩 확정 금지.
+
+	/** 기록·성적 기반으로 목표 반경·급구 체공시간을 자동 조절할지. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Throw|Difficulty")
+	bool bDynamicDifficulty = true;
+
+	/** 동적 상승 최대 반경 축소(cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Throw|Difficulty")
+	float DynamicRadiusReductionCm = 60.0f;
+
+	/** 반경이 아무리 줄어도 이 아래로는 안 내려간다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Throw|Difficulty")
+	float DynamicRadiusFloorCm = 80.0f;
+
+	/** 동적 상승 최대 급구 체공시간 축소(초) — 짧을수록 전환 시간이 압박받는다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Throw|Difficulty")
+	float DynamicFeedFlightReductionSec = 0.3f;
+
+	/** 급구 체공시간이 아무리 줄어도 이 아래로는 안 내려간다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Throw|Difficulty")
+	float DynamicFeedFlightFloorSec = 0.5f;
+
+	/** 명중 1회당 동적 수준 상승폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Throw|Difficulty")
+	float DynamicStepUp = 0.12f;
+
+	/** 빗나감 1회당 동적 수준 하강폭. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Throw|Difficulty")
+	float DynamicStepDown = 0.08f;
+
 private:
 	static constexpr int32 NumBases = 4;
 
 	// ── 입력 핸들러 ──
 	void OnSpacePressed();     // Feed=포구 시도 / Ready=충전 시작
 	void OnSpaceReleased();    // Ready=발사
+
+	/**
+	 * 게임 창이 포커스를 잃는 순간 스페이스바를 누르고 있으면 Released 이벤트를 영영 못 받아
+	 * bCharging 이 계속 true 로 남는다 (알트탭·헤드셋 전환 시 실제로 발생). ThrowBall 을 부르지
+	 * 않고 충전만 조용히 취소한다 — 포커스를 잃은 순간 의도치 않게 송구가 나가면 안 된다.
+	 */
+	void HandleApplicationActivationChanged(bool bIsActive);
+	FDelegateHandle ApplicationActivationHandle;
 	void ReturnToModeSelect(); // M
 
 	// ── 세션 진행 ──
@@ -308,8 +349,33 @@ private:
 	/** 송구가 출발하는 손 높이 (월드 Z). */
 	float ThrowHandZ() const;
 
-	/** 송구 궤적 예측선을 그린다 (지금 파워로 던지면 어디로 가는지). */
-	void DrawPredictedArc(float Power) const;
+	/**
+	 * 송구 궤적 예측선을 그린다 (지금 파워로 던지면 어디로 가는지).
+	 * @param bIsIdealArc 목표(정답 파워) 궤적이면 true, 실시간 파워 궤적이면 false — 매 틱 둘 다
+	 *        호출되는데 서로 독립적으로 값이 바뀌므로 저빈도 재호출 캐시를 따로 둔다.
+	 */
+	void DrawPredictedArc(float Power, bool bIsIdealArc) const;
+
+	/** DrawPredictedArc 저빈도 재호출 주기(초) — 이 값이 지나기 전엔 파워가 그대로면 다시 안 그린다. */
+	static constexpr float PredictedArcRedrawIntervalSec = 0.15f;
+
+	/** 예측선 저빈도 재호출용 캐시(목표 파워 궤적). */
+	mutable float LastDrawnIdealPower = -1.0f;
+	mutable float IdealArcValidUntilSec = 0.0f;
+
+	/** 예측선 저빈도 재호출용 캐시(실시간 파워 궤적). */
+	mutable float LastDrawnCurrentPower = -1.0f;
+	mutable float CurrentArcValidUntilSec = 0.0f;
+
+	/**
+	 * 베이스 마커(4개 박스 + 목표 캡슐/원)는 시행 내내 안 바뀌는 정적 정보다.
+	 * 매 프레임 대신 이 주기로만 다시 그린다 (Duration 도 같이 늘려서 사이 간격을 덮는다).
+	 */
+	static constexpr float BaseMarkerRedrawIntervalSec = 0.5f;
+	float BaseMarkerValidUntilSec = 0.0f;
+
+	/** 동적 난이도 상태 (0~1) — SpawnNextTrial 이 목표 반경·급구 체공시간 계산에 쓴다. */
+	FDynamicDifficultyLevel DynamicDifficulty;
 
 	/** EBaseType → 집계 배열 인덱스. */
 	static int32 BaseIndexOf(EBaseType Base);

@@ -27,39 +27,42 @@ namespace
 		return FLinearColor::LerpUsingHSV(A, B, Progress).ToFColor(true);
 	}
 
-	// ── VR 3D 텍스트용 영어 라벨 (TextRender 는 한글 폰트가 없어 깨지므로 영어로 표기) ──
+	// ── VR 3D 텍스트용 라벨 ──
+	// Phase 5: Content/Fonts/KRFont 임포트 완료 → 한글로 전환. UModeManager 의 표시 이름
+	// (GetModeDisplayName/GetDifficultyDisplayName/GetStanceDisplayName)과 어휘를 맞춘다 —
+	// 같은 개념이 화면마다 다른 단어로 나오면 안 되므로.
 	FString MsEnMode(EGameModeId M)
 	{
 		switch (M)
 		{
-		case EGameModeId::Batting:    return TEXT("Batting");
-		case EGameModeId::Defense:    return TEXT("Defense");
-		case EGameModeId::AICoaching: return TEXT("AI Coaching");
-		default:                      return TEXT("Mode");
+		case EGameModeId::Batting:    return TEXT("타격");
+		case EGameModeId::Defense:    return TEXT("수비");
+		case EGameModeId::AICoaching: return TEXT("AI 코칭");
+		default:                      return TEXT("모드");
 		}
 	}
 	FString MsEnDifficulty(EDifficultyLevel D)
 	{
 		switch (D)
 		{
-		case EDifficultyLevel::Beginner: return TEXT("Beginner");
-		case EDifficultyLevel::Amateur:  return TEXT("Amateur");
-		case EDifficultyLevel::Pro:      return TEXT("Pro");
-		default:                         return TEXT("Difficulty");
+		case EDifficultyLevel::Beginner: return TEXT("초보");
+		case EDifficultyLevel::Amateur:  return TEXT("아마추어");
+		case EDifficultyLevel::Pro:      return TEXT("프로");
+		default:                         return TEXT("난이도");
 		}
 	}
 	FString MsEnStance(EBattingStance S)
 	{
-		return (S == EBattingStance::Left) ? TEXT("Left (LHH)") : TEXT("Right (RHH)");
+		return (S == EBattingStance::Left) ? TEXT("좌타") : TEXT("우타");
 	}
 	FString MsEnDrill(int32 Index)
 	{
 		switch (Index)
 		{
-		case 0:  return TEXT("Catch");
-		case 1:  return TEXT("Throw");
-		case 2:  return TEXT("Backup");
-		default: return TEXT("Drill");
+		case 0:  return TEXT("포구");
+		case 1:  return TEXT("송구");
+		case 2:  return TEXT("백업");
+		default: return TEXT("종목");
 		}
 	}
 }
@@ -597,6 +600,14 @@ void AModeSelectPawn::InitVRMenu()
 	// 바닥 기준 트래킹 → MenuHeightCm(눈높이)이 실제 높이와 맞는다.
 	UHeadMountedDisplayFunctionLibrary::SetTrackingOrigin(EHMDTrackingOrigin::Stage);
 
+	// UpdateVRMenu 가 매 틱 읽는 트리거 키를 여기서 한 번만 만든다 (손이 세션 내내 안 바뀜).
+	{
+		const FName Hand = (PointerController ? PointerController->MotionSource : FName(TEXT("Right")));
+		const TCHAR* Side = (Hand == FName(TEXT("Left"))) ? TEXT("Left") : TEXT("Right");
+		TriggerGenericKey = FKey(*FString::Printf(TEXT("MotionController_%s_Trigger"), Side));
+		TriggerViveKey    = FKey(*FString::Printf(TEXT("Vive_%s_Trigger"), Side));
+	}
+
 	RefreshVRMenuTexts();
 	UE_LOG(LogMotionBase, Log, TEXT("ModeSelect: VR 인메뉴 활성화 (드웰 %.1fs / %.0f°)"),
 		DwellTimeSec, DwellAngleDeg);
@@ -677,11 +688,10 @@ void AModeSelectPawn::UpdateVRMenu(float DeltaSeconds)
 	bool bTriggerPressedEdge = false;
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
-		const FName Hand = (PointerController ? PointerController->MotionSource : FName(TEXT("Right")));
-		const TCHAR* Side = (Hand == FName(TEXT("Left"))) ? TEXT("Left") : TEXT("Right");
 		// 트리거(아래 검지 버튼)를 제네릭/Vive 두 이름으로 읽어 매핑에 관계없이 동작하게 한다.
-		const float Generic = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("MotionController_%s_Trigger"), Side)));
-		const float Vive    = PC->GetInputAnalogKeyState(FKey(*FString::Printf(TEXT("Vive_%s_Trigger"), Side)));
+		// 키 자체는 InitVRMenu 에서 캐싱해 뒀다(손이 세션 내내 안 바뀜).
+		const float Generic = PC->GetInputAnalogKeyState(TriggerGenericKey);
+		const float Vive    = PC->GetInputAnalogKeyState(TriggerViveKey);
 		const bool bHeld = FMath::Max(Generic, Vive) >= TriggerPressThreshold;
 		bTriggerPressedEdge = (bHeld && !bTriggerHeldPrev);
 		bTriggerHeldPrev = bHeld;
@@ -744,25 +754,25 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 {
 	if (!bVRMenu || !VrPanel) { return; }
 
-	// 제목 = 브레드크럼 (단계별, 영어 — 3D 텍스트는 한글 폰트가 없어 영어로 표기).
-	// 3단계까지 들어가면 "지금 어디쯤인가"가 헷갈린다 — 지나온 선택을 제목에 남긴다.
+	// 제목 = 브레드크럼 (단계별). 3단계까지 들어가면 "지금 어디쯤인가"가 헷갈린다 —
+	// 지나온 선택을 제목에 남긴다.
 	FString Header;
 	switch (Stage)
 	{
 	case EStage::Mode:
-		Header = TEXT("SporTrack : Baseball   >   Mode"); break;
+		Header = TEXT("SporTrack : Baseball   >   모드"); break;
 	case EStage::Difficulty:
-		Header = MsEnMode(PendingMode) + TEXT("   >   Difficulty"); break;
+		Header = MsEnMode(PendingMode) + TEXT("   >   난이도"); break;
 	case EStage::Stance:
 		Header = MsEnMode(PendingMode) + TEXT("   >   ") + MsEnDifficulty(PendingDifficulty)
-			+ TEXT("   >   Batter box"); break;
+			+ TEXT("   >   타석"); break;
 	case EStage::DefenseDrill:
-		Header = TEXT("Defense   >   Drill"); break;
+		Header = TEXT("수비   >   종목"); break;
 	case EStage::DefensePositionGroup:
-		Header = TEXT("Defense   >   Backup   >   Infield/Outfield"); break;
+		Header = TEXT("수비   >   백업   >   내야/외야"); break;
 	case EStage::DefensePosition:
-		Header = FString::Printf(TEXT("Defense   >   Backup   >   %s   >   Position"),
-			(PendingPositionGroup == 0) ? TEXT("Infield") : TEXT("Outfield")); break;
+		Header = FString::Printf(TEXT("수비   >   백업   >   %s   >   포지션"),
+			(PendingPositionGroup == 0) ? TEXT("내야") : TEXT("외야")); break;
 	default: break;
 	}
 	VrPanel->SetTitle(Header, FColor(228, 233, 244));
@@ -784,7 +794,7 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 		case EStage::Stance:       Label = MsEnStance(StanceAt(i)); break;
 		case EStage::DefenseDrill: Label = MsEnDrill(i); break;
 		case EStage::DefensePositionGroup:
-			Label = (i == 0) ? TEXT("Infield (1B/2B/SS/3B)") : TEXT("Outfield (LF/CF/RF)");
+			Label = (i == 0) ? TEXT("내야 (1루/2루/유격/3루)") : TEXT("외야 (좌익/중견/우익)");
 			break;
 		case EStage::DefensePosition:
 		{
@@ -794,7 +804,7 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 		}
 		default: break;
 		}
-		if (!bAvail)  { Label += TEXT("  (coming soon)"); }
+		if (!bAvail)  { Label += TEXT("  (준비중)"); }
 		// 겨누는 카드는 앞에 표식을 붙여 텍스트만 봐도 구분되게 한다
 		// (진행도 자체는 카드 채움/링이 보여주므로 여기선 막대를 쓰지 않는다).
 		if (bHovered) { Label = TEXT("> ") + Label; }
@@ -805,9 +815,6 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 	// 모드 목록이 3행뿐이라 MaxRows(6) 중 3~5행이 비어 있다. 그 자리를 쓴다.
 	// 평면 HUD 의 종합 패널은 VR 에서 아예 안 그려지므로(Canvas 는 스테레오에서 어긋난다)
 	// 헤드셋 안에서도 같은 정보를 보려면 여기 얹는 수밖에 없다.
-	//
-	// ⚠️ 영어로 쓴다 — /Game/Fonts/KRFont 에셋이 아직 없어 VR 패널에서 한글이 네모로 나온다.
-	//    폰트가 들어오면 한글로 바꾸면 된다.
 	const UModeManager* OverallMM = GetGameInstance() ? GetGameInstance()->GetSubsystem<UModeManager>() : nullptr;
 	const FOverallScore& Overall = OverallMM ? OverallMM->GetOverallScore() : CachedOverall;
 
@@ -816,15 +823,15 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 	{
 		if (!Overall.bValid)
 		{
-			VrPanel->SetRow(ExtraRow++, TEXT("Overall  -  no records yet"), FColor(110, 116, 128));
+			VrPanel->SetRow(ExtraRow++, TEXT("종합  -  아직 기록 없음"), FColor(110, 116, 128));
 		}
 		else
 		{
-			VrPanel->SetRow(ExtraRow++, FString::Printf(TEXT("Overall  %.0f / 100   (%d/%d done)"),
+			VrPanel->SetRow(ExtraRow++, FString::Printf(TEXT("종합  %.0f / 100   (%d/%d 완료)"),
 				Overall.Total, Overall.PlayedCount, Overall.CategoryCount),
 				FColor(255, 200, 120));
 
-			// 종목별 한 줄 — 약칭이라 4개가 한 행에 들어간다. 미실시는 "-".
+			// 종목별 한 줄 — 짧은 한글 이름이라 4개가 한 행에 들어간다. 미실시는 "-".
 			if (ExtraRow < UVRInfoPanel::MaxRows)
 			{
 				FString ByCat;
@@ -832,8 +839,8 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 				{
 					if (!ByCat.IsEmpty()) { ByCat += TEXT(" "); }
 					ByCat += Cat.bPlayed
-						? FString::Printf(TEXT("%s %.0f"), *Cat.ShortNameEn, Cat.BestScore)
-						: FString::Printf(TEXT("%s -"), *Cat.ShortNameEn);
+						? FString::Printf(TEXT("%s %.0f"), *Cat.DisplayName, Cat.BestScore)
+						: FString::Printf(TEXT("%s -"), *Cat.DisplayName);
 				}
 				VrPanel->SetRow(ExtraRow++, ByCat, FColor(150, 156, 168));
 			}
@@ -842,7 +849,7 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 			// 100점 만점은 정밀해 보이지만 기준 상수는 아직 실측 보정 전이다.
 			if (Overall.bUncalibrated && ExtraRow < UVRInfoPanel::MaxRows)
 			{
-				VrPanel->SetRow(ExtraRow++, TEXT("* score baseline uncalibrated"), FColor(230, 150, 90));
+				VrPanel->SetRow(ExtraRow++, TEXT("* 채점 기준 미보정"), FColor(230, 150, 90));
 			}
 		}
 	}
@@ -852,7 +859,7 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 	if (Stage != EStage::Mode)
 	{
 		const bool bHovered = (VrHoverIndex == RowCount);
-		VrPanel->SetBackBelowRows(RowCount, TEXT("< Back"),
+		VrPanel->SetBackBelowRows(RowCount, TEXT("< 뒤로"),
 			MsRowColor(true, bHovered, Progress), true);
 	}
 	else
@@ -860,11 +867,11 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 		VrPanel->SetBackBelowRows(RowCount, FString(), FColor::White, false);
 	}
 
-	// 설명 → 푸터 (영어).
+	// 설명 → 푸터.
 	FString Desc;
 	if (!NoticeText.IsEmpty())
 	{
-		Desc = TEXT("Coming soon");
+		Desc = TEXT("준비 중입니다");
 	}
 	else
 	{
@@ -872,39 +879,39 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 		{
 		case EStage::Mode:
 			Desc = (ModeAt(SelectedIndex) == EGameModeId::Batting)
-				? TEXT("Swing at pitches with the controller")
-				: TEXT("Fielding drills: catch / throw / backup");
+				? TEXT("컨트롤러로 날아오는 공을 스윙합니다")
+				: TEXT("수비 훈련: 포구 / 송구 / 백업");
 			break;
 		case EStage::Difficulty:
 			switch (DifficultyAt(SelectedIndex))
 			{
-			case EDifficultyLevel::Beginner: Desc = TEXT("Slow pitches, no breaking balls"); break;
-			case EDifficultyLevel::Amateur:  Desc = TEXT("Medium speed + some breaking balls"); break;
-			case EDifficultyLevel::Pro:      Desc = TEXT("Fast pitches + many breaking balls"); break;
+			case EDifficultyLevel::Beginner: Desc = TEXT("느린 공, 변화구 없음"); break;
+			case EDifficultyLevel::Amateur:  Desc = TEXT("보통 속도 + 변화구 일부"); break;
+			case EDifficultyLevel::Pro:      Desc = TEXT("빠른 공 + 잦은 변화구"); break;
 			default: break;
 			}
 			break;
 		case EStage::Stance:
 			Desc = (StanceAt(SelectedIndex) == EBattingStance::Left)
-				? TEXT("Left-handed batter box")
-				: TEXT("Right-handed batter box");
+				? TEXT("좌타석")
+				: TEXT("우타석");
 			break;
 		case EStage::DefenseDrill:
 			switch (SelectedIndex)
 			{
-			case 0: Desc = TEXT("Catch grounders, flies and liners - success rate per ball type"); break;
-			case 1: Desc = TEXT("Catch, then throw to the called base - accuracy, velocity, transfer"); break;
-			case 2: Desc = TEXT("Pick your position, then read the ball and move to your real backup spot"); break;
+			case 0: Desc = TEXT("땅볼·뜬공·라인드라이브 포구 - 타구 유형별 성공률"); break;
+			case 1: Desc = TEXT("포구 후 지정된 베이스로 송구 - 정확도·구속·전환시간"); break;
+			case 2: Desc = TEXT("포지션을 고르고, 타구를 읽어 실제 백업 위치로 이동"); break;
 			default: break;
 			}
 			break;
 		case EStage::DefensePositionGroup:
 			Desc = (SelectedIndex == 0)
-				? TEXT("Infield jobs: shorter runs, base coverage and relay cutoffs")
-				: TEXT("Outfield jobs: longer runs, backing up bases and the other outfielders");
+				? TEXT("내야: 짧은 이동, 베이스 커버와 중계 플레이")
+				: TEXT("외야: 긴 이동, 베이스 백업과 다른 외야수 지원");
 			break;
 		case EStage::DefensePosition:
-			Desc = TEXT("A situation is called, then hold the move button and go to your real backup spot");
+			Desc = TEXT("상황이 주어지면 이동 버튼을 누른 채 실제 백업 위치로 이동합니다");
 			break;
 		default: break;
 		}
@@ -912,6 +919,6 @@ void AModeSelectPawn::RefreshVRMenuTexts()
 	VrPanel->SetFooter(Desc, !NoticeText.IsEmpty() ? FColor(255, 180, 90) : FColor(150, 156, 168));
 
 	VrPanel->SetHint(
-		TEXT("Point at a card - trigger to pick, or just hold your aim   ·   the ring shows the hold"),
+		TEXT("카드를 겨눈 뒤 트리거를 당기거나, 그냥 잠시 겨누고 있으세요   ·   링이 진행도를 보여줍니다"),
 		FColor(110, 116, 128));
 }

@@ -25,20 +25,13 @@ struct FOverallCategoryDef
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Overall")
 	FName DrillId = NAME_None;
 
-	/** 화면 표시용 짧은 이름 (한글 — 평면 HUD 용). */
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Overall")
-	FString DisplayName;
-
 	/**
-	 * VR 패널용 영문 약칭 ("Bat", "Catch", "Throw", "Bkup").
-	 *
-	 * ⚠️ VR 패널(UVRInfoPanel)은 /Game/Fonts/KRFont 가 있어야 한글이 나오는데 그 에셋이
-	 *    아직 없어서, 헤드셋 안에서는 한글이 네모로 표시된다. 폰트가 들어오면 이 필드를
-	 *    지우고 DisplayName 하나로 합칠 수 있다.
-	 *    한 행이 ~30자라 약칭이어야 4종목이 한 줄에 들어간다.
+	 * 화면 표시용 짧은 이름 (한글). 평면 HUD 와 VR 패널이 공용으로 쓴다.
+	 * ⚠️ VR 패널 한 행이 ~30자라 4종목이 한 줄에 들어가려면 짧아야 한다 — "포구"/"송구" 처럼.
+	 * (Content/Fonts/KRFont 도입 전엔 VR 패널용 영문 약칭을 따로 뒀었다 — 이젠 필요 없다.)
 	 */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Overall")
-	FString ShortNameEn;
+	FString DisplayName;
 
 	/** 이 종목이 만점일 때 종합에서 차지하는 점수 (공격 50, 수비 3종목 각 50/3). */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Overall")
@@ -57,10 +50,6 @@ struct FOverallCategoryScore
 
 	UPROPERTY(BlueprintReadOnly, Category = "Overall")
 	FString DisplayName;
-
-	/** VR 패널용 영문 약칭 (정의에서 그대로 옮겨온다). */
-	UPROPERTY(BlueprintReadOnly, Category = "Overall")
-	FString ShortNameEn;
 
 	/** 한 번이라도 유효 세션을 남겼는가. false 면 아래 값들은 의미가 없다. */
 	UPROPERTY(BlueprintReadOnly, Category = "Overall")

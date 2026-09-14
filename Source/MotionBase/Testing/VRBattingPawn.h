@@ -6,6 +6,7 @@
 #include "Data/SwingMetrics.h"
 #include "Data/ScoreResult.h"
 #include "Data/BattedBall.h"
+#include "Analysis/SwingAnalyzer.h"
 #include "Scoring/ScoringService.h"
 #include "Data/TrainingFeedback.h"
 #include "UI/SessionResultView.h"
@@ -104,9 +105,16 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "VRBatting")
 	FScoringConfig ScoringConfig;
 
-	/** 도달 후 이 시간(초) 뒤에 스윙을 분석한다 — 늦은 컨택까지 궤적에 담기게. */
+	/**
+	 * 도달 후 이 시간(초) 뒤에 스윙을 분석한다 — 늦은 컨택까지 궤적에 담기게.
+	 *
+	 * ⚠️ USwingAnalyzer::ContactTimeWindowSec(±) 보다 짧으면 안 된다. 분석은 "지금까지 쌓인
+	 * 궤적"만 보므로, 창의 후반부(도달 +ContactTimeWindowSec 까지)가 되기 전에 분석해버리면
+	 * 그 구간에 있었어야 할 늦은 스윙 표본이 아예 버퍼에 없어 TAKE로 오분류된다
+	 * (버그 재발 이력 있음 — 짧게 만들지 말 것). 기본값을 그 창에서 직접 유도해 항상 맞물리게 한다.
+	 */
 	UPROPERTY(EditAnywhere, Category = "VRBatting")
-	float PostContactDelaySec = 0.12f;
+	float PostContactDelaySec = USwingAnalyzer::ContactTimeWindowSec;
 
 	/**
 	 * 한 세션의 총 투구 수. 이 수를 채우면 투구를 멈추고 결과·AI 코칭 화면으로 넘어간다.
@@ -285,6 +293,10 @@ private:
 	bool bAwaitingCoaching = false;   // 요청 후 응답 대기 중
 	bool bTriggerHeldPrev = false;    // 트리거 눌림 에지 검출용
 	float CoachingShowTimer = 0.0f;   // 코칭 오버레이를 패널에 띄워두는 잔여 시간(초)
+
+	/** Tick 이 매 프레임 읽는 코칭 요청 트리거 키. BeginPlay 에서 한 번만 만든다(손이 안 바뀜). */
+	FKey TriggerGenericKey;
+	FKey TriggerViveKey;
 
 	/** VR '배트 위로 들어 나가기' 제스처 상태 (헤드셋만으로 모드 선택 복귀). */
 	FVRExitGesture ExitGesture;
