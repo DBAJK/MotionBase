@@ -594,6 +594,17 @@ private:
 	static constexpr float LiveExitUpThreshold = 0.85f;
 	static constexpr float LiveExitHoldSec     = 2.0f;
 
+	/**
+	 * VR 패널(과 결과 보드) 중심의 **바닥 기준** 높이.
+	 * ⚠️ 포구·송구는 루트가 PlayerStart(캡슐 중심, 바닥+≈90)라 루트+70 이 바닥+≈160 이 되지만,
+	 *    백업은 SnapToFieldingSpot 이 VR 루트를 바닥(GroundZ)으로 내린다. 같은 70 을 쓰면 패널이
+	 *    바닥+75 로 내려가 '나가기' 카드(-88)·결과 보드 버튼(-86)이 **바닥 밑에 묻혀 안 보였다.**
+	 */
+	static constexpr float VRPanelHeightAboveFloorCm = 160.0f;
+
+	/** VRPanelHeightAboveFloorCm 를 현재 루트 기준 상대 높이로 바꾼다 (시행 전 PlayerStart 자리에서도 같은 높이). */
+	float VRPanelHeightCm() const;
+
 	/** 이번 시행의 코스메틱 타구 (판정에 관여하지 않음 — SpawnFlavorBall 참고). */
 	UPROPERTY(Transient)
 	TObjectPtr<ACatchBall> ActiveBall;

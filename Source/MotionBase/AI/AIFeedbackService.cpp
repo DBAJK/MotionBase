@@ -295,10 +295,28 @@ void UAIFeedbackService::DispatchRequest(const FString& Body, const FString& Mod
 	UE_LOG(LogMotionBase, Log, TEXT("AIFeedback: 요청 (model=%s, %d chars%s)"), *Model, Body.Len(),
 		bIsRetry ? TEXT(", 재시도") : TEXT(""));
 
+	// HTTP 가 **어떤 이유로든** 최종 실패하면(네트워크·4xx·재시도 후 429/5xx·파싱 실패) CLI 백엔드가 켜져 있을 때
+	// 같은 본문을 CLI 로 다시 보낸다 — 키는 넣어 두되 크레딧이 없는 개발 환경(HTTP 400)을 위한 대체 경로.
+	// ⚠️ 429/5xx 1회 재시도는 원래 OnComplete 로 DispatchRequest 를 다시 부르므로, 대체는 최종 실패에서 한 번만 일어난다.
+	TFunction<void(UAIFeedbackService*, bool, const FString&)> HttpComplete = OnComplete;
+	if (IsCliBackendEnabled())
+	{
+		HttpComplete = [Body, OnComplete](UAIFeedbackService* Self, bool bSuccess, const FString& Text)
+		{
+			if (bSuccess)
+			{
+				OnComplete(Self, true, Text);
+				return;
+			}
+			UE_LOG(LogMotionBase, Warning, TEXT("AIFeedback: API 호출 실패 (%s) — Claude Code CLI 로 대체 시도"), *Text);
+			Self->DispatchCliRequest(Body, OnComplete);
+		};
+	}
+
 	// 완료 콜백 — this 가 async 도중 파괴될 수 있으므로 weak 가드.
 	TWeakObjectPtr<UAIFeedbackService> WeakThis(this);
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakThis, OnComplete, Body, Model, bIsRetry](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
+		[WeakThis, OnComplete, HttpComplete, Body, Model, bIsRetry](FHttpRequestPtr /*Req*/, FHttpResponsePtr Response, bool bConnected)
 		{
 			UAIFeedbackService* Self = WeakThis.Get();
 			if (!Self)
@@ -308,7 +326,7 @@ void UAIFeedbackService::DispatchRequest(const FString& Body, const FString& Mod
 
 			if (!bConnected || !Response.IsValid())
 			{
-				OnComplete(Self, false, TEXT("AI 코칭 요청 실패 (네트워크)"));
+				HttpComplete(Self, false, TEXT("AI 코칭 요청 실패 (네트워크)"));
 				return;
 			}
 
@@ -339,7 +357,7 @@ void UAIFeedbackService::DispatchRequest(const FString& Body, const FString& Mod
 				}
 
 				UE_LOG(LogMotionBase, Warning, TEXT("AIFeedback: HTTP %d — %s"), Code, *Content);
-				OnComplete(Self, false, FString::Printf(TEXT("AI 코칭 오류 (HTTP %d)"), Code));
+				HttpComplete(Self, false, FString::Printf(TEXT("AI 코칭 오류 (HTTP %d)"), Code));
 				return;
 			}
 
@@ -350,7 +368,7 @@ void UAIFeedbackService::DispatchRequest(const FString& Body, const FString& Mod
 			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Content);
 			if (!FJsonSerializer::Deserialize(Reader, Json) || !Json.IsValid())
 			{
-				OnComplete(Self, false, TEXT("AI 코칭 응답 파싱 실패"));
+				HttpComplete(Self, false, TEXT("AI 코칭 응답 파싱 실패"));
 				return;
 			}
 
@@ -369,13 +387,13 @@ void UAIFeedbackService::DispatchRequest(const FString& Body, const FString& Mod
 					if (Obj->TryGetStringField(TEXT("type"), Type) && Type == TEXT("text")
 						&& Obj->TryGetStringField(TEXT("text"), Text))
 					{
-						OnComplete(Self, true, Text.TrimStartAndEnd());
+						HttpComplete(Self, true, Text.TrimStartAndEnd());
 						return;
 					}
 				}
 			}
 
-			OnComplete(Self, false, TEXT("AI 코칭 응답에 텍스트가 없습니다"));
+			HttpComplete(Self, false, TEXT("AI 코칭 응답에 텍스트가 없습니다"));
 		});
 
 	Request->ProcessRequest();
@@ -620,8 +638,12 @@ void UAIFeedbackService::DispatchCliRequest(const FString& Body,
 				if (bJsonError || ReturnCode != 0 || Result.IsEmpty())
 				{
 					UE_LOG(LogMotionBase, Warning, TEXT("AIFeedback: Claude Code CLI 오류 (exit %d) — %s"), ReturnCode, *Result);
-					// 가장 흔한 원인은 CLI 미로그인 — 화면에서 바로 알 수 있게 따로 표시한다.
-					const bool bNotLoggedIn = Result.Contains(TEXT("Not logged in")) || Result.Contains(TEXT("/login"));
+					// 가장 흔한 원인은 CLI 미로그인·로그인 만료 — 화면에서 바로 알 수 있게 따로 표시한다.
+					// (만료 시 문구 예: "Failed to authenticate: OAuth session expired and could not be refreshed")
+					const bool bNotLoggedIn = Result.Contains(TEXT("Not logged in"))
+						|| Result.Contains(TEXT("/login"))
+						|| Result.Contains(TEXT("authenticate"))
+						|| Result.Contains(TEXT("OAuth"));
 					OnComplete(Self, false, bNotLoggedIn
 						? TEXT("AI 코칭 오류 (Claude Code 로그인 필요)")
 						: TEXT("AI 코칭 오류 (Claude Code CLI)"));

@@ -62,8 +62,9 @@ struct FBackupExplainRequest
  *
  * UE HTTP 모듈로 Anthropic Messages API 를 직접 async 호출 (별도 백엔드 없음, CLAUDE §3).
  * API 키는 Config/Secrets.ini (gitignore) 의 [AI] ApiKey.
- * 키가 없고 [AI] Backend=ClaudeCodeCli 면 **개발용**으로 로그인된 Claude Code CLI(claude -p)를 대신 호출한다
- * (개인 구독 사용 — 시연·부스 환경 금지). 둘 다 없으면 호출을 건너뛴다.
+ * [AI] Backend=ClaudeCodeCli 면 **개발용**으로 로그인된 Claude Code CLI(claude -p)를 쓴다
+ * (개인 구독 사용 — 시연·부스 환경 금지): 키가 없으면 곧바로, 키가 있으면 API 호출이 어떤 이유로든
+ * 실패했을 때(크레딧 없음 HTTP 400 등) 대체로 호출한다. 둘 다 없으면 호출을 건너뛴다.
  */
 UCLASS()
 class MOTIONBASE_API UAIFeedbackService : public UObject
@@ -237,6 +238,8 @@ private:
 	 *        재시도한다. 4xx(요청 자체가 잘못됨)는 재시도해도 같은 응답이 나오므로 즉시 실패
 	 *        사유를 돌려준다. 부스 시연 중 순간적인 API 과부하/타임아웃에 화면이 바로
 	 *        "미설정" 처럼 보이지 않게 하기 위함.
+	 *
+	 * CLI 백엔드가 켜져 있으면 최종 실패(재시도 후 포함) 시 같은 본문을 DispatchCliRequest 로 넘긴다.
 	 */
 	void DispatchRequest(const FString& Body, const FString& Model,
 		TFunction<void(UAIFeedbackService*, bool, const FString&)> OnComplete, bool bIsRetry = false);

@@ -17,6 +17,9 @@ namespace
 	// 보드는 VrPanel 자리(눈 앞 DefaultDistanceCm)에 서고, 눈은 보드 로컬 (-R, 0) 에 있다.
 	constexpr float BoardRadius = UVRInfoPanel::DefaultDistanceCm;
 
+	/** 앵커(VrPanel)보다 보드를 얼마나 위로 올려 세울지. 버튼(ButtonZ)이 판 아래쪽이라 시선이 너무 내려가지 않게. */
+	constexpr float AnchorLiftZ = 15.0f;
+
 	/** 3면 배치 인덱스. */
 	constexpr int32 SegLeft   = 0;
 	constexpr int32 SegCenter = 1;
@@ -409,7 +412,9 @@ void UVRResultBoard::SetLine(UTextRenderComponent* T, const FString& Text, const
 void UVRResultBoard::CopyAnchorFrom(const USceneComponent* Anchor)
 {
 	if (!Anchor) { return; }
-	SetRelativeLocationAndRotation(Anchor->GetRelativeLocation(), Anchor->GetRelativeRotation());
+	// 모든 모드(타격·포구·송구·백업)가 이 함수로 배치하므로 높이 보정은 여기 한 곳에서만 한다.
+	SetRelativeLocationAndRotation(Anchor->GetRelativeLocation() + FVector(0.0f, 0.0f, AnchorLiftZ),
+		Anchor->GetRelativeRotation());
 }
 
 void UVRResultBoard::SetAllVisible(bool bShow)

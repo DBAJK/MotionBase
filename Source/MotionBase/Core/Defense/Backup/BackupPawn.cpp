@@ -420,6 +420,13 @@ float ABackupPawn::FloorZ() const
 	return bVR ? Field.GroundZ : (Field.GroundZ + 88.0f);
 }
 
+float ABackupPawn::VRPanelHeightCm() const
+{
+	// 루트 Z 는 시행 전(PlayerStart, 바닥+≈90)과 시행 중(바닥)이 다르다 → 바닥 기준으로 환산해
+	// 어느 쪽이든 눈앞 같은 높이에 건다. (SetPlacement 의 70 은 바닥으로 내리기 전 기본값일 뿐)
+	return Field.GroundZ + VRPanelHeightAboveFloorCm - GetActorLocation().Z;
+}
+
 FVector ABackupPawn::GetPlayerXY() const
 {
 	// VR: 머리(카메라)의 XY = 플레이어가 실제로 서 있는 자리 (폰 루트는 트래킹 원점일 뿐).
@@ -1232,7 +1239,7 @@ void ABackupPawn::Tick(float DeltaSeconds)
 		// 패널을 플레이어 정면에 고정 배치(swimming 제거).
 		if (VrPanel && Camera)
 		{
-			VrPanel->UpdateComfortAnchor(Camera, UVRInfoPanel::DefaultDistanceCm, 70.0f, /*RecenterDeg=*/55.0f);
+			VrPanel->UpdateComfortAnchor(Camera, UVRInfoPanel::DefaultDistanceCm, VRPanelHeightCm(), /*RecenterDeg=*/55.0f);
 		}
 
 		if (MoveController)
